@@ -1,0 +1,39 @@
+# AI-Tutor/requirements.txt
+
+# --- Core Web Framework ---
+fastapi
+uvicorn[standard]
+
+# --- LLM and AI Libraries ---
+google-generativeai
+
+# LangChain has become modular. We need to install the specific components.
+langchain-core
+langchain-openai
+langchain-text-splitters
+
+# --- Vector Database ---
+chromadb
+
+# --- Knowledge Graph Database ---
+neo4j
+tenacity
+
+# --- Data Processing and Parsing ---
+# Pinning unstructured to a known stable version.
+unstructured[pdf]==0.14.9
+
+# THE CRITICAL FIX: Pinning pdfminer.six to a specific version that is known
+# to be compatible with the pinned version of unstructured. This resolves
+# the internal import errors.
+pdfminer.six==20221105
+
+# pdfplumber is a dependency of unstructured, but we list it here
+# to allow pip to resolve its version alongside our pinned pdfminer.six.
+pdfplumber
+
+# For parsing .docx files
+python-docx
+
+# --- Environment and Configuration ---
+python-dotenv
