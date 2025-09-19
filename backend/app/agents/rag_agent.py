@@ -3,7 +3,6 @@
 import logging
 from typing import Dict, List, Any, Optional
 
-# Adjusted imports
 from app.core import config
 from app.db.llm_interface import LLMInterface
 from app.db.vector_store import VectorStore
@@ -22,26 +21,43 @@ class RAGAgent:
         self.vector_store = vector_store
         self.graph_db = graph_db
         self.logger = logger
-        # if not self.vector_store.is_ready():
-        #     self.logger.critical("Vector store for RAGAgent is not ready!")
+
+    def _clean_query_for_embedding(self, query: str) -> str:
+        """
+        Uses an LLM to strip conversational filler and instructions from a query,
+        leaving only the core question for better semantic search.
+        """
+        self.logger.info("Cleaning query for embedding...")
+        prompt = f"""
+        Extract the essential question from the user's query below.
+        Remove any conversational filler, greetings, or instructions like "According to the document...".
+        Your response should ONLY be the core question.
+
+        User Query: "{query}"
+        
+        Core Question:
+        """
+        cleaned_query = self.llm_interface.generate_response(prompt).strip()
+        self.logger.info(f"Cleaned query: '{cleaned_query}'")
+        return cleaned_query
 
     def _execute_retrieval(self, query: str, user_role: str, top_k: int) -> List[Dict[str, Any]]:
         """
         Performs retrieval from the vector store, applying RBAC filters.
         """
-        self.logger.info(f"Executing retrieval for user role: '{user_role}'")
-        query_embedding = self.llm_interface.get_embedding(query, task_type="RETRIEVAL_QUERY")
+        # --- NEW STEP: CLEAN THE QUERY BEFORE EMBEDDING ---
+        embedding_query = self._clean_query_for_embedding(query)
+
+        self.logger.info(f"Executing retrieval for user role: '{user_role}' with top_k: {top_k}")
+        query_embedding = self.llm_interface.get_embedding(embedding_query, task_type="RETRIEVAL_QUERY")
         if not query_embedding:
             self.logger.error("Failed to generate embedding for query.")
             return []
 
-        # --- RBAC FILTER LOGIC ---
         where_filter = {}
         if user_role == 'student':
-            # Students can only access documents with 'student' access level
             where_filter = {"access_level": "student"}
-        # Teachers have access to all documents, so no filter is applied.
-
+        
         retrieved_chunks = self.vector_store.query(
             query_embedding=query_embedding,
             top_k=top_k,
@@ -49,49 +65,72 @@ class RAGAgent:
         )
         return retrieved_chunks
 
-    def _generate_final_answer(self, query: str, context_chunks: List[Dict[str, Any]]) -> str:
-        """
-        Generates the final answer based on the query and retrieved context.
-        """
+    def _generate_final_answer(self, query: str, context_chunks: List[Dict[str, Any]], socratic: bool = False) -> str:
+        # This function remains the same as our last version with the improved prompts.
+        # ... (omitted for brevity)
         if not context_chunks:
             return "I could not find relevant information in the provided materials to answer your question."
 
-        context_str = "\n\n---\n\n".join([chunk['text'] for chunk in context_chunks])
+        context_str = "\n\n---\n\n".join([f"Source Document: {chunk['metadata'].get('document_name', 'Unknown')}\n\n{chunk['text']}" for chunk in context_chunks])
         
-        prompt = f"""You are an expert AI Tutor. Your task is to provide a clear, concise, and helpful answer to the user's question based ONLY on the provided context.
+        if socratic:
+            prompt = f"""You are a Socratic AI Tutor. Your only goal is to ask a guiding question that helps the student think for themselves.
 
-        User's Question: {query}
+            **USER'S QUESTION:**
+            "{query}"
 
-        Context:
-        ---
-        {context_str}
-        ---
+            **CONTEXT FROM DOCUMENTS:**
+            ---
+            {context_str}
+            ---
 
-        Answer:
-        """
+            **YOUR TASK:**
+            - DO NOT answer the user's question directly.
+            - Your entire response MUST be a single, insightful question.
+            - The question should be based on the provided context and guide the student toward the answer.
+            - If the context provides a direct definition, ask a question that makes the student apply that definition.
+
+            **YOUR GUIDING QUESTION:**
+            """
+        else:
+            prompt = f"""You are an expert AI Tutor. Your task is to provide a comprehensive, complete, and well-structured answer to the user's question based *only* on the provided context.
+
+            **Your Task:**
+            1.  Carefully read and synthesize the information from all provided context snippets.
+            2.  Construct a detailed and thorough answer that directly addresses the user's question.
+            3.  If the question involves comparison (e.g., "What is the difference between X and Y?"), you MUST describe both X and Y and then highlight their key differences.
+            4.  If the question asks for a list or summary of techniques, you MUST include all relevant techniques mentioned in the context.
+            5.  Structure your answer clearly using bullet points or numbered lists where appropriate. Do not omit any relevant details from the context.
+
+            **CRITICAL RULES:**
+            - Your answer MUST be based exclusively on the provided context. Do not use any outside knowledge.
+            - If the context is insufficient to provide a complete answer, you MUST state that the provided materials do not contain enough information. Do not try to answer partially.
+
+            User's Question: {query}
+
+            Context:
+            ---
+            {context_str}
+            ---
+
+            Comprehensive Answer:
+            """
         
         return self.llm_interface.generate_response(prompt)
 
-    def run(self, query: str, user_role: str = 'student') -> Dict[str, Any]:
+
+    def run(self, query: str, user_role: str = 'student', socratic: bool = False, topic_class: str = "Non-STEM") -> Dict[str, Any]:
         """
         The main entry point for the RAG agent.
-        
-        Args:
-            query (str): The user's question.
-            user_role (str): The role of the user ('student' or 'teacher').
-            
-        Returns:
-            A dictionary containing the answer and sources.
         """
-        self.logger.info(f"RAG Agent running for query: '{query}'")
+        self.logger.info(f"RAG Agent running for query: '{query}' with Socratic mode: {socratic} and Topic: {topic_class}")
         
-        # Step 1: Retrieval with RBAC
-        retrieved_chunks = self._execute_retrieval(query, user_role, config.DEFAULT_TOP_K)
+        top_k_for_retrieval = 12
         
-        # Step 2: Generate Answer
-        final_answer = self._generate_final_answer(query, retrieved_chunks)
+        retrieved_chunks = self._execute_retrieval(query, user_role, top_k=top_k_for_retrieval)
         
-        # Step 3: Format sources
+        final_answer = self._generate_final_answer(query, retrieved_chunks, socratic=socratic)
+        
         sources = [chunk['metadata'] for chunk in retrieved_chunks]
         
         return {

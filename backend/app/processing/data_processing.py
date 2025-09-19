@@ -26,33 +26,37 @@ def _create_chunk_id(doc_name: str, element_idx: int, chunk_idx: int) -> str:
 def _extract_entities_from_chunk(chunk_text: str, llm_interface: LLMInterface) -> List[Dict[str, str]]:
     """Uses an LLM to extract key entities from a text chunk."""
     
-    # --- START OF CHANGE ---
+    # --- IMPROVED GENERALIZED PROMPT ---
     prompt = f"""
-    You are a precise data extraction tool. Your ONLY job is to extract entities from the text provided.
-    From the educational text below, extract key entities of types: "Concept", "Person", "Theorem", "Course_Code".
+    You are a precise data extraction tool. Your job is to extract key named entities from the text provided.
+    From the text below, extract important entities of the following types: "Person", "Organization", "Location", "Date", "Technology", "Concept", or "Event".
 
     **CRITICAL INSTRUCTIONS:**
     1.  Analyze the text to find entities matching the types.
     2.  If you find entities, format them as a valid JSON list of objects. Each object must have a "type" and a "name".
     3.  **If you find NO entities, you MUST output an empty JSON list: `[]`.**
-    4.  **DO NOT output any other text, explanations, or conversational filler. Your entire response must be ONLY the JSON or the empty list.**
+    4.  **DO NOT output any other text or explanations. Your entire response must be ONLY the JSON or the empty list.**
 
-    **EXAMPLE 1:**
-    Text: "In CS101, we study Linear Regression, a concept developed by Legendre."
+    **EXAMPLE 1 (History Text):**
+    Text: "Established in 1839, the University of Missouri was the first public university west of the Mississippi River."
     Your Output:
     ```json
     [
-        {{"type": "Course_Code", "name": "CS101"}},
-        {{"type": "Concept", "name": "Linear Regression"}},
-        {{"type": "Person", "name": "Legendre"}}
+        {{"type": "Date", "name": "1839"}},
+        {{"type": "Organization", "name": "University of Missouri"}},
+        {{"type": "Location", "name": "Mississippi River"}}
     ]
     ```
 
-    **EXAMPLE 2:**
-    Text: "This is the first page of the document."
+    **EXAMPLE 2 (Cybersecurity Text):**
+    Text: "A SYN Flood is a type of DDoS attack that targets Layer 4 of the OSI model."
     Your Output:
     ```json
-    []
+    [
+        {{"type": "Concept", "name": "SYN Flood"}},
+        {{"type": "Technology", "name": "DDoS"}},
+        {{"type": "Concept", "name": "OSI model Layer 4"}}
+    ]
     ```
 
     **Now, analyze the following text and provide ONLY the JSON output.**
@@ -68,15 +72,12 @@ def _extract_entities_from_chunk(chunk_text: str, llm_interface: LLMInterface) -
 
     response_str = llm_interface.generate_response(prompt)
     try:
-        # The cleanup logic is now more important
-        # It handles cases where the model might still wrap the JSON in markdown
         match = re.search(r"```json\s*([\s\S]*?)\s*```", response_str)
         if match:
             json_str = match.group(1)
         else:
             json_str = response_str.strip()
             
-        # Ensure that we only attempt to load if the string looks like a list or object
         if json_str.startswith('[') and json_str.endswith(']'):
             entities = json.loads(json_str)
             if isinstance(entities, list):
@@ -89,40 +90,7 @@ def _extract_entities_from_chunk(chunk_text: str, llm_interface: LLMInterface) -
         logger.warning(f"Failed to decode LLM response for entity extraction. Raw: {response_str[:150]}...")
         return []
 
-def _classify_chunk_difficulty(chunk_text: str, llm_interface: LLMInterface) -> str:
-    """
-    Uses an LLM to classify the difficulty of a text chunk.
-    Returns 'Beginner', 'Intermediate', or 'Advanced'.
-    """
-    # We use a system prompt to make the LLM's task very clear
-    prompt = f"""
-    You are an expert curriculum designer. Your task is to classify the difficulty of the following text snippet from an educational document.
-    Analyze the text for complexity, technical jargon, and prerequisite knowledge.
-
-    Choose ONE of the following difficulty levels:
-    - "Beginner": Covers basic definitions, introductory concepts, and simple facts.
-    - "Intermediate": Explains concepts in more detail, introduces formulas, or compares/contrasts ideas.
-    - "Advanced": Discusses complex theories, mathematical proofs, niche applications, or highly specialized topics.
-
-    **CRITICAL INSTRUCTION: Your response MUST BE only a single word: Beginner, Intermediate, or Advanced.**
-
-    Text snippet to classify:
-    ---
-    {chunk_text}
-    ---
-
-    Classification:
-    """
-    response_str = llm_interface.generate_response(prompt).strip()
-
-    # Simple validation to ensure the response is one of the expected categories
-    valid_levels = ["Beginner", "Intermediate", "Advanced"]
-    if response_str in valid_levels:
-        return response_str
-    else:
-        # If the LLM fails to follow instructions, default to Intermediate
-        logger.warning(f"Failed to get valid difficulty classification. Raw response: '{response_str}'. Defaulting to 'Intermediate'.")
-        return "Intermediate"
+# --- REMOVED THE _classify_chunk_difficulty FUNCTION ---
 
 def process_and_chunk_documents(
     resource_paths: List[str],
@@ -159,9 +127,7 @@ def process_and_chunk_documents(
         doc_name = os.path.basename(doc_path)
         logger.info(f"Processing document: {doc_name}")
 
-        # --- RBAC IMPLEMENTATION ---
-        # Determine the access level based on the file's path
-        access_level = 'student' # Default access level
+        access_level = 'student' 
         for teacher_folder in config.TEACHER_ONLY_FOLDERS:
             if os.path.abspath(doc_path).startswith(os.path.abspath(teacher_folder)):
                 access_level = 'teacher'
@@ -178,11 +144,9 @@ def process_and_chunk_documents(
                 element_chunks = []
 
                 if element_type == "Table":
-                    # You can add more sophisticated table processing here
                     element_chunks.append(f"Data Table: {str(element)}")
                 elif element_type == "Image":
-                    # You can add image summarization logic here if needed
-                    continue # Skipping images for now
+                    continue 
                 else:
                     text = str(element)
                     if len(text.strip()) > config.MIN_CHUNK_LENGTH:
@@ -195,30 +159,24 @@ def process_and_chunk_documents(
                     
                     chunk_id = _create_chunk_id(doc_name, i, j)
                     
-                    # Classify the difficulty before creating the metadata dict
-                    difficulty = _classify_chunk_difficulty(cleaned_chunk, embedding_interface)
-                    logger.info(f"Chunk {chunk_id} classified as: {difficulty}")
+                    # --- REMOVED DIFFICULTY CLASSIFICATION CALL ---
                     
-                    # --- METADATA ENRICHMENT ---
                     chunk_metadata = {
                         "document_name": doc_name,
                         "chunk_id": chunk_id,
                         "element_type": element_type,
                         "page_number": getattr(element.metadata, 'page_number', None),
                         "access_level": access_level,
-                        "difficulty": difficulty # Add the new metadata field
                     }
 
                     chunk_info = {"chunk_text": cleaned_chunk, "metadata": chunk_metadata}
                     doc_all_chunks_for_kg.append(chunk_info)
                     all_chunks_for_vector_store.append(chunk_info)
 
-            # Populate Knowledge Graph
             if doc_all_chunks_for_kg:
                 graph_db.add_document_and_chunks(doc_name, doc_all_chunks_for_kg)
                 logger.info(f"Extracting and linking entities for {len(doc_all_chunks_for_kg)} chunks...")
                 for chunk in doc_all_chunks_for_kg:
-                    # You might want to do this in batches for performance
                     entities = _extract_entities_from_chunk(chunk['chunk_text'], embedding_interface)
                     if entities:
                         graph_db.link_chunk_to_entities(chunk['metadata']['chunk_id'], entities)
