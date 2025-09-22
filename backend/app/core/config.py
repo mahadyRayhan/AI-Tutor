@@ -42,7 +42,6 @@ DEFAULT_VECTOR_DB_PATH = str(DB_DIR / "chroma_db")
 DEFAULT_LOG_FILE_PATH = str(LOG_DIR / "ai_tutor.log")
 DEFAULT_FEEDBACK_DB_PATH = str(DB_DIR / "feedback_history.csv")
 
-
 # --- Default RAG Settings ---
 DEFAULT_VECTOR_DB_TYPE = "chroma"
 DEFAULT_CHUNK_STRATEGY = "recursive"
@@ -52,13 +51,58 @@ DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_TOP_K = 5
 DEFAULT_MAX_HOPS = 2
 
+# --- Multi-Domain Processing Settings ---
+# Domain-specific chunk sizes (can override defaults based on content type)
+STEM_CHUNK_SIZE = int(os.getenv("STEM_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE + 200)))  # Larger chunks for technical content
+NON_STEM_CHUNK_SIZE = int(os.getenv("NON_STEM_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE - 200)))  # Smaller chunks for narrative content
+
+STEM_CHUNK_OVERLAP = int(os.getenv("STEM_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP + 100)))  # More overlap for technical continuity
+NON_STEM_CHUNK_OVERLAP = int(os.getenv("NON_STEM_CHUNK_OVERLAP", str(DEFAULT_CHUNK_OVERLAP - 50)))  # Less overlap for distinct concepts
+
+# Domain detection keywords (can be customized based on your content)
+STEM_KEYWORDS = {
+    'computer_science': ['algorithm', 'programming', 'software', 'hardware', 'coding', 'database', 'API', 'framework', 'data structure', 'python', 'java', 'javascript'],
+    'cybersecurity': ['cybersecurity', 'cyber security', 'encryption', 'malware', 'firewall', 'vulnerability', 'attack', 'security', 'threat', 'defense', 'penetration', 'hacking'],
+    'machine_learning': ['neural network', 'model', 'training', 'dataset', 'classification', 'regression', 'AI', 'artificial intelligence', 'deep learning', 'tensorflow', 'pytorch'],
+    'general_tech': ['technology', 'system', 'network', 'server', 'protocol', 'technical', 'implementation', 'method', 'digital', 'computing']
+}
+
+NON_STEM_KEYWORDS = {
+    'history': ['historical', 'century', 'war', 'revolution', 'empire', 'dynasty', 'era', 'period', 'ancient', 'medieval', 'chronology', 'timeline'],
+    'literature': ['novel', 'poem', 'author', 'literary', 'narrative', 'character', 'plot', 'theme', 'poetry', 'prose', 'fiction', 'writing'],
+    'institutional': ['university', 'college', 'institution', 'founded', 'established', 'tradition', 'homecoming', 'academic', 'campus', 'student'],
+    'cultural': ['tradition', 'culture', 'society', 'philosophy', 'art', 'language', 'custom', 'practice', 'social', 'community']
+}
+
+# Retrieval settings by domain
+STEM_RETRIEVAL_SETTINGS = {
+    'kg_weight': 0.6,  # Knowledge graph more important for technical relationships
+    'vector_weight': 0.4,
+    'top_k_multiplier': 1.2  # Retrieve more chunks for complex technical queries
+}
+
+NON_STEM_RETRIEVAL_SETTINGS = {
+    'kg_weight': 0.4,  # Vector search more important for narrative content
+    'vector_weight': 0.6,
+    'top_k_multiplier': 1.0
+}
+
 # --- Caching ---
 DEFAULT_USE_EMBEDDING_CACHE = True
 DEFAULT_USE_LLM_CACHE = True
 
 # --- Generation Configs ---
-DEFAULT_GOOGLE_GENERATION_CONFIG = { "temperature": 0.3, "top_p": 0.95, "top_k": 40, "max_output_tokens": 8192, "response_mime_type": "text/plain" }
-DEFAULT_OPENAI_GENERATION_CONFIG = { "temperature": 0.3, "max_tokens": 4096 }
+DEFAULT_GOOGLE_GENERATION_CONFIG = { 
+    "temperature": 0.3, 
+    "top_p": 0.95, 
+    "top_k": 40, 
+    "max_output_tokens": 8192, 
+    "response_mime_type": "text/plain" 
+}
+DEFAULT_OPENAI_GENERATION_CONFIG = { 
+    "temperature": 0.3, 
+    "max_tokens": 4096 
+}
 
 # --- Context Management ---
 CHAR_TO_TOKEN_RATIO = 3.5
@@ -70,3 +114,49 @@ MIN_CHUNK_LENGTH = 50
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+
+# --- Entity and Relationship Extraction Settings ---
+MAX_ENTITIES_PER_CHUNK = int(os.getenv("MAX_ENTITIES_PER_CHUNK", "15"))
+MAX_RELATIONSHIPS_PER_CHUNK = int(os.getenv("MAX_RELATIONSHIPS_PER_CHUNK", "10"))
+
+# Domain-specific processing flags
+ENABLE_TECHNICAL_ENTITY_EXTRACTION = os.getenv("ENABLE_TECHNICAL_ENTITY_EXTRACTION", "true").lower() == "true"
+ENABLE_HISTORICAL_RELATIONSHIP_INFERENCE = os.getenv("ENABLE_HISTORICAL_RELATIONSHIP_INFERENCE", "true").lower() == "true"
+
+# Document classification thresholds
+DOMAIN_CLASSIFICATION_THRESHOLD = float(os.getenv("DOMAIN_CLASSIFICATION_THRESHOLD", "0.3"))  # Minimum score difference to classify as STEM vs Non-STEM
+
+# --- Enhanced Logging Settings ---
+ENTITY_EXTRACTION_LOG_LEVEL = os.getenv("ENTITY_EXTRACTION_LOG_LEVEL", DEFAULT_LOG_LEVEL)
+RELATIONSHIP_EXTRACTION_LOG_LEVEL = os.getenv("RELATIONSHIP_EXTRACTION_LOG_LEVEL", DEFAULT_LOG_LEVEL)
+RETRIEVAL_LOG_LEVEL = os.getenv("RETRIEVAL_LOG_LEVEL", DEFAULT_LOG_LEVEL)
+
+# --- Multi-Domain RAG Settings ---
+# Enhanced retrieval for diverse content
+MULTI_DOMAIN_TOP_K = int(os.getenv("MULTI_DOMAIN_TOP_K", "12"))  # Higher default for diverse content
+CROSS_DOMAIN_SEARCH_ENABLED = os.getenv("CROSS_DOMAIN_SEARCH_ENABLED", "true").lower() == "true"
+
+# Domain-aware reasoning settings
+STEM_REASONING_TEMPERATURE = float(os.getenv("STEM_REASONING_TEMPERATURE", "0.2"))  # Lower for technical accuracy
+NON_STEM_REASONING_TEMPERATURE = float(os.getenv("NON_STEM_REASONING_TEMPERATURE", "0.3"))  # Slightly higher for creative inference
+
+# Text search fallback settings
+ENABLE_TEXT_SEARCH_FALLBACK = os.getenv("ENABLE_TEXT_SEARCH_FALLBACK", "true").lower() == "true"
+TEXT_SEARCH_CHUNK_LIMIT = int(os.getenv("TEXT_SEARCH_CHUNK_LIMIT", "20"))
+
+# --- Utility Functions for Multi-Domain Processing ---
+def get_chunk_size_for_domain(domain: str) -> int:
+    """Get appropriate chunk size based on content domain."""
+    return STEM_CHUNK_SIZE if domain == "STEM" else NON_STEM_CHUNK_SIZE
+
+def get_chunk_overlap_for_domain(domain: str) -> int:
+    """Get appropriate chunk overlap based on content domain."""
+    return STEM_CHUNK_OVERLAP if domain == "STEM" else NON_STEM_CHUNK_OVERLAP
+
+def get_retrieval_settings_for_domain(domain: str) -> dict:
+    """Get retrieval settings based on content domain."""
+    return STEM_RETRIEVAL_SETTINGS if domain == "STEM" else NON_STEM_RETRIEVAL_SETTINGS
+
+def get_reasoning_temperature_for_domain(domain: str) -> float:
+    """Get reasoning temperature based on content domain."""
+    return STEM_REASONING_TEMPERATURE if domain == "STEM" else NON_STEM_REASONING_TEMPERATURE

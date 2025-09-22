@@ -1,0 +1,26 @@
+{
+"query": "According to the document, what are the three 'firsts' that the University of Missouri is known for?",
+"user_role": "student"
+}
+
+{
+"query": "Why would I use Huber Loss instead of Mean Squared Error?",
+"user_role": "student",
+"socratic": true
+}
+
+{
+"query": "What is the F1 score and when would I use it?",
+"user_role": "student"
+}
+"answer": "The F1 score is a technical metric utilized to assess a model's performance. Specifically, it is described as a \"weighted\" measure. However, the provided context does not elaborate on what specific aspects it weights or the methodology behind this weighting.\n\nRegarding the application of the F1 score, the provided context does not contain information on when it would be appropriate to use this metric.",
+
+{
+"query": "What is the F1 score and when would I use it?",
+"user_role": "teacher"
+}
+
+{
+    "query": "What is the cross-entropy loss function and how is it used in neural networks for classification?",
+    "user_role": "teacher"
+}

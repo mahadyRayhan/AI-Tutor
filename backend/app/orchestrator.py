@@ -1,7 +1,7 @@
 # backend/app/orchestrator.py
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from app.agents.rag_agent import RAGAgent
 from app.agents.image_agent import ImageAgent
@@ -24,27 +24,46 @@ class Orchestrator:
         Uses an LLM to classify the user's query as STEM or Non-STEM.
         """
         self.logger.info(f"Classifying query: '{query}'")
-        # --- IMPROVED CLASSIFIER PROMPT ---
-        prompt = f"""
-        Analyze the user's query below and classify its core subject matter as either "STEM" or "Non-STEM".
+        
+        prompt = f"""You are a topic classifier. Classify the following query as either "STEM" or "Non-STEM".
 
-        - **STEM** topics relate to hard sciences, technology, engineering, and mathematics. Examples: "What is a DDoS attack?", "Explain the bias-variance trade-off.", "What are loss functions in machine learning?".
-        - **Non-STEM** topics relate to humanities, arts, and social sciences. Examples: "What is the history of the University of Missouri?", "Summarize the purpose of the document about Mizzou's campus."
+            STEM includes: Science, Technology, Engineering, Mathematics, Computer Science, Physics, Chemistry, Biology, etc.
+            Non-STEM includes: History, Literature, Art, Philosophy, Social Sciences, Humanities, etc.
 
-        Ignore instructional phrases like "According to the document" and focus only on the subject of the question.
-        Your response must be a single word: STEM or Non-STEM.
+            Focus on the PRIMARY SUBJECT of the query, not incidental words or numbers.
 
-        Query: "{query}"
-        Classification:
-        """
-        response = self.llm_interface.generate_response(prompt).strip().lower()
+            Examples:
+            - "What is machine learning?" → STEM (computer science topic)
+            - "When was the University of Missouri established?" → Non-STEM (university history)
+            - "Calculate the derivative of x²" → STEM (mathematics)
+            - "Who wrote Romeo and Juliet?" → Non-STEM (literature)
+            - "What is the history of calculus?" → Non-STEM (historical topic, even though calculus is math)
+            - "How does photosynthesis work?" → STEM (biology)
 
-        if "stem" in response:
+            Query: "{query}"
+
+            Respond with exactly one word: STEM or Non-STEM"""
+
+        response = self.llm_interface.generate_response(prompt).strip()
+        
+        # More robust parsing - check for exact matches
+        response_upper = response.upper()
+        
+        # Look for exact classification matches
+        if response_upper == "STEM":
             self.logger.info("Query classified as: STEM")
             return "STEM"
-        else:
+        elif response_upper == "NON-STEM" or "NON-STEM" in response_upper:
             self.logger.info("Query classified as: Non-STEM")
             return "Non-STEM"
+        else:
+            # Fallback: if response contains stem but not in the context of "non-stem"
+            if "STEM" in response_upper and "NON" not in response_upper:
+                self.logger.info("Query classified as: STEM (fallback)")
+                return "STEM"
+            else:
+                self.logger.info("Query classified as: Non-STEM (fallback)")
+                return "Non-STEM"
 
 
     def _route_query(self, query: str) -> str:
@@ -78,3 +97,37 @@ class Orchestrator:
             
         response['topic_class'] = topic_class
         return response
+
+    def find_chunks_by_entities(self, entity_names: List[str]) -> List[Dict[str, Any]]:
+        """
+        Finds all chunk texts and metadata linked to a list of entity names.
+        """
+        if not entity_names:
+            return []
+
+        query = """
+        UNWIND $entity_names AS entityName
+        MATCH (e:Entity)-[:MENTIONS]-(c:Chunk)-[:HAS_CHUNK]-(d:Document)
+        WHERE toLower(e.name) = toLower(entityName)
+        RETURN c.text AS text,
+               c.id AS chunk_id,
+               d.name AS document_name,
+               c.element_type AS element_type,
+               c.access_level AS access_level
+        """
+        parameters = {"entity_names": entity_names}
+        results = self.execute_query(query, parameters)
+        
+        # Format the results to match the vector store's output
+        formatted_results = []
+        for record in results:
+            formatted_results.append({
+                "text": record['text'],
+                "metadata": {
+                    "chunk_id": record['chunk_id'],
+                    "document_name": record['document_name'],
+                    "element_type": record['element_type'],
+                    "access_level": record['access_level']
+                }
+            })
+        return formatted_results
