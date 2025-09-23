@@ -1,4 +1,4 @@
-# backend/app/agents/rag_agent.py (Enhanced for multi-domain content)
+# backend/app/agents/rag_agent.py (Enhanced query classification)
 
 import logging
 import json
@@ -24,23 +24,92 @@ class RAGAgent:
         self.graph_db = graph_db
         self.logger = logger
 
-    def _detect_query_domain(self, query: str) -> str:
+    def _classify_query_domain(self, query: str) -> str:
         """
-        Detects whether a query is STEM or non-STEM focused.
+        Uses LLM to intelligently classify query domain with high accuracy.
+        """
+        self.logger.info("Classifying query domain...")
+        
+        prompt = f"""
+        You are a domain classification expert. Classify the following question as either "STEM" or "Non-STEM".
+
+        **STEM includes:**
+        - Computer Science (programming, algorithms, data structures, software engineering)
+        - Cybersecurity (network security, threats, vulnerabilities, encryption, DDoS, malware)
+        - Machine Learning & AI (neural networks, models, training, datasets, deep learning)
+        - Mathematics, Engineering, Physics, Chemistry, Biology
+        - Technology, Systems, Networks, Protocols
+        - Data Science, Statistics, Analytics
+
+        **Non-STEM includes:**
+        - History, Literature, Philosophy, Arts
+        - Social Sciences, Psychology, Sociology
+        - Business, Economics, Management
+        - Languages, Cultural Studies
+        - Institutional history, traditions, achievements
+
+        **Examples:**
+        - "What is a DDoS attack?" → STEM (Cybersecurity)
+        - "How do neural networks work?" → STEM (Machine Learning)
+        - "What algorithms are used for sorting?" → STEM (Computer Science)
+        - "What are the firsts that University of Missouri is known for?" → Non-STEM (Institutional History)
+        - "Who wrote Romeo and Juliet?" → Non-STEM (Literature)
+
+        **Question:** "{query}"
+
+        **Classification:** Respond with ONLY "STEM" or "Non-STEM"
+        """
+        
+        response = self.llm_interface.generate_response(prompt).strip().upper()
+        
+        # Parse the response to extract the classification
+        if "STEM" in response and "NON-STEM" not in response:
+            classification = "STEM"
+        elif "NON-STEM" in response:
+            classification = "Non-STEM"
+        else:
+            # Fallback to keyword-based classification
+            self.logger.warning(f"LLM classification unclear: '{response}'. Using fallback.")
+            classification = self._fallback_query_classification(query)
+        
+        self.logger.info(f"Query classified as: {classification}")
+        return classification
+
+    def _fallback_query_classification(self, query: str) -> str:
+        """
+        Fallback keyword-based classification with enhanced STEM detection.
         """
         stem_indicators = [
-            'algorithm', 'programming', 'software', 'code', 'system', 'network', 
-            'security', 'encryption', 'vulnerability', 'attack', 'machine learning',
-            'neural network', 'model', 'training', 'AI', 'artificial intelligence',
-            'computer science', 'cyber', 'technology', 'technical', 'data structure',
-            'database', 'protocol', 'framework', 'API', 'implementation'
+            # Computer Science
+            'algorithm', 'programming', 'software', 'code', 'coding', 'python', 'java', 'javascript',
+            'data structure', 'database', 'API', 'framework', 'object-oriented', 'functional programming',
+            
+            # Cybersecurity 
+            'security', 'cybersecurity', 'cyber security', 'encryption', 'vulnerability', 'attack', 
+            'DDoS', 'malware', 'firewall', 'penetration', 'hacking', 'threat', 'defense',
+            'network security', 'information security', 'cyber attack', 'cyber defense',
+            
+            # Machine Learning & AI
+            'machine learning', 'neural network', 'deep learning', 'AI', 'artificial intelligence',
+            'model', 'training', 'dataset', 'classification', 'regression', 'supervised learning',
+            'unsupervised learning', 'tensorflow', 'pytorch', 'data science', 'analytics',
+            
+            # General Tech & Engineering
+            'system', 'network', 'server', 'protocol', 'technical', 'implementation',
+            'engineering', 'mathematics', 'statistics', 'physics', 'chemistry', 'biology',
+            'scientific method', 'experiment', 'hypothesis', 'theory', 'formula',
+            
+            # Interview/Technical Questions
+            'interview questions', 'technical interview', 'coding interview', 'programming interview'
         ]
         
         non_stem_indicators = [
-            'history', 'historical', 'tradition', 'culture', 'literature', 'author',
-            'century', 'war', 'revolution', 'founded', 'established', 'first',
-            'university', 'college', 'institution', 'homecoming', 'celebration',
-            'movement', 'society', 'philosophy', 'art', 'narrative', 'story'
+            'history', 'historical', 'literature', 'author', 'novel', 'poem', 'philosophy',
+            'culture', 'tradition', 'society', 'social', 'psychology', 'sociology',
+            'university founded', 'college established', 'homecoming', 'first university',
+            'institutional history', 'cultural significance', 'artistic movement',
+            'political', 'economic theory', 'business strategy', 'management',
+            'language', 'linguistics', 'anthropology', 'archaeology'
         ]
         
         query_lower = query.lower()
@@ -48,7 +117,14 @@ class RAGAgent:
         stem_score = sum(1 for indicator in stem_indicators if indicator in query_lower)
         non_stem_score = sum(1 for indicator in non_stem_indicators if indicator in query_lower)
         
-        # Default to non-STEM if unclear, since historical/institutional queries are common
+        # Enhanced scoring with multi-word phrase bonuses
+        if any(phrase in query_lower for phrase in ['machine learning', 'neural network', 'deep learning', 'data science']):
+            stem_score += 3
+        if any(phrase in query_lower for phrase in ['cyber security', 'network security', 'ddos attack']):
+            stem_score += 3
+        if any(phrase in query_lower for phrase in ['university founded', 'college established', 'institutional history']):
+            non_stem_score += 3
+            
         return "STEM" if stem_score > non_stem_score else "Non-STEM"
 
     def _clean_query_for_embedding(self, query: str) -> str:
@@ -79,18 +155,21 @@ class RAGAgent:
         if query_domain == "STEM":
             domain_context = """
             For STEM queries, extract:
-            - Technical terms and concepts (algorithms, systems, protocols)
-            - Technology names (programming languages, frameworks, tools)
-            - Research areas (machine learning, cybersecurity, computer science)
+            - Technical terms and concepts (algorithms, systems, protocols, attacks, defenses)
+            - Technology names (programming languages, frameworks, tools, platforms)
+            - Research areas (machine learning, cybersecurity, computer science, data science)
             - Performance metrics and methods
-            - Technical organizations and institutions
+            - Technical organizations and standards
+            - Security concepts (DDoS, malware, encryption, vulnerabilities)
+            - ML concepts (neural networks, models, training, datasets)
             """
             
             related_terms = """
             Include related technical concepts like:
-            - For "security": vulnerability, threat, attack, defense, encryption
-            - For "machine learning": model, training, dataset, algorithm, neural network
-            - For "programming": code, software, language, framework, library
+            - For "security": vulnerability, threat, attack, defense, encryption, malware, DDoS
+            - For "machine learning": model, training, dataset, algorithm, neural network, AI
+            - For "programming": code, software, language, framework, library, algorithm
+            - For "interview": technical questions, coding problems, system design
             """
         else:
             domain_context = """
@@ -143,28 +222,35 @@ class RAGAgent:
 
     def _execute_retrieval(self, query: str, user_role: str, query_domain: str, top_k: int) -> List[Dict[str, Any]]:
         """
-        Multi-domain hybrid retrieval with domain-specific optimization.
+        Multi-domain hybrid retrieval that works regardless of document classification.
         """
         entities = self._extract_entities_from_query(query, query_domain)
         
-        # Knowledge graph retrieval
+        # Knowledge graph retrieval (searches all documents regardless of their classification)
         kg_chunks = self.graph_db.get_context_for_entities(entities)
         
         # Domain-specific broader entity search
         broader_entities = []
         if query_domain == "STEM":
-            broader_entities = ["technology", "system", "algorithm", "security", "machine learning", "computer science"]
+            broader_entities = [
+                "technology", "system", "algorithm", "security", "machine learning", 
+                "computer science", "cybersecurity", "programming", "software", 
+                "neural network", "data", "model", "network", "attack", "encryption"
+            ]
         else:
-            broader_entities = ["university", "institution", "history", "tradition", "first", "established"]
+            broader_entities = [
+                "university", "institution", "history", "tradition", "first", 
+                "established", "founded", "college", "academic"
+            ]
         
-        # Check if query mentions specific institutions
+        # Check if query mentions specific institutions or topics
         query_lower = query.lower()
         if any(term in query_lower for term in ["university", "missouri", "mizzou"]):
             broader_entities.extend(["University of Missouri", "Mizzou", "Missouri"])
         
         main_entity_chunks = self.graph_db.get_context_for_entities(broader_entities)
 
-        # Vector search with domain context
+        # Vector search with domain context (searches all documents)
         embedding_query = self._clean_query_for_embedding(query)
         query_embedding = self.llm_interface.get_embedding(embedding_query, task_type="RETRIEVAL_QUERY")
         
@@ -181,7 +267,7 @@ class RAGAgent:
         expanded_vector_chunks = []
         if query_embedding:
             if query_domain == "STEM":
-                expanded_query = f"{embedding_query} technical system implementation algorithm method approach"
+                expanded_query = f"{embedding_query} technical system implementation algorithm method cybersecurity machine learning programming"
             else:
                 expanded_query = f"{embedding_query} history establishment founding first tradition innovation pioneering"
             
@@ -195,9 +281,14 @@ class RAGAgent:
 
         # Text-based fallback search for specific terms
         text_search_chunks = []
-        if query_domain == "Non-STEM" and any(term in query_lower for term in ["first", "tradition", "homecoming", "founded"]):
-            search_terms = ["homecoming", "tradition", "first", "founded", "established", "started"]
-            text_search_chunks = self.graph_db.search_chunks_by_text_content(search_terms)
+        if query_domain == "STEM":
+            if any(term in query_lower for term in ["ddos", "cyber", "security", "machine learning", "algorithm"]):
+                search_terms = ["DDoS", "cybersecurity", "security", "algorithm", "machine learning", "neural network"]
+                text_search_chunks = self.graph_db.search_chunks_by_text_content(search_terms)
+        else:
+            if any(term in query_lower for term in ["first", "tradition", "homecoming", "founded"]):
+                search_terms = ["homecoming", "tradition", "first", "founded", "established", "started"]
+                text_search_chunks = self.graph_db.search_chunks_by_text_content(search_terms)
 
         # Combine all sources
         all_chunks = kg_chunks + main_entity_chunks + vector_chunks + expanded_vector_chunks + text_search_chunks
@@ -224,18 +315,19 @@ class RAGAgent:
         if query_domain == "STEM":
             domain_instructions = """
             **STEM-Specific Instructions:**
-            1. **Technical Relationships:** Look for implementation details, system architectures, method applications
-            2. **Performance Metrics:** Extract benchmarks, improvements, comparisons
-            3. **Research Contributions:** Identify novel approaches, innovations, breakthroughs
-            4. **Problem-Solution Mapping:** Connect problems to their technical solutions
-            5. **Methodological Details:** Extract algorithms, processes, and technical approaches
+            1. **Technical Accuracy:** Extract precise technical details, specifications, and methodologies
+            2. **Problem-Solution Mapping:** Connect technical problems to their solutions and implementations
+            3. **Security Analysis:** For cybersecurity topics, identify threats, vulnerabilities, and countermeasures
+            4. **ML/AI Details:** For machine learning, extract model types, training approaches, performance metrics
+            5. **System Architecture:** Identify system components, relationships, and technical workflows
+            6. **Code and Implementation:** Look for programming concepts, algorithms, and technical procedures
             """
         else:
             domain_instructions = """
             **Non-STEM Specific Instructions:**
             1. **Historical Inference:** "Started" = "First", "Founded" = "First established", "Pioneered" = "First to do"
             2. **Chronological Significance:** Look for temporal firsts and historical precedence
-            3. **Institutional Achievements:** Extract university/organizational accomplishments
+            3. **Institutional Achievements:** Extract university/organizational accomplishments and milestones
             4. **Traditional Elements:** Identify customs, practices, and cultural significance
             5. **Legacy and Impact:** Consider long-term influence and historical importance
             """
@@ -247,9 +339,9 @@ class RAGAgent:
 
         **Universal Requirements:**
         - Extract EVERY piece of information relevant to the question
-        - Make logical inferences based on context
+        - Make logical inferences based on context and domain knowledge
         - Look for both direct statements and implied information
-        - Consider chronological and causal relationships
+        - Consider relationships, dependencies, and connections between concepts
 
         **User's Question:** {query}
 
@@ -267,7 +359,7 @@ class RAGAgent:
     
     def _generate_final_answer(self, query: str, reasoned_context: str, query_domain: str) -> str:
         """
-        Domain-aware final answer generation.
+        Domain-aware final answer generation with future multimedia support preparation.
         """
         self.logger.info(f"Generating final {query_domain} answer...")
         
@@ -275,23 +367,24 @@ class RAGAgent:
             answer_style = """
             **STEM Answer Style:**
             - Provide technical accuracy and precision
-            - Include relevant technical details and specifications
-            - Explain methodologies and approaches clearly
-            - Use appropriate technical terminology
-            - Structure information logically (problem → solution → results)
+            - Include relevant technical details, specifications, and methodologies
+            - Explain step-by-step processes and implementations where applicable
+            - Use appropriate technical terminology with clear explanations
+            - Structure information logically (concept → implementation → examples/results)
+            - Prepare for future multimedia: Note where diagrams, code examples, or visual demonstrations would be helpful
             """
         else:
             answer_style = """
             **Non-STEM Answer Style:**
-            - Provide comprehensive historical context
-            - Present information chronologically when relevant
-            - Include cultural and institutional significance
-            - Use clear, educational language
-            - Structure as a complete narrative or organized list
+            - Provide comprehensive historical and institutional context
+            - Present information chronologically or thematically when relevant
+            - Include cultural significance and broader implications
+            - Use clear, educational language accessible to students
+            - Structure as a complete narrative or well-organized presentation
             """
 
         prompt = f"""
-        You are providing a {query_domain} answer based on the analyzed facts below.
+        You are providing a comprehensive {query_domain} answer based on the analyzed facts below.
 
         {answer_style}
 
@@ -300,7 +393,8 @@ class RAGAgent:
         2. Present information clearly and comprehensively
         3. Include all relevant details found in the analysis
         4. Use appropriate domain-specific language and context
-        5. Do NOT invent information beyond the provided facts
+        5. Provide educational value and depth appropriate for the domain
+        6. Do NOT invent information beyond the provided facts
 
         **User's Question:** {query}
 
@@ -314,18 +408,20 @@ class RAGAgent:
         
         return self.llm_interface.generate_response(prompt)
 
-    def run(self, query: str, user_role: str = 'student', socratic: bool = False, topic_class: str = "Non-STEM") -> Dict[str, Any]:
+    def run(self, query: str, user_role: str = 'student', socratic: bool = False, topic_class: str = "Auto") -> Dict[str, Any]:
         """
-        Enhanced multi-domain RAG pipeline.
+        Enhanced query-based multi-domain RAG pipeline.
         """
-        # Detect query domain automatically, but allow override via topic_class
-        detected_domain = self._detect_query_domain(query)
-        query_domain = topic_class if topic_class in ["STEM", "Non-STEM"] else detected_domain
+        # Use intelligent query-based classification
+        if topic_class == "Auto" or topic_class not in ["STEM", "Non-STEM"]:
+            query_domain = self._classify_query_domain(query)
+        else:
+            query_domain = topic_class
         
         self.logger.info(f"RAG Agent processing {query_domain} query: '{query}' (Socratic: {socratic})")
         
-        # Enhanced retrieval with domain awareness
-        top_k_for_retrieval = 12  # Increased for multi-domain coverage
+        # Enhanced retrieval that searches all documents regardless of their classification
+        top_k_for_retrieval = 15  # Increased for better coverage across misclassified documents
         retrieved_chunks = self._execute_retrieval(query, user_role, query_domain, top_k=top_k_for_retrieval)
 
         if not retrieved_chunks:
@@ -344,12 +440,13 @@ class RAGAgent:
             source_doc = chunk.get('metadata', {}).get('document_name')
             if source_doc and source_doc not in seen_sources:
                 metadata = chunk['metadata'].copy()
-                metadata['query_domain'] = query_domain  # Add domain context to metadata
+                metadata['query_domain'] = query_domain
                 unique_sources.append(metadata)
                 seen_sources.add(source_doc)
         
         return {
             "answer": final_answer,
             "sources": unique_sources,
-            "query_domain": query_domain  # Include domain in response
+            "query_domain": query_domain,
+            "multimedia_ready": query_domain == "STEM"  # Flag for future multimedia features
         }

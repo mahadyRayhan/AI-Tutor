@@ -24,3 +24,6 @@
     "query": "What is the cross-entropy loss function and how is it used in neural networks for classification?",
     "user_role": "teacher"
 }
+
+
+what is the difference between mean square error (MSE) and Huber loss?

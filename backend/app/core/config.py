@@ -3,6 +3,7 @@
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+from typing import Dict, List, Any
 
 # --- THE CRITICAL FIX: DEFINE THE PROJECT ROOT ---
 # This makes all paths absolute and independent of the current working directory.
@@ -160,3 +161,78 @@ def get_retrieval_settings_for_domain(domain: str) -> dict:
 def get_reasoning_temperature_for_domain(domain: str) -> float:
     """Get reasoning temperature based on content domain."""
     return STEM_REASONING_TEMPERATURE if domain == "STEM" else NON_STEM_REASONING_TEMPERATURE
+
+# --- Multimedia Generation Settings (Using Existing GOOGLE_API_KEY) ---
+# Your existing VEO model configuration
+VEO3_MODEL = os.getenv("VEO3_MODEL", "veo-3.0-generate-preview")
+
+# Multimedia Content Limits  
+MAX_IMAGES_PER_RESPONSE = int(os.getenv("MAX_IMAGES_PER_RESPONSE", "3"))
+MAX_VIDEOS_PER_RESPONSE = int(os.getenv("MAX_VIDEOS_PER_RESPONSE", "1"))
+MULTIMEDIA_GENERATION_TIMEOUT = int(os.getenv("MULTIMEDIA_GENERATION_TIMEOUT", "300"))  # 5 minutes
+MAX_MULTIMEDIA_SIZE_MB = int(os.getenv("MAX_MULTIMEDIA_SIZE_MB", "50"))
+
+# Feature Flags (you can disable these if needed)
+ENABLE_IMAGE_GENERATION = os.getenv("ENABLE_IMAGE_GENERATION", "true").lower() == "true"
+ENABLE_VIDEO_GENERATION = os.getenv("ENABLE_VIDEO_GENERATION", "true").lower() == "true"
+ENABLE_MULTIMEDIA_FOR_STUDENTS_ONLY = os.getenv("ENABLE_MULTIMEDIA_FOR_STUDENTS_ONLY", "true").lower() == "true"
+
+# Chain of Thoughts Settings
+COT_MAX_COMPONENTS = int(os.getenv("COT_MAX_COMPONENTS", "6"))
+COT_MAX_STEPS = int(os.getenv("COT_MAX_STEPS", "8"))
+COT_REASONING_TEMPERATURE = float(os.getenv("COT_REASONING_TEMPERATURE", "0.2"))
+
+# High-priority concepts that should trigger multimedia
+HIGH_PRIORITY_CONCEPTS = [
+    "gradient descent", "neural network", "deep learning", "algorithm", 
+    "cybersecurity", "machine learning", "data structure", "encryption",
+    "backpropagation", "optimization", "classification", "regression"
+]
+
+VISUALIZATION_TRIGGERS = [
+    "how does", "how it works", "step by step", "process", "algorithm",
+    "explain", "visualize", "show me", "demonstrate", "what is"
+]
+
+# Cache directories (optional)
+MULTIMEDIA_CACHE_DIR = PROJECT_ROOT / "cache" / "multimedia"
+MULTIMEDIA_TEMP_DIR = PROJECT_ROOT / "temp" / "multimedia"
+
+# Utility function to check if query should trigger multimedia
+def should_generate_multimedia(query: str, user_role: str, query_domain: str) -> bool:
+    """
+    Determines if a query should trigger multimedia generation.
+    """
+    if not ENABLE_MULTIMEDIA_FOR_STUDENTS_ONLY or user_role != 'student':
+        return False
+        
+    if query_domain != "STEM":
+        return False
+        
+    if not (ENABLE_IMAGE_GENERATION or ENABLE_VIDEO_GENERATION):
+        return False
+    
+    query_lower = query.lower()
+    
+    # Check for high-priority concepts
+    has_priority_concept = any(concept in query_lower for concept in HIGH_PRIORITY_CONCEPTS)
+    
+    # Check for visualization triggers
+    has_viz_trigger = any(trigger in query_lower for trigger in VISUALIZATION_TRIGGERS)
+    
+    return has_priority_concept or has_viz_trigger
+
+def get_multimedia_settings() -> Dict[str, Any]:
+    """
+    Returns current multimedia generation settings.
+    """
+    return {
+        "image_generation_enabled": ENABLE_IMAGE_GENERATION,
+        "video_generation_enabled": ENABLE_VIDEO_GENERATION,
+        "max_images": MAX_IMAGES_PER_RESPONSE,
+        "max_videos": MAX_VIDEOS_PER_RESPONSE,
+        "max_size_mb": MAX_MULTIMEDIA_SIZE_MB,
+        "timeout_seconds": MULTIMEDIA_GENERATION_TIMEOUT,
+        "google_api_available": bool(GOOGLE_API_KEY),
+        "veo_model": VEO3_MODEL
+    }
