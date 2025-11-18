@@ -3,1459 +3,367 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chain of Thought RAG Interface</title>
+    <title>C Programming Tutor</title>
+    
+    <!-- Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <!-- Syntax Highlighting -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        :root {
+            --bg-color: #f4f4f9;
+            --chat-bg: #ffffff;
+            --primary-color: #2c3e50;
+            --accent-color: #3498db;
+            --user-msg-bg: #3498db;
+            --bot-msg-bg: #ecf0f1;
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            background: linear-gradient(135deg, #EFF6FF 0%, #DDD6FE 100%);
-            min-height: 100vh;
-            padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            color: #333;
         }
 
-        .container {
-            max-width: 1200px;
+        /* --- Layout --- */
+        .main-container {
+            display: flex;
+            width: 100%;
+            max-width: 1400px;
             margin: 0 auto;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-
-        .header h1 {
-            font-size: 2.5rem;
-            color: #1F2937;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 15px;
-            margin-bottom: 10px;
-        }
-
-        .header-icon {
-            font-size: 2.5rem;
-        }
-
-        .header p {
-            color: #6B7280;
-            font-size: 1.1rem;
-        }
-
-        .card {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-
-        .server-status {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .server-status h2 {
-            font-size: 1.2rem;
-            color: #1F2937;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .refresh-btn {
-            background: none;
-            border: none;
-            color: #2563EB;
-            font-weight: 500;
-            cursor: pointer;
-            font-size: 0.9rem;
-        }
-
-        .refresh-btn:hover {
-            color: #1E40AF;
-        }
-
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-top: 15px;
-        }
-
-        .status-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .status-icon {
-            font-size: 1rem;
-        }
-
-        .status-icon.success { color: #10B981; }
-        .status-icon.error { color: #EF4444; }
-
-        .main-grid {
-            display: grid;
-            grid-template-columns: 1fr 2fr;
             gap: 20px;
-        }
-
-        @media (max-width: 768px) {
-            .main-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .section-title {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: #1F2937;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .form-group {
-            margin-bottom: 15px;
-        }
-
-        .form-label {
-            display: block;
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: #374151;
-            margin-bottom: 6px;
-        }
-
-        textarea, select {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #D1D5DB;
-            border-radius: 6px;
-            font-size: 0.95rem;
-            font-family: inherit;
-        }
-
-        textarea:focus, select:focus {
-            outline: none;
-            border-color: #2563EB;
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-        }
-
-        textarea {
-            resize: vertical;
-            min-height: 100px;
-        }
-
-        .grid-2 {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.9rem;
-            color: #374151;
-        }
-
-        .checkbox-label input {
-            width: 16px;
-            height: 16px;
-        }
-
-        .btn-primary {
-            width: 100%;
-            padding: 12px;
-            background: #2563EB;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 1rem;
-            font-weight: 500;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            transition: background 0.2s;
-        }
-
-        .btn-primary:hover:not(:disabled) {
-            background: #1D4ED8;
-        }
-
-        .btn-primary:disabled {
-            background: #D1D5DB;
-            cursor: not-allowed;
-        }
-
-        .quick-tests {
-            margin-top: 20px;
-        }
-
-        .quick-test-btn {
-            width: 100%;
-            padding: 12px;
-            margin-bottom: 10px;
-            text-align: left;
-            background: white;
-            border: 1px solid #E5E7EB;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .quick-test-btn:hover {
-            background: #F9FAFB;
-            border-color: #2563EB;
-        }
-
-        .quick-test-title {
-            font-weight: 600;
-            color: #1F2937;
-            margin-bottom: 4px;
-        }
-
-        .quick-test-desc {
-            font-size: 0.85rem;
-            color: #6B7280;
-            margin-bottom: 6px;
-        }
-
-        .complexity-badge {
-            display: inline-block;
-            padding: 4px 10px;
-            font-size: 0.75rem;
-            font-weight: 500;
-            border-radius: 12px;
-        }
-
-        .complexity-high {
-            background: #FEE2E2;
-            color: #991B1B;
-        }
-
-        .complexity-medium {
-            background: #FEF3C7;
-            color: #92400E;
-        }
-
-        .complexity-low {
-            background: #D1FAE5;
-            color: #065F46;
-        }
-
-        .error-box {
-            background: #FEE2E2;
-            border: 1px solid #FCA5A5;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 20px;
-        }
-
-        .error-title {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: #991B1B;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .error-message {
-            color: #B91C1C;
-        }
-
-        .loading-spinner {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid #ffffff;
-            border-radius: 50%;
-            border-top-color: transparent;
-            animation: spin 0.6s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .result-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid #E5E7EB;
-        }
-
-        .result-title {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: #1F2937;
-        }
-
-        .processing-time {
-            font-size: 0.9rem;
-            color: #6B7280;
-        }
-
-        .status-badges {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
-        .status-badge {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 16px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-
-        .badge-blue {
-            background: #DBEAFE;
-            color: #1E40AF;
-        }
-
-        .badge-purple {
-            background: #EDE9FE;
-            color: #6B21A8;
-        }
-
-        .badge-green {
-            background: #D1FAE5;
-            color: #065F46;
-        }
-
-        .badge-red {
-            background: #FEE2E2;
-            color: #991B1B;
-        }
-
-        .badge-yellow {
-            background: #FEF3C7;
-            color: #92400E;
-        }
-
-        .badge-gray {
-            background: #F3F4F6;
-            color: #374151;
-        }
-
-        .answer-box {
-            background: #F9FAFB;
-            border-radius: 8px;
             padding: 20px;
-            margin: 20px 0;
-            white-space: pre-wrap;
-            line-height: 1.6;
-            color: #1F2937;
         }
 
-        .cot-section {
-            border-top: 1px solid #E5E7EB;
-            padding-top: 20px;
-            margin-top: 20px;
-        }
-
-        .reasoning-step {
-            border: 1px solid #E5E7EB;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-        }
-
-        .step-header {
+        .chat-section {
+            flex: 2;
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .step-number {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #2563EB;
-        }
-
-        .step-confidence {
-            font-size: 0.85rem;
-            color: #6B7280;
-        }
-
-        .step-content {
-            font-size: 0.9rem;
-            color: #1F2937;
-            margin-bottom: 8px;
-        }
-
-        .step-label {
-            font-weight: 600;
-            margin-right: 4px;
-        }
-
-        .validation-notes {
-            font-size: 0.8rem;
-            color: #6B7280;
-            font-style: italic;
-            margin-top: 8px;
-        }
-
-        .validation-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin: 15px 0;
-        }
-
-        .validation-item {
-            padding: 10px;
-            background: #F9FAFB;
-            border-radius: 6px;
-        }
-
-        .validation-label {
-            font-size: 0.85rem;
-            color: #6B7280;
-            margin-bottom: 4px;
-        }
-
-        .validation-value {
-            font-weight: 600;
-            color: #1F2937;
-        }
-
-        .issues-list {
-            list-style: none;
-            margin: 10px 0;
-        }
-
-        .issues-list li {
-            padding: 8px 0;
-            border-bottom: 1px solid #E5E7EB;
-            color: #B91C1C;
-            font-size: 0.9rem;
-        }
-
-        .issues-list li:last-child {
-            border-bottom: none;
-        }
-
-        .corrections-list {
-            list-style: none;
-            margin: 10px 0;
-        }
-
-        .corrections-list li {
-            padding: 8px 0;
-            border-bottom: 1px solid #E5E7EB;
-            color: #065F46;
-            font-size: 0.9rem;
-        }
-
-        .corrections-list li:last-child {
-            border-bottom: none;
-        }
-
-        .sources-section {
-            border-top: 1px solid #E5E7EB;
-            padding-top: 20px;
-            margin-top: 20px;
-        }
-
-        .source-item {
-            padding: 8px 0;
-            color: #6B7280;
-            font-size: 0.9rem;
-        }
-
-        .test-history {
-            margin-top: 20px;
-        }
-
-        .history-item {
-            border: 1px solid #E5E7EB;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 10px;
-        }
-
-        .history-query {
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: #1F2937;
-            margin-bottom: 6px;
-        }
-
-        .history-meta {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 0.8rem;
-        }
-
-        .hidden {
-            display: none;
-        }
-
-        /* Thinking Section - Google AI Studio Style */
-        .thinking-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px;
-            cursor: pointer;
-            border-radius: 8px;
-            transition: background 0.2s;
-        }
-
-        .thinking-header:hover {
-            background: #F9FAFB;
-        }
-
-        .thinking-title {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-weight: 600;
-            color: #1F2937;
-            font-size: 1.1rem;
-        }
-
-        .thinking-icon {
-            font-size: 1.2rem;
-            animation: pulse 1.5s ease-in-out infinite;
-        }
-
-        .thinking-icon.complete {
-            animation: none;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .thinking-count {
-            font-size: 0.85rem;
-            color: #6B7280;
-            font-weight: 400;
-        }
-
-        .thinking-toggle {
-            font-size: 1.2rem;
-            color: #6B7280;
-            transition: transform 0.3s;
-        }
-
-        .thinking-toggle.collapsed {
-            transform: rotate(-90deg);
-        }
-
-        .thinking-content {
-            max-height: 600px;
-            overflow-y: auto;
-            padding: 0 15px 15px 15px;
-            transition: all 0.3s ease-in-out;
-        }
-
-        .thinking-content.collapsed {
-            max-height: 0;
-            padding: 0 15px;
+            flex-direction: column;
+            background: var(--chat-bg);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
             overflow: hidden;
         }
 
-        .thinking-step {
+        .resources-section {
+            flex: 1;
+            background: var(--chat-bg);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* --- Chat Area --- */
+        .chat-header {
+            background: var(--primary-color);
+            color: white;
+            padding: 15px 20px;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .messages-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.5;
+            font-size: 0.95rem;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background-color: var(--user-msg-bg);
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+
+        .message.bot {
+            align-self: flex-start;
+            background-color: var(--bot-msg-bg);
+            color: #2c3e50;
+            border-bottom-left-radius: 2px;
+        }
+
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
             padding: 12px;
-            margin-bottom: 8px;
-            border-left: 3px solid #3B82F6;
-            background: #F9FAFB;
-            border-radius: 6px;
-            animation: slideIn 0.3s ease-out;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            outline: none;
+            transition: border-color 0.3s;
         }
 
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateX(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateX(0);
-            }
+        input[type="text"]:focus {
+            border-color: var(--accent-color);
         }
 
-        .thinking-step-header {
+        button {
+            padding: 12px 24px;
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background-color: #2980b9;
+        }
+
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        /* --- Resources/Source Area --- */
+        .resources-header {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            font-weight: 600;
+            color: var(--primary-color);
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 6px;
         }
 
-        .thinking-step-number {
-            font-size: 0.75rem;
+        .sources-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        .source-card {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+
+        .source-title {
+            padding: 8px 12px;
+            background: #e9ecef;
+            font-size: 0.85rem;
             font-weight: 600;
-            color: #3B82F6;
-            text-transform: uppercase;
-        }
-
-        .thinking-step-confidence {
-            font-size: 0.75rem;
-            color: #6B7280;
-        }
-
-        .thinking-step-content {
-            font-size: 0.9rem;
-            color: #374151;
-            line-height: 1.5;
-        }
-
-        .thinking-phase {
-            padding: 10px 12px;
-            margin-bottom: 8px;
-            background: #EEF2FF;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            color: #4F46E5;
+            color: #495057;
+            border-bottom: 1px solid #dee2e6;
             display: flex;
-            align-items: center;
-            gap: 8px;
-            animation: fadeIn 0.3s ease-in;
+            justify-content: space-between;
         }
 
-        .thinking-validation {
-            padding: 12px;
-            margin-top: 12px;
-            border-radius: 6px;
-            animation: fadeIn 0.3s ease-in;
+        .source-content {
+            padding: 10px;
+            font-size: 0.85rem;
+            max-height: 200px;
+            overflow-y: auto;
+            background: #fff;
         }
 
-        .thinking-validation.valid {
-            background: #D1FAE5;
-            border-left: 3px solid #10B981;
-        }
-
-        .thinking-validation.invalid {
-            background: #FEE2E2;
-            border-left: 3px solid #EF4444;
-        }
-
-        .thinking-validation-title {
-            font-weight: 600;
-            margin-bottom: 6px;
-        }
-
-        .thinking-validation.valid .thinking-validation-title {
-            color: #065F46;
-        }
-
-        .thinking-validation.invalid .thinking-validation-title {
-            color: #991B1B;
-        }
+        /* Markdown Styles within Bot Messages */
+        .message.bot h2 { font-size: 1.1rem; margin-top: 10px; margin-bottom: 5px; color: #2c3e50; }
+        .message.bot ul, .message.bot ol { margin: 5px 0; padding-left: 20px; }
+        .message.bot p { margin: 5px 0; }
+        .message.bot code { background: rgba(0,0,0,0.1); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <h1>
-                <span class="header-icon">🧠</span>
-                Chain of Thought RAG Interface
-            </h1>
-            <p>Interactive testing environment for AI reasoning analysis</p>
-        </div>
 
-        <!-- Server Status -->
-        <div class="card">
-            <div class="server-status">
-                <h2>⚙️ Server Status</h2>
-                <button class="refresh-btn" onclick="checkServerHealth()">Refresh</button>
-            </div>
-            <div class="status-grid" id="serverStatus">
-                <div class="status-item">
-                    <span class="status-icon">⏳</span>
-                    <span>Checking...</span>
-                </div>
+<div class="main-container">
+    <!-- Chat Section -->
+    <div class="chat-section">
+        <div class="chat-header">
+            🎓 C Programming Tutor
+        </div>
+        <div class="messages-container" id="messages">
+            <div class="message bot">
+                Hello! I'm your C Tutor. I can help you understand concepts or plan out your code. What are you working on today?
             </div>
         </div>
-
-        <!-- Main Grid -->
-        <div class="main-grid">
-            <!-- Left Panel - Input -->
-            <div>
-                <div class="card">
-                    <h2 class="section-title">💬 Query Input</h2>
-
-                    <div class="form-group">
-                        <label class="form-label">Your Question</label>
-                        <textarea 
-                            id="queryInput" 
-                            placeholder="Ask a complex STEM question to test Chain of Thought reasoning..."
-                        ></textarea>
-                    </div>
-
-                    <div class="grid-2">
-                        <div class="form-group">
-                            <label class="form-label">👤 User Role</label>
-                            <select id="userRole">
-                                <option value="student">Student</option>
-                                <option value="teacher">Teacher</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Topic Class</label>
-                            <select id="topicClass">
-                                <option value="Auto">Auto-detect</option>
-                                <option value="STEM">Force STEM</option>
-                                <option value="Non-STEM">Force Non-STEM</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="enableCoT" checked>
-                            Enable Chain of Thought reasoning
-                        </label>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="enableValidation" checked>
-                            Enable reasoning validation
-                        </label>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="enableCorrection" checked>
-                            Enable automatic correction
-                        </label>
-                    </div>
-
-                    <button class="btn-primary" id="submitBtn" onclick="handleSubmit()">
-                        <span>⚡</span>
-                        <span>Analyze Query</span>
-                    </button>
-
-                    <!-- Quick Tests -->
-                    <div class="quick-tests">
-                        <h3 class="section-title">Quick Tests</h3>
-                        <button class="quick-test-btn" onclick="runQuickTest(0)">
-                            <div class="quick-test-title">Gradient Descent</div>
-                            <div class="quick-test-desc">Mathematical derivation with step-by-step reasoning</div>
-                            <span class="complexity-badge complexity-high">high complexity</span>
-                        </button>
-                        <button class="quick-test-btn" onclick="runQuickTest(1)">
-                            <div class="quick-test-title">MSE vs Huber Loss</div>
-                            <div class="quick-test-desc">Comparison analysis with practical implications</div>
-                            <span class="complexity-badge complexity-medium">medium complexity</span>
-                        </button>
-                        <button class="quick-test-btn" onclick="runQuickTest(2)">
-                            <div class="quick-test-title">Backpropagation Algorithm</div>
-                            <div class="quick-test-desc">Complex algorithmic explanation</div>
-                            <span class="complexity-badge complexity-high">high complexity</span>
-                        </button>
-                        <button class="quick-test-btn" onclick="runQuickTest(3)">
-                            <div class="quick-test-title">University History (Non-STEM)</div>
-                            <div class="quick-test-desc">Should not trigger complex CoT reasoning</div>
-                            <span class="complexity-badge complexity-low">low complexity</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Right Panel - Results -->
-            <div>
-                <!-- Error Display -->
-                <div id="errorBox" class="error-box hidden">
-                    <div class="error-title">
-                        <span>⚠️</span>
-                        <span>Error</span>
-                    </div>
-                    <p class="error-message" id="errorMessage"></p>
-                </div>
-
-                <!-- Thinking Section (Google AI Studio style) -->
-                <div id="thinkingBox" class="card hidden">
-                    <div class="thinking-header" onclick="toggleThinking()">
-                        <div class="thinking-title">
-                            <span id="thinkingIcon" class="thinking-icon">⏳</span>
-                            <span id="thinkingStatus">Thinking...</span>
-                            <span id="thinkingCount" class="thinking-count"></span>
-                        </div>
-                        <div class="thinking-toggle" id="thinkingToggle">▼</div>
-                    </div>
-                    
-                    <div id="thinkingContent" class="thinking-content">
-                        <div id="thinkingSteps"></div>
-                    </div>
-                </div>
-
-                <!-- Results Display -->
-                <div id="resultsBox" class="card hidden">
-                    <div class="result-header">
-                        <h2 class="result-title">Analysis Results</h2>
-                        <div class="processing-time" id="processingTime"></div>
-                    </div>
-
-                    <div class="status-badges" id="statusBadges"></div>
-
-                    <h3 class="section-title">Answer</h3>
-                    <div class="answer-box" id="answerBox"></div>
-
-                    <!-- Sources -->
-                    <div id="sourcesSection" class="sources-section hidden">
-                        <h3 class="section-title">Sources</h3>
-                        <div id="sourcesList"></div>
-                    </div>
-                </div>
-
-                <!-- Test History -->
-                <div id="historyBox" class="card test-history hidden">
-                    <h3 class="section-title">📊 Recent Tests</h3>
-                    <div id="historyList"></div>
-                </div>
-            </div>
+        <div class="input-area">
+            <input type="text" id="userInput" placeholder="Ask about C (e.g., 'How do I calculate the sum of an array?')" onkeypress="handleKeyPress(event)">
+            <button onclick="sendMessage()" id="sendBtn">Send</button>
         </div>
     </div>
 
-    <script>
-        const API_BASE = 'http://127.0.0.1:8000';
-        const testHistory = [];
+    <!-- Resources Section -->
+    <div class="resources-section">
+        <div class="resources-header">
+            <span>📚 Reference Material</span>
+            <span id="intentBadge" style="font-size: 0.8rem; background: #eee; padding: 2px 6px; border-radius: 4px;">Ready</span>
+        </div>
+        <div class="sources-list" id="sourcesList">
+            <div style="color: #888; font-style: italic; text-align: center; margin-top: 20px;">
+                Relevant code examples and concepts will appear here to help you.
+            </div>
+        </div>
+    </div>
+</div>
 
-        const quickTests = [
-            {
-                query: 'Derive the gradient descent update rule and explain why it minimizes the cost function',
-                complexity: 'high'
-            },
-            {
-                query: 'What is the difference between mean square error (MSE) and Huber loss, and when should you use each?',
-                complexity: 'medium'
-            },
-            {
-                query: 'Explain the backpropagation algorithm step by step for a simple neural network',
-                complexity: 'high'
-            },
-            {
-                query: 'What are the firsts that the University of Missouri is known for?',
-                complexity: 'low'
-            }
-        ];
+<script>
+    const API_URL = "http://127.0.0.1:8000/api/v1/chat/stream";
+    const messagesDiv = document.getElementById('messages');
+    const sourcesDiv = document.getElementById('sourcesList');
+    const intentBadge = document.getElementById('intentBadge');
+    const input = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
 
-        // Check server health on load
-        window.addEventListener('load', () => {
-            checkServerHealth();
-        });
+    function handleKeyPress(e) {
+        if (e.key === 'Enter') sendMessage();
+    }
 
-        async function checkServerHealth() {
-            const statusDiv = document.getElementById('serverStatus');
-            
-            try {
-                const response = await fetch(`${API_BASE}/health`);
-                const data = await response.json();
+    async function sendMessage() {
+        const text = input.value.trim();
+        if (!text) return;
+
+        // Add User Message
+        addMessage(text, 'user');
+        input.value = '';
+        input.disabled = true;
+        sendBtn.disabled = true;
+
+        // Create Bot Placeholder
+        const botMsgDiv = document.createElement('div');
+        botMsgDiv.className = 'message bot';
+        botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
+        messagesDiv.appendChild(botMsgDiv);
+        scrollToBottom();
+
+        let fullAnswer = "";
+
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: text, user_role: "student" })
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
                 
-                let html = '';
-                if (data.components) {
-                    for (const [component, status] of Object.entries(data.components)) {
-                        const icon = status ? '✓' : '✗';
-                        const className = status ? 'success' : 'error';
-                        const name = component.replace(/_/g, ' ');
-                        html += `
-                            <div class="status-item">
-                                <span class="status-icon ${className}">${icon}</span>
-                                <span>${name}</span>
-                            </div>
-                        `;
-                    }
-                }
-                statusDiv.innerHTML = html || '<div class="status-item">Server online</div>';
-            } catch (error) {
-                statusDiv.innerHTML = `
-                    <div class="status-item">
-                        <span class="status-icon error">✗</span>
-                        <span>Cannot connect to server</span>
-                    </div>
-                `;
-            }
-        }
-
-        function runQuickTest(index) {
-            const test = quickTests[index];
-            document.getElementById('queryInput').value = test.query;
-            handleSubmit();
-        }
-
-        let thinkingExpanded = true;
-
-        function toggleThinking() {
-            thinkingExpanded = !thinkingExpanded;
-            const content = document.getElementById('thinkingContent');
-            const toggle = document.getElementById('thinkingToggle');
-            
-            if (thinkingExpanded) {
-                content.classList.remove('collapsed');
-                toggle.classList.remove('collapsed');
-            } else {
-                content.classList.add('collapsed');
-                toggle.classList.add('collapsed');
-            }
-        }
-
-        async function handleSubmit() {
-            const query = document.getElementById('queryInput').value.trim();
-            const userRole = document.getElementById('userRole').value;
-            const topicClass = document.getElementById('topicClass').value;
-            const enableCoT = document.getElementById('enableCoT').checked;
-            const enableValidation = document.getElementById('enableValidation').checked;
-            const enableCorrection = document.getElementById('enableCorrection').checked;
-
-            if (!query) {
-                showError('Please enter a question');
-                return;
-            }
-
-            // Reset UI
-            const submitBtn = document.getElementById('submitBtn');
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="loading-spinner"></span><span>Processing...</span>';
-            
-            document.getElementById('errorBox').classList.add('hidden');
-            document.getElementById('resultsBox').classList.add('hidden');
-            
-            // Show and reset thinking box
-            const thinkingBox = document.getElementById('thinkingBox');
-            thinkingBox.classList.remove('hidden');
-            thinkingExpanded = true;
-            document.getElementById('thinkingContent').classList.remove('collapsed');
-            document.getElementById('thinkingToggle').classList.remove('collapsed');
-            document.getElementById('thinkingIcon').textContent = '⏳';
-            document.getElementById('thinkingIcon').classList.remove('complete');
-            document.getElementById('thinkingStatus').textContent = 'Thinking...';
-            document.getElementById('thinkingCount').textContent = '';
-            document.getElementById('thinkingSteps').innerHTML = '';
-
-            const startTime = Date.now();
-            let finalData = null;
-            let stepCount = 0;
-
-            try {
-                const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'text/event-stream'
-                    },
-                    body: JSON.stringify({
-                        message: query,
-                        user_role: userRole,
-                        socratic: false,
-                        topic_class: topicClass,
-                        enable_cot: enableCoT,
-                        enable_validation: enableValidation,
-                        enable_correction: enableCorrection
-                    })
-                });
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
-
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const data = JSON.parse(line.slice(6));
-                            
-                            switch (data.type) {
-                                case 'status':
-                                    addThinkingPhase(data.message, data.stage);
-                                    document.getElementById('thinkingStatus').textContent = data.message;
-                                    break;
-                                    
-                                case 'complexity':
-                                    addThinkingPhase(`Detected ${data.complexity} complexity query (${data.time.toFixed(2)}s)`, 'complexity');
-                                    break;
-                                    
-                                case 'retrieval':
-                                    addThinkingPhase(`Retrieved ${data.chunks_found} relevant sources (${data.time.toFixed(2)}s)`, 'retrieval');
-                                    break;
-                                    
-                                case 'reasoning_step':
-                                    stepCount++;
-                                    addThinkingStep(data.step, stepCount);
-                                    document.getElementById('thinkingCount').textContent = `(${stepCount} steps)`;
-                                    break;
-                                    
-                                case 'validation':
-                                    addThinkingValidation(data.result, false, data.time);
-                                    break;
-                                    
-                                case 'validation_updated':
-                                    addThinkingValidation(data.result, true, data.time);
-                                    break;
-                                    
-                                case 'answer':
-                                    // Don't show answer yet, wait for complete
-                                    break;
-                                    
-                                case 'complete':
-                                    finalData = data.data;
-                                    const processingTime = Date.now() - startTime;
-                                    
-                                    // Mark thinking as complete
-                                    document.getElementById('thinkingIcon').textContent = '✓';
-                                    document.getElementById('thinkingIcon').classList.add('complete');
-                                    document.getElementById('thinkingStatus').textContent = 'Thinking complete';
-                                    
-                                    // Auto-collapse thinking section after 1 second
-                                    setTimeout(() => {
-                                        thinkingExpanded = false;
-                                        document.getElementById('thinkingContent').classList.add('collapsed');
-                                        document.getElementById('thinkingToggle').classList.add('collapsed');
-                                    }, 1000);
-                                    
-                                    // Show final results
-                                    displayFinalResults(finalData, query, processingTime);
-                                    break;
-                                    
-                                case 'error':
-                                    showError(data.message);
-                                    document.getElementById('thinkingIcon').textContent = '⚠️';
-                                    document.getElementById('thinkingStatus').textContent = 'Error occurred';
-                                    break;
-                            }
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
+                
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = JSON.parse(line.slice(6));
+                        
+                        if (data.type === 'status' && data.stage === 'intent') {
+                            intentBadge.innerText = data.message;
+                            intentBadge.style.background = "#3498db";
+                            intentBadge.style.color = "white";
+                        }
+                        else if (data.type === 'answer') {
+                            fullAnswer = data.text;
+                            // Render Markdown
+                            botMsgDiv.innerHTML = marked.parse(fullAnswer);
+                            // Highlight any code blocks in the answer
+                            Prism.highlightAllUnder(botMsgDiv);
+                            scrollToBottom();
+                        }
+                        else if (data.type === 'complete') {
+                            displaySources(data.data.sources);
                         }
                     }
                 }
-
-                if (finalData) {
-                    addToHistory(finalData, query, Date.now() - startTime);
-                }
-
-            } catch (error) {
-                showError(error.message);
-                document.getElementById('thinkingIcon').textContent = '⚠️';
-                document.getElementById('thinkingStatus').textContent = 'Error occurred';
-            } finally {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = '<span>⚡</span><span>Analyze Query</span>';
             }
+        } catch (error) {
+            botMsgDiv.innerHTML = "Sorry, I encountered an error. Is the backend running?";
+            console.error(error);
+        } finally {
+            input.disabled = false;
+            sendBtn.disabled = false;
+            input.focus();
+        }
+    }
+
+    function addMessage(text, sender) {
+        const div = document.createElement('div');
+        div.className = `message ${sender}`;
+        div.innerText = text; // User messages are plain text
+        messagesDiv.appendChild(div);
+        scrollToBottom();
+    }
+
+    function displaySources(sources) {
+        console.log("RECEIVED SOURCES:", sources);
+        sourcesDiv.innerHTML = ''; // Clear previous sources
+        
+        if (!sources || sources.length === 0) {
+            sourcesDiv.innerHTML = '<div style="color:#888; text-align:center;">No specific sources found.</div>';
+            return;
         }
 
-        function displayTimeBreakdown(timings) {
-            const processingTimeDiv = document.getElementById('processingTime');
-            
-            let html = `<div style="font-weight: 600; font-size: 1.1rem; color: #1F2937; margin-bottom: 8px;">Total: ${timings.total}s</div>`;
-            
-            // Build breakdown
-            html += '<div style="font-size: 0.85rem; color: #6B7280; line-height: 1.6;">';
-            html += '<div style="display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center;">';
-            
-            if (timings.complexity_detection > 0) {
-                html += `<span>🔍 Complexity:</span><span style="text-align: right;">${timings.complexity_detection}s</span><span style="width: ${(timings.complexity_detection / timings.total * 100)}px; height: 4px; background: #3B82F6; border-radius: 2px;"></span>`;
-            }
-            
-            if (timings.retrieval > 0) {
-                html += `<span>📚 Retrieval:</span><span style="text-align: right;">${timings.retrieval}s</span><span style="width: ${(timings.retrieval / timings.total * 100)}px; height: 4px; background: #10B981; border-radius: 2px;"></span>`;
-            }
-            
-            if (timings.cot_generation > 0) {
-                html += `<span>🧠 CoT Generation:</span><span style="text-align: right;">${timings.cot_generation}s</span><span style="width: ${(timings.cot_generation / timings.total * 100)}px; height: 4px; background: #F59E0B; border-radius: 2px;"></span>`;
-            }
-            
-            if (timings.validation > 0) {
-                html += `<span>✅ Validation:</span><span style="text-align: right;">${timings.validation}s</span><span style="width: ${(timings.validation / timings.total * 100)}px; height: 4px; background: #8B5CF6; border-radius: 2px;"></span>`;
-            }
-            
-            if (timings.correction > 0) {
-                html += `<span>🔧 Correction:</span><span style="text-align: right;">${timings.correction}s</span><span style="width: ${(timings.correction / timings.total * 100)}px; height: 4px; background: #EF4444; border-radius: 2px;"></span>`;
-            }
-            
-            if (timings.synthesis > 0) {
-                html += `<span>✨ Synthesis:</span><span style="text-align: right;">${timings.synthesis}s</span><span style="width: ${(timings.synthesis / timings.total * 100)}px; height: 4px; background: #EC4899; border-radius: 2px;"></span>`;
-            }
-            
-            if (timings.answer_generation > 0) {
-                html += `<span>💡 Answer Gen:</span><span style="text-align: right;">${timings.answer_generation}s</span><span style="width: ${(timings.answer_generation / timings.total * 100)}px; height: 4px; background: #06B6D4; border-radius: 2px;"></span>`;
-            }
-            
-            html += '</div></div>';
-            
-            processingTimeDiv.innerHTML = html;
-        }
+        // Deduplicate sources by document name
+        const uniqueSources = new Map();
+        sources.forEach(s => uniqueSources.set(s.document_name, s));
 
-        function addThinkingPhase(message, stage) {
-            const container = document.getElementById('thinkingSteps');
-            const phaseDiv = document.createElement('div');
-            phaseDiv.className = 'thinking-phase';
+        uniqueSources.forEach((source) => {
+            const card = document.createElement('div');
+            card.className = 'source-card';
             
-            const icons = {
-                'init': '🚀',
-                'complexity': '🔍',
-                'retrieval': '📚',
-                'reasoning': '🧠',
-                'validation': '✅',
-                'correction': '🔧',
-                'synthesis': '✨',
-                'simple': '💡'
-            };
+            // Determine icon based on file type
+            const isCode = source.document_name.endsWith('.c');
+            const icon = isCode ? '💻' : '📖';
             
-            const icon = icons[stage] || '⏳';
-            phaseDiv.innerHTML = `<span>${icon}</span><span>${escapeHtml(message)}</span>`;
-            container.appendChild(phaseDiv);
-            
-            // Auto-scroll to bottom
-            container.scrollTop = container.scrollHeight;
-        }
+            // Syntax highlight the text if it's code
+            // Note: In a real app, we might only show the relevant snippet, not the whole chunk
+            // let contentHtml = source.chunk_text || "No content";
+            let contentHtml = source.chunk_text || "No content available";
+            if (isCode) {
+                contentHtml = `<pre><code class="language-c">${contentHtml.replace(/</g, '&lt;')}</code></pre>`;
+            }
 
-        function addThinkingStep(step, stepNumber) {
-            const container = document.getElementById('thinkingSteps');
-            const stepDiv = document.createElement('div');
-            stepDiv.className = 'thinking-step';
-            
-            stepDiv.innerHTML = `
-                <div class="thinking-step-header">
-                    <span class="thinking-step-number">Step ${stepNumber}</span>
-                    <span class="thinking-step-confidence">Confidence: ${(step.confidence * 100).toFixed(0)}%</span>
+            card.innerHTML = `
+                <div class="source-title">
+                    <span>${icon} ${source.document_name}</span>
+                    <span style="font-size:0.7rem; opacity:0.7;">${source.type || 'Ref'}</span>
                 </div>
-                <div class="thinking-step-content">
-                    <strong>Reasoning:</strong> ${escapeHtml(step.reasoning)}
-                </div>
-                <div class="thinking-step-content" style="margin-top: 4px;">
-                    <strong>Conclusion:</strong> ${escapeHtml(step.conclusion)}
+                <div class="source-content">
+                    ${contentHtml}
                 </div>
             `;
-            
-            container.appendChild(stepDiv);
-            
-            // Auto-scroll to bottom
-            container.scrollTop = container.scrollHeight;
-        }
+            sourcesDiv.appendChild(card);
+        });
+        
+        // Apply syntax highlighting to the new source cards
+        Prism.highlightAllUnder(sourcesDiv);
+    }
 
-        function addThinkingValidation(validation, isUpdate = false, time = null) {
-            const container = document.getElementById('thinkingSteps');
-            
-            // Remove old validation if this is an update
-            if (isUpdate) {
-                const oldValidation = container.querySelector('.thinking-validation');
-                if (oldValidation) oldValidation.remove();
-            }
-            
-            const validationDiv = document.createElement('div');
-            validationDiv.className = `thinking-validation ${validation.is_valid ? 'valid' : 'invalid'}`;
-            
-            let html = `
-                <div class="thinking-validation-title">
-                    ${validation.is_valid ? '✓ Validation Passed' : '⚠️ Validation Issues Detected'}
-                    ${time ? ` (${time.toFixed(2)}s)` : ''}
-                </div>
-                <div style="font-size: 0.85rem; margin-top: 4px;">
-                    Confidence: ${(validation.confidenclearce_score * 100).toFixed(1)}%
-                </div>
-            `;
-            
-            if (validation.issues && validation.issues.length > 0) {
-                html += '<div style="font-size: 0.85rem; margin-top: 8px; color: #991B1B;">Issues: ' + validation.issues.join(', ') + '</div>';
-            }
-            
-            validationDiv.innerHTML = html;
-            container.appendChild(validationDiv);
-            
-            // Auto-scroll to bottom
-            container.scrollTop = container.scrollHeight;
-        }
+    function scrollToBottom() {
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+</script>
 
-        function displayFinalResults(data, query, processingTime) {
-            document.getElementById('resultsBox').classList.remove('hidden');
-            
-            // Display detailed time breakdown
-            if (data.timings) {
-                displayTimeBreakdown(data.timings);
-            } else {
-                document.getElementById('processingTime').textContent = formatProcessingTime(processingTime);
-            }
-            
-            // Status badges
-            displayStatusBadges(data);
-            
-            // Show features used
-            if (data.features_used) {
-                displayFeaturesUsed(data.features_used);
-            }
-            
-            // Answer
-            document.getElementById('answerBox').textContent = data.answer || 'No answer provided';
-            
-            // Sources
-            if (data.sources && data.sources.length > 0) {
-                document.getElementById('sourcesSection').classList.remove('hidden');
-                displaySources(data.sources);
-            } else {
-                document.getElementById('sourcesSection').classList.add('hidden');
-            }
-            
-            // Scroll to results
-            document.getElementById('resultsBox').scrollIntoView({ behavior: 'smooth' });
-        }
-
-        function displayFeaturesUsed(features) {
-            const statusDiv = document.getElementById('statusBadges');
-            
-            // Add feature indicators
-            let html = '';
-            if (!features.cot) {
-                html += '<div class="status-badge badge-gray">⚡ Fast Mode (No CoT)</div>';
-            }
-            if (!features.validation) {
-                html += '<div class="status-badge badge-yellow">⚠️ Validation Disabled</div>';
-            }
-            if (!features.correction) {
-                html += '<div class="status-badge badge-gray">Correction Disabled</div>';
-            }
-            
-            if (html) {
-                const existingContent = statusDiv.innerHTML;
-                statusDiv.innerHTML = existingContent + html;
-            }
-        }
-
-        function showError(message) {
-            document.getElementById('errorMessage').textContent = message;
-            document.getElementById('errorBox').classList.remove('hidden');
-        }
-
-        function displayResults(data, query, processingTime) {
-            // Show results box
-            document.getElementById('resultsBox').classList.remove('hidden');
-
-            // Processing time
-            document.getElementById('processingTime').textContent = formatProcessingTime(processingTime);
-
-            // Status badges
-            displayStatusBadges(data);
-
-            // Answer
-            document.getElementById('answerBox').textContent = data.answer || 'No answer provided';
-
-            // Chain of Thought Section
-            if (data.cot_analysis && data.cot_analysis.reasoning_steps && data.cot_analysis.reasoning_steps.length > 0) {
-                document.getElementById('cotSection').classList.remove('hidden');
-                displayReasoningSteps(data.cot_analysis.reasoning_steps);
-                displayValidation(data.cot_analysis.validation);
-            } else {
-                document.getElementById('cotSection').classList.add('hidden');
-            }
-
-            // Sources
-            if (data.sources && data.sources.length > 0) {
-                document.getElementById('sourcesSection').classList.remove('hidden');
-                displaySources(data.sources);
-            } else {
-                document.getElementById('sourcesSection').classList.add('hidden');
-            }
-
-            // Scroll to results
-            document.getElementById('resultsBox').scrollIntoView({ behavior: 'smooth' });
-        }
-
-        function displayStatusBadges(data) {
-            const container = document.getElementById('statusBadges');
-            let html = '';
-
-            // Domain badge
-            html += `<div class="status-badge badge-blue">Domain: ${data.query_domain || 'Unknown'}</div>`;
-
-            // Role badge
-            html += `<div class="status-badge badge-purple">Role: ${document.getElementById('userRole').value}</div>`;
-
-            // Complexity badge
-            if (data.cot_analysis && data.cot_analysis.complexity) {
-                const complexity = data.cot_analysis.complexity;
-                const colorClass = complexity === 'high' ? 'badge-red' : complexity === 'medium' ? 'badge-yellow' : 'badge-green';
-                html += `<div class="status-badge ${colorClass}">Complexity: ${complexity}</div>`;
-            }
-
-            // Validation badge
-            if (data.cot_analysis && data.cot_analysis.validation) {
-                const isValid = data.cot_analysis.validation.is_valid;
-                const icon = isValid ? '✓' : '⚠️';
-                const colorClass = isValid ? 'badge-green' : 'badge-red';
-                html += `<div class="status-badge ${colorClass}">${icon} Validation: ${isValid ? 'Passed' : 'Issues Found'}</div>`;
-            }
-
-            // Quality badge
-            if (data.reasoning_quality) {
-                html += `<div class="status-badge badge-gray">📊 Quality: ${(data.reasoning_quality * 100).toFixed(0)}%</div>`;
-            }
-
-            container.innerHTML = html;
-        }
-
-        function displayReasoningSteps(steps) {
-            const container = document.getElementById('reasoningSteps');
-            let html = '<h4 style="font-weight: 600; color: #374151; margin-bottom: 15px;">Reasoning Steps</h4>';
-
-            steps.forEach((step, index) => {
-                html += `
-                    <div class="reasoning-step">
-                        <div class="step-header">
-                            <span class="step-number">Step ${step.step}</span>
-                            <span class="step-confidence">Confidence: ${(step.confidence * 100).toFixed(0)}%</span>
-                        </div>
-                        <div class="step-content">
-                            <span class="step-label">Reasoning:</span> ${escapeHtml(step.reasoning)}
-                        </div>
-                        <div class="step-content">
-                            <span class="step-label">Conclusion:</span> ${escapeHtml(step.conclusion)}
-                        </div>
-                        ${step.validation_notes ? `<div class="validation-notes">${escapeHtml(step.validation_notes)}</div>` : ''}
-                    </div>
-                `;
-            });
-
-            container.innerHTML = html;
-        }
-
-        function displayValidation(validation) {
-            const container = document.getElementById('validationSection');
-            
-            if (!validation) {
-                container.innerHTML = '';
-                return;
-            }
-
-            let html = '<h4 style="font-weight: 600; color: #374151; margin: 20px 0 15px 0;">Validation Results</h4>';
-
-            html += `
-                <div class="validation-grid">
-                    <div class="validation-item">
-                        <div class="validation-label">Status</div>
-                        <div class="validation-value" style="color: ${validation.is_valid ? '#065F46' : '#991B1B'}">
-                            ${validation.is_valid ? 'Valid Reasoning' : 'Issues Detected'}
-                        </div>
-                    </div>
-                    <div class="validation-item">
-                        <div class="validation-label">Confidence Score</div>
-                        <div class="validation-value">${(validation.confidence * 100).toFixed(1)}%</div>
-                    </div>
-                </div>
-            `;
-
-            if (validation.issues && validation.issues.length > 0) {
-                html += '<div style="margin-top: 15px;"><div class="validation-label">Issues Detected</div>';
-                html += '<ul class="issues-list">';
-                validation.issues.forEach(issue => {
-                    html += `<li>• ${escapeHtml(issue)}</li>`;
-                });
-                html += '</ul></div>';
-            }
-
-            if (validation.corrections && validation.corrections.length > 0) {
-                html += '<div style="margin-top: 15px;"><div class="validation-label">Applied Corrections</div>';
-                html += '<ul class="corrections-list">';
-                validation.corrections.forEach(correction => {
-                    html += `<li>✓ ${escapeHtml(correction)}</li>`;
-                });
-                html += '</ul></div>';
-            }
-
-            container.innerHTML = html;
-        }
-
-        function displaySources(sources) {
-            const container = document.getElementById('sourcesList');
-            let html = '';
-            const seen = new Set();
-
-            sources.forEach(source => {
-                const name = source.document_name || 'Unknown Source';
-                if (!seen.has(name)) {
-                    seen.add(name);
-                    html += `<div class="source-item">📄 ${escapeHtml(name)}</div>`;
-                }
-            });
-
-            container.innerHTML = html;
-        }
-
-
-        function addToHistory(data, query, processingTime) {
-            testHistory.unshift({ data, query, processingTime, timestamp: new Date() });
-            
-            if (testHistory.length > 5) {
-                testHistory.pop();
-            }
-
-            displayHistory();
-        }
-
-        function displayHistory() {
-            if (testHistory.length === 0) return;
-
-            const container = document.getElementById('historyList');
-            const box = document.getElementById('historyBox');
-            
-            box.classList.remove('hidden');
-            
-            let html = '';
-            testHistory.forEach((item, index) => {
-                const complexity = item.data.cot_analysis?.complexity || 'unknown';
-                const quality = item.data.reasoning_quality ? `${(item.data.reasoning_quality * 100).toFixed(0)}%` : 'N/A';
-                const queryPreview = item.query.length > 60 ? item.query.substring(0, 60) + '...' : item.query;
-                
-                let complexityClass = 'complexity-low';
-                if (complexity === 'high') complexityClass = 'complexity-high';
-                else if (complexity === 'medium') complexityClass = 'complexity-medium';
-
-                html += `
-                    <div class="history-item">
-                        <div class="history-query">${escapeHtml(queryPreview)}</div>
-                        <div class="history-meta">
-                            <span class="complexity-badge ${complexityClass}">${complexity}</span>
-                            <span>Quality: ${quality}</span>
-                            <span>${formatProcessingTime(item.processingTime)}</span>
-                        </div>
-                    </div>
-                `;
-            });
-
-            container.innerHTML = html;
-        }
-
-        function formatProcessingTime(ms) {
-            if (ms < 1000) return `${ms}ms`;
-            return `${(ms / 1000).toFixed(1)}s`;
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    </script>
 </body>
 </html>

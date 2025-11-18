@@ -36,7 +36,7 @@ def main():
             logger=logger
         )
         
-        resource_paths = [config.TEACHING_RESOURCES_PATH, config.COURSE_EVALUATION_RESOURCES_PATH]
+        resource_paths = [config.CONCEPTS_PATH, config.CODE_PATH]
         
         logger.info(f"Loading and building vector store and knowledge graph from: {resource_paths}")
         
