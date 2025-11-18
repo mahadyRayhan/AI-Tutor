@@ -93,42 +93,9 @@ class ChainOfThoughtRAGAgent:
 
         return chunks
     
-    # def _generate_socratic_plan(self, query: str, context: str) -> str:
-    #     prompt = f"""
-    #     You are a C Programming Tutor. 
-        
-    #     Student Query: "{query}"
-        
-    #     Reference Material:
-    #     {context}
-
-    #     **CRITICAL RULES:**
-    #     1. **SOURCE GROUNDING:** You MUST mention the specific variable names, function names, or examples found in the Reference Material. 
-    #        - If the reference text uses a variable named "super_mega_student_counter_3000", you MUST mention that specific name in your explanation.
-    #     2. **GENERIC SYNTAX:** After mentioning the specific example from the text, provide the generic syntax.
-    #     3. **SOCRATIC METHOD:** Do not write the full solution. Break it down.
-
-    #     Format your response like this:
-        
-    #     ## Thinking Process
-    #     [Explain the logic. Mention which file you are looking at.]
-
-    #     ## Implementation Plan
-    #     1. **[Step Name]**: [Description]
-    #        - *Example from text:* "In `demo_basics.c`, we used `[variable_name_from_text]`..."
-    #        ```c
-    #        // Generic Syntax
-    #        type variableName = value;
-    #        ```
-        
-    #     ## Guiding Question
-    #     [Your question here]
-    #     """
-    #     return self.llm_interface.generate_response(prompt)
-    
     def _generate_socratic_plan(self, query: str, context: str) -> str:
         prompt = f"""
-        You are a C Programming Tutor. 
+        You are an encouraging C Programming Tutor for junior students.
         
         Student Query: "{query}"
         
@@ -139,21 +106,25 @@ class ChainOfThoughtRAGAgent:
         1. **CONCEPT LIMITATION:** You may ONLY teach concepts that are present in the Reference Material.
            - If the student asks about a concept (like 'switch', 'pointers', 'recursion') that is NOT in the Reference Material, you MUST say: "I don't have information on [Concept] in my current library."
            - Then, try to solve their problem using ONLY the concepts you DO have (e.g., use `if/else` instead of `switch`).
-        2. **SOURCE GROUNDING:** You MUST mention specific variable names/examples from the text.
+        2. **SOURCE GROUNDING:** You MUST mention specific variable names/examples from the text (e.g., "In `demo_basics.c`, we used...").
         3. **GENERIC SYNTAX:** Provide generic syntax for the concepts you explain.
         4. **SOCRATIC METHOD:** Do not write the full solution.
+        5. **TONE INSTRUCTIONS:** 
+           - Speak DIRECTLY to the student. Use "You" and "We". 
+           - NEVER say "The student wants..." or "The user is asking...". 
+           - Instead, say "To solve this, we need to..." or "Since you want to..."
 
         Format your response like this:
         
-        ## Thinking Process
-        [Explain the logic. Mention which file you are looking at.]
+        ## Strategy
+        [Explain the logical approach directly to the student. Example: "To count items, we first need a specific type of variable..."]
 
         ## Implementation Plan
         1. **[Step Name]**: [Description]
-           - *Example from text:* "In `demo_basics.c`, we used `[variable_name_from_text]`..."
+           - *Example from text:* "In [Filename], we saw..."
            ```c
            // Generic Syntax
-           type variableName = value;
+           code...
            ```
         
         ## Guiding Question
