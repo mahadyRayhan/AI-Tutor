@@ -25,18 +25,21 @@ class ChainOfThoughtRAGAgent:
         self.logger = logger
 
     def _classify_intent(self, query: str) -> str:
-        """
-        Decides if the student is asking for a definition (Concept) or how to do something (Problem).
-        """
         prompt = f"""
-        Classify this student query about C programming into one of these categories:
-        1. CONCEPT: Asking "what is...", "explain...", "definition of..."
-        2. PROBLEM: Asking "how to...", "write a code...", "solve..."
-        3. DEBUG: Asking "why is this error...", "fix this..."
+        Classify this student query about C programming:
+        
+        1. REVIEW: The user has provided C code. Look for:
+           - Semicolons at end of lines (;)
+           - Brackets {{ }} or parentheses ()
+           - C keywords (int, float, void, return, printf)
+           - Or asking "Is this right?"
+        2. CONCEPT: Asking "what is...", "explain...", "definition of..."
+        3. PROBLEM: Asking "how to...", "write a code...", "solve..."
+        4. DEBUG: Asking "why is this error...", "fix this..."
 
         Query: "{query}"
         
-        Respond with ONE word: CONCEPT, PROBLEM, or DEBUG.
+        Respond with ONE word: CONCEPT, PROBLEM, DEBUG, or REVIEW.
         """
         return self.llm_interface.generate_response(prompt).strip().upper()
 
@@ -62,6 +65,34 @@ class ChainOfThoughtRAGAgent:
                 expanded_terms.append(record['name'])
         
         return list(set(expanded_terms))
+    
+    def _generate_suggestions(self, query: str, answer: str, context: str) -> List[str]:
+        """
+        Generates 3 follow-up options: 1 Conceptual, 1 Practical, 1 Challenge.
+        """
+        prompt = f"""
+        Based on the student's query and your answer, generate 3 short follow-up options.
+        
+        Query: "{query}"
+        Answer: "{answer}"
+        Reference Material: "{context}" <--- ADD THIS
+        
+        **RULES:**
+        1. **STRICT GROUNDING:** Do NOT suggest concepts unless they appear in the Reference Material.
+        2. **Option 2 (Next Step):** The logical next step in writing the code.
+        3. **Option 3 (Challenge):** A specific "Mini-Challenge" to practice what they learned. Start with "Challenge: ".
+
+        **OUTPUT:** Return ONLY a JSON list of 3 strings.
+        Example: ["What is a float?", "How do I print it?", "Challenge: Declare a float variable"]
+        """
+        response = self.llm_interface.generate_response(prompt)
+        try:
+            # Clean up potential markdown formatting around JSON
+            cleaned = response.replace("```json", "").replace("```", "").strip()
+            import json
+            return json.loads(cleaned)
+        except:
+            return ["Tell me more", "Show an example", "Challenge: Try writing the code"]
 
     def _execute_retrieval(self, query: str, intent: str) -> List[Dict[str, Any]]:
         """
@@ -92,6 +123,38 @@ class ChainOfThoughtRAGAgent:
             chunks.extend(related_chunks)
 
         return chunks
+    
+    def _generate_code_review(self, query: str, context: str) -> str:
+        prompt = f"""
+        You are a supportive C Code Reviewer for a junior student.
+        
+        Student's Input:
+        {query}
+        
+        Reference Material (Style Guide/Examples):
+        {context}
+
+        **RULES:**
+        1. **CHECK CONTEXT:** Look for a "[CONTEXT: ...]" tag in the Student's Input. 
+           - If present, you MUST verify if the code matches that specific challenge.
+           - Example: If context says "Declare a float", but code uses `int`, point that out as an error.
+        2. **SANDWICH METHOD:** Start with positive reinforcement. Then mention improvements.
+        3. **SOURCE GROUNDING:** If they used variable names different from `demo_basics.c`, gently correct or guide them.
+        4. **NO SOLUTIONS:** Do not rewrite their code.
+        5. **CHECK LOGIC:** Look for common beginner mistakes (missing semicolons, wrong format specifiers).
+
+        Format:
+        ## Code Review
+        **✅ What looks good:**
+        [Comment]
+
+        **⚠️ What needs work:**
+        [Comment on syntax OR failure to meet challenge requirements]
+
+        **💡 Hint:**
+        [Hint based on Reference Material]
+        """
+        return self.llm_interface.generate_response(prompt)
     
     def _generate_socratic_plan(self, query: str, context: str) -> str:
         prompt = f"""
@@ -150,7 +213,9 @@ class ChainOfThoughtRAGAgent:
             context_text += f"--- Source: {source} ---\n{text}\n\n"
         
         # 3. Socratic Generation
-        if intent == "PROBLEM" or intent == "DEBUG":
+        if intent == "REVIEW":
+            final_answer = self._generate_code_review(query, context_text)
+        elif intent == "PROBLEM" or intent == "DEBUG":
             final_answer = self._generate_socratic_plan(query, context_text)
         else:
             # For simple concept questions, explain clearly
@@ -158,6 +223,10 @@ class ChainOfThoughtRAGAgent:
                 f"Explain this C concept clearly for a beginner using the provided context.\nQ: {query}\n\nContext:\n{context_text}"
             )
 
+        # --- NEW: Generate Suggestions ---
+        suggestions = self._generate_suggestions(query, final_answer, context_text)
+        # ---------------------------------
+        
         # 4. Structure Response
         formatted_sources = []
         for c in retrieved_chunks:
@@ -167,16 +236,11 @@ class ChainOfThoughtRAGAgent:
             source_data['chunk_text'] = c.get('text') or c.get('chunk_text') or 'Text missing'
             formatted_sources.append(source_data)
 
-        # --- DEBUG PRINT ---
-        print(f"DEBUG SOURCES: Found {len(formatted_sources)} sources.")
-        if len(formatted_sources) > 0:
-            print(f"Sample Source 1: {formatted_sources[0].get('document_name')}")
-        # -------------------
-
         return {
             "answer": final_answer,
-            "sources": formatted_sources, 
+            "sources": formatted_sources,
             "intent": intent,
+            "suggestions": suggestions,  # <--- Add this field
             "cot_analysis": None,
             "reasoning_quality": 1.0 
         }

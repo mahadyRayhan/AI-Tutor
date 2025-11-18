@@ -119,6 +119,7 @@ async def chat_stream(request: ChatRequest):
                 "data": {
                     "answer": result['answer'],
                     "sources": result.get('sources', []),
+                    "suggestions": result.get('suggestions', []),
                     "query_domain": "C Programming",
                     "cot_analysis": {
                         "complexity": intent, # reusing complexity field for intent

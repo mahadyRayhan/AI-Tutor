@@ -21,6 +21,7 @@
             --accent-color: #3498db;
             --user-msg-bg: #3498db;
             --bot-msg-bg: #ecf0f1;
+            --code-bg: #2d2d2d;
         }
 
         body {
@@ -69,6 +70,8 @@
             padding: 15px 20px;
             font-size: 1.2rem;
             font-weight: 600;
+            display: flex;
+            justify-content: space-between;
         }
 
         .messages-container {
@@ -95,6 +98,13 @@
             border-bottom-right-radius: 2px;
         }
 
+        .message.user pre {
+            background: rgba(0,0,0,0.2);
+            padding: 5px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
         .message.bot {
             align-self: flex-start;
             background-color: var(--bot-msg-bg);
@@ -102,23 +112,31 @@
             border-bottom-left-radius: 2px;
         }
 
+        /* --- Input Area (Code Editor Style) --- */
         .input-area {
             padding: 20px;
             border-top: 1px solid #eee;
             display: flex;
             gap: 10px;
+            background: #f9f9f9;
+            align-items: flex-end;
         }
 
-        input[type="text"] {
+        textarea {
             flex: 1;
             padding: 12px;
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             outline: none;
             transition: border-color 0.3s;
+            resize: none;
+            font-family: 'Consolas', 'Monaco', monospace; /* Code font */
+            font-size: 0.95rem;
+            min-height: 45px;
+            max-height: 150px;
         }
 
-        input[type="text"]:focus {
+        textarea:focus {
             border-color: var(--accent-color);
         }
 
@@ -130,6 +148,7 @@
             border-radius: 8px;
             cursor: pointer;
             font-weight: 600;
+            height: 48px; /* Match textarea height */
             transition: background 0.2s;
         }
 
@@ -142,7 +161,43 @@
             cursor: not-allowed;
         }
 
-        /* --- Resources/Source Area --- */
+        /* --- Suggestions --- */
+        .suggestions-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .suggestion-btn {
+            background-color: white;
+            border: 1px solid var(--accent-color);
+            color: var(--accent-color);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            height: auto;
+        }
+
+        .suggestion-btn:hover {
+            background-color: var(--accent-color);
+            color: white;
+        }
+
+        .suggestion-btn.challenge {
+            border-color: #e67e22;
+            color: #e67e22;
+            font-weight: bold;
+        }
+        
+        .suggestion-btn.challenge:hover {
+            background-color: #e67e22;
+            color: white;
+        }
+
+        /* --- Resources Area --- */
         .resources-header {
             padding: 15px;
             border-bottom: 1px solid #eee;
@@ -180,13 +235,13 @@
 
         .source-content {
             padding: 10px;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             max-height: 200px;
             overflow-y: auto;
             background: #fff;
         }
 
-        /* Markdown Styles within Bot Messages */
+        /* Markdown Styles */
         .message.bot h2 { font-size: 1.1rem; margin-top: 10px; margin-bottom: 5px; color: #2c3e50; }
         .message.bot ul, .message.bot ol { margin: 5px 0; padding-left: 20px; }
         .message.bot p { margin: 5px 0; }
@@ -199,7 +254,7 @@
     <!-- Chat Section -->
     <div class="chat-section">
         <div class="chat-header">
-            🎓 C Programming Tutor
+            <div>🎓 C Programming Tutor</div>
         </div>
         <div class="messages-container" id="messages">
             <div class="message bot">
@@ -207,7 +262,7 @@
             </div>
         </div>
         <div class="input-area">
-            <input type="text" id="userInput" placeholder="Ask about C (e.g., 'How do I calculate the sum of an array?')" onkeypress="handleKeyPress(event)">
+            <textarea id="userInput" placeholder="Ask a question OR paste your C code here..." onkeypress="handleKeyPress(event)"></textarea>
             <button onclick="sendMessage()" id="sendBtn">Send</button>
         </div>
     </div>
@@ -220,7 +275,7 @@
         </div>
         <div class="sources-list" id="sourcesList">
             <div style="color: #888; font-style: italic; text-align: center; margin-top: 20px;">
-                Relevant code examples and concepts will appear here to help you.
+                Relevant code examples and concepts will appear here.
             </div>
         </div>
     </div>
@@ -233,20 +288,51 @@
     const intentBadge = document.getElementById('intentBadge');
     const input = document.getElementById('userInput');
     const sendBtn = document.getElementById('sendBtn');
+    let activeChallenge = null;
+
+
+    // Auto-resize textarea
+    input.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = (this.scrollHeight) + 'px';
+    });
 
     function handleKeyPress(e) {
-        if (e.key === 'Enter') sendMessage();
+        // Allow Shift+Enter for new lines, Enter for send
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
     }
 
-    async function sendMessage() {
-        const text = input.value.trim();
-        if (!text) return;
+    async function sendMessage(overrideText = null) {
+        const rawText = overrideText || input.value.trim();
+        if (!rawText) return;
 
-        // Add User Message
-        addMessage(text, 'user');
+        // --- UI UPDATE (Show only the code) ---
+        let displayHtml = rawText.replace(/\n/g, '<br>');
+        if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
+            displayHtml = `<pre>${rawText}</pre>`;
+        }
+        
+        const userDiv = document.createElement('div');
+        userDiv.className = 'message user';
+        userDiv.innerHTML = displayHtml;
+        messagesDiv.appendChild(userDiv);
+        scrollToBottom();
+
         input.value = '';
+        input.style.height = 'auto';
         input.disabled = true;
         sendBtn.disabled = true;
+
+        // --- PREPARE DATA FOR BACKEND ---
+        // If there is an active challenge, we prepend it so the Agent sees it.
+        let textToSend = rawText;
+        if (activeChallenge) {
+            textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
+            activeChallenge = null; // Reset after sending
+        }
 
         // Create Bot Placeholder
         const botMsgDiv = document.createElement('div');
@@ -255,17 +341,17 @@
         messagesDiv.appendChild(botMsgDiv);
         scrollToBottom();
 
-        let fullAnswer = "";
-
         try {
             const response = await fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text, user_role: "student" })
+                // Send 'textToSend' (which might include the hidden context)
+                body: JSON.stringify({ message: textToSend, user_role: "student" })
             });
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
+            let fullAnswer = "";
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -280,25 +366,29 @@
                         
                         if (data.type === 'status' && data.stage === 'intent') {
                             intentBadge.innerText = data.message;
-                            intentBadge.style.background = "#3498db";
+                            // Color coding intent
+                            if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
+                            else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
+                            else intentBadge.style.background = "#3498db";
                             intentBadge.style.color = "white";
                         }
                         else if (data.type === 'answer') {
                             fullAnswer = data.text;
-                            // Render Markdown
                             botMsgDiv.innerHTML = marked.parse(fullAnswer);
-                            // Highlight any code blocks in the answer
                             Prism.highlightAllUnder(botMsgDiv);
                             scrollToBottom();
                         }
                         else if (data.type === 'complete') {
                             displaySources(data.data.sources);
+                            if (data.data.suggestions && data.data.suggestions.length > 0) {
+                                displaySuggestions(data.data.suggestions, botMsgDiv);
+                            }
                         }
                     }
                 }
             }
         } catch (error) {
-            botMsgDiv.innerHTML = "Sorry, I encountered an error. Is the backend running?";
+            botMsgDiv.innerHTML = "Connection error. Ensure backend is running.";
             console.error(error);
         } finally {
             input.disabled = false;
@@ -307,24 +397,72 @@
         }
     }
 
-    function addMessage(text, sender) {
-        const div = document.createElement('div');
-        div.className = `message ${sender}`;
-        div.innerText = text; // User messages are plain text
-        messagesDiv.appendChild(div);
+    function displaySuggestions(suggestions, containerDiv) {
+        const suggDiv = document.createElement('div');
+        suggDiv.className = 'suggestions-container';
+
+        suggestions.forEach(text => {
+            const btn = document.createElement('button');
+            btn.className = 'suggestion-btn';
+            
+            if (text.toLowerCase().startsWith('challenge')) {
+                btn.classList.add('challenge');
+                btn.innerText = "💪 " + text.replace('Challenge:', '').trim();
+                
+                // SPECIAL LOGIC FOR CHALLENGE
+                btn.onclick = () => {
+                    suggDiv.remove();
+                    handleChallengeClick(text);
+                };
+            } else {
+                btn.innerText = text;
+                // Standard Suggestion
+                btn.onclick = () => {
+                    suggDiv.remove();
+                    sendMessage(text);
+                };
+            }
+            suggDiv.appendChild(btn);
+        });
+        containerDiv.appendChild(suggDiv);
         scrollToBottom();
+    }
+
+    function handleChallengeClick(challengeText) {
+
+        // 1. Save the challenge text
+        activeChallenge = challengeText.replace("💪 ", "").trim(); // Remove the emoji
+
+        // 2. User "Accepts" the challenge in chat
+        const acceptDiv = document.createElement('div');
+        acceptDiv.className = 'message user';
+        acceptDiv.innerText = "I accept: " + challengeText;
+        messagesDiv.appendChild(acceptDiv);
+
+        // 3. Bot prompts for code
+        const botDiv = document.createElement('div');
+        botDiv.className = 'message bot';
+        botDiv.innerText = "Great! I've prepared the editor below. Paste or type your C code solution there and hit Send.";
+        messagesDiv.appendChild(botDiv);
+        scrollToBottom();
+
+        // 4. Prepare Input Area
+        input.value = "// Write your C code here:\n\n";
+        input.focus();
+
+        // 5. (Optional) We could set a 'context' flag here if we wanted the backend to know WHICH challenge was accepted,
+        // but for now, the 'REVIEW' intent is smart enough to handle just the code.
     }
 
     function displaySources(sources) {
         console.log("RECEIVED SOURCES:", sources);
-        sourcesDiv.innerHTML = ''; // Clear previous sources
+        sourcesDiv.innerHTML = ''; 
         
         if (!sources || sources.length === 0) {
-            sourcesDiv.innerHTML = '<div style="color:#888; text-align:center;">No specific sources found.</div>';
+            sourcesDiv.innerHTML = '<div style="color:#888; text-align:center; font-size:0.8rem; margin-top:20px;">No specific sources found.</div>';
             return;
         }
 
-        // Deduplicate sources by document name
         const uniqueSources = new Map();
         sources.forEach(s => uniqueSources.set(s.document_name, s));
 
@@ -332,22 +470,20 @@
             const card = document.createElement('div');
             card.className = 'source-card';
             
-            // Determine icon based on file type
             const isCode = source.document_name.endsWith('.c');
             const icon = isCode ? '💻' : '📖';
             
-            // Syntax highlight the text if it's code
-            // Note: In a real app, we might only show the relevant snippet, not the whole chunk
-            // let contentHtml = source.chunk_text || "No content";
-            let contentHtml = source.chunk_text || "No content available";
+            let contentHtml = source.chunk_text || "No content available.";
             if (isCode) {
                 contentHtml = `<pre><code class="language-c">${contentHtml.replace(/</g, '&lt;')}</code></pre>`;
+            } else {
+                // Simple markdown rendering for concepts
+                contentHtml = marked.parse(contentHtml);
             }
 
             card.innerHTML = `
                 <div class="source-title">
                     <span>${icon} ${source.document_name}</span>
-                    <span style="font-size:0.7rem; opacity:0.7;">${source.type || 'Ref'}</span>
                 </div>
                 <div class="source-content">
                     ${contentHtml}
@@ -355,8 +491,6 @@
             `;
             sourcesDiv.appendChild(card);
         });
-        
-        // Apply syntax highlighting to the new source cards
         Prism.highlightAllUnder(sourcesDiv);
     }
 
