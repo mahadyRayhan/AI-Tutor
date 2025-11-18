@@ -126,3 +126,20 @@ Based on your working CoT RAG system, here are concrete research directions that
 4. **Educational technology journals** (Computers & Education, JAIED)
 
 Your system provides a unique research platform because you can study both successful and failed reasoning in a controlled educational context. The key is focusing on one direction initially while building the infrastructure for broader studies.
+
+
+function displaySources(sources) {
+    const container = document.getElementById('sourcesList');
+    let html = '';
+    const seen = new Set();
+
+    sources.forEach(source => {
+        const name = source.document_name || 'Unknown Source';
+        if (!seen.has(name)) {
+            seen.add(name);
+            html += `<div class="source-item">📄 ${escapeHtml(name)}</div>`;
+        }
+    });
+
+    container.innerHTML = html;
+}
