@@ -83,6 +83,71 @@ class ChatRequest(BaseModel):
 async def health():
     return {"status": "healthy", "agent_ready": cot_rag_agent is not None}
 
+@app.get("/api/v1/graph/context")
+async def get_graph_context(query: str):
+    """
+    Returns nodes and edges related to the query from Neo4j.
+    """
+    if not graph_db:
+        return {"nodes": [], "edges": []}
+    
+    # Simplified Cypher to ensure we get specific properties, not complex objects
+    # We return the Relationship TYPE as a string (type(r)) to avoid object parsing issues
+    cypher = """
+    MATCH (n:Concept)
+    WHERE toLower(n.name) CONTAINS toLower($query)
+    MATCH (n)-[r]-(m)
+    RETURN n.name as source, type(r) as rel_type, m.name as target, labels(m) as target_labels
+    LIMIT 20
+    """
+    
+    # Basic keyword extraction logic
+    search_term = query.split()[-1].replace("?", "")
+    if "array" in query.lower(): search_term = "Arrays"
+    elif "variable" in query.lower(): search_term = "Variables"
+    elif "function" in query.lower(): search_term = "Functions"
+    elif "loop" in query.lower(): search_term = "For Loop"
+
+    try:
+        results = graph_db.execute_query(cypher, {"query": search_term})
+    except Exception as e:
+        logger.error(f"Graph query failed: {e}")
+        return {"nodes": [], "edges": []}
+
+    nodes = []
+    edges = []
+    seen_nodes = set()
+
+    for record in results:
+        # In the updated Cypher, record is a dictionary with simple keys
+        s_id = record['source']
+        rel_type = record['rel_type']
+        t_id = record['target']
+        t_labels = record['target_labels']
+        
+        # Process Source Node (Group: Focus)
+        if s_id not in seen_nodes:
+            nodes.append({"id": s_id, "label": s_id, "group": "focus"})
+            seen_nodes.add(s_id)
+
+        # Process Target Node
+        # t_labels is a list, grab the first one (e.g. 'Concept')
+        t_group = t_labels[0] if t_labels else 'Node'
+        
+        if t_id not in seen_nodes:
+            nodes.append({"id": t_id, "label": t_id, "group": t_group})
+            seen_nodes.add(t_id)
+
+        # Process Edge
+        edges.append({
+            "from": s_id,
+            "to": t_id,
+            "label": rel_type.replace("_", " ").lower(),
+            "arrows": "to"
+        })
+
+    return {"nodes": nodes, "edges": edges}
+
 @app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest):
     """

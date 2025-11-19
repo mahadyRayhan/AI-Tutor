@@ -5,13 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>C Programming Tutor</title>
     
-    <!-- Markdown Parser -->
+    <!-- Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    
-    <!-- Syntax Highlighting -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+    
+    <!-- Vis.js for Graph -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 
     <style>
         :root {
@@ -21,7 +22,6 @@
             --accent-color: #3498db;
             --user-msg-bg: #3498db;
             --bot-msg-bg: #ecf0f1;
-            --code-bg: #2d2d2d;
         }
 
         body {
@@ -33,7 +33,6 @@
             color: #333;
         }
 
-        /* --- Layout --- */
         .main-container {
             display: flex;
             width: 100%;
@@ -63,17 +62,14 @@
             overflow: hidden;
         }
 
-        /* --- Chat Area --- */
+        /* Chat Styles */
         .chat-header {
             background: var(--primary-color);
             color: white;
             padding: 15px 20px;
             font-size: 1.2rem;
             font-weight: 600;
-            display: flex;
-            justify-content: space-between;
         }
-
         .messages-container {
             flex: 1;
             padding: 20px;
@@ -82,168 +78,42 @@
             flex-direction: column;
             gap: 15px;
         }
-
-        .message {
-            max-width: 85%;
-            padding: 12px 16px;
-            border-radius: 12px;
-            line-height: 1.5;
-            font-size: 0.95rem;
-        }
-
-        .message.user {
-            align-self: flex-end;
-            background-color: var(--user-msg-bg);
-            color: white;
-            border-bottom-right-radius: 2px;
-        }
-
-        .message.user pre {
-            background: rgba(0,0,0,0.2);
-            padding: 5px;
-            border-radius: 4px;
-            overflow-x: auto;
-        }
-
-        .message.bot {
-            align-self: flex-start;
-            background-color: var(--bot-msg-bg);
-            color: #2c3e50;
-            border-bottom-left-radius: 2px;
-        }
-
-        /* --- Input Area (Code Editor Style) --- */
-        .input-area {
-            padding: 20px;
-            border-top: 1px solid #eee;
-            display: flex;
-            gap: 10px;
-            background: #f9f9f9;
-            align-items: flex-end;
-        }
-
-        textarea {
-            flex: 1;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            outline: none;
-            transition: border-color 0.3s;
-            resize: none;
-            font-family: 'Consolas', 'Monaco', monospace; /* Code font */
-            font-size: 0.95rem;
-            min-height: 45px;
-            max-height: 150px;
-        }
-
-        textarea:focus {
-            border-color: var(--accent-color);
-        }
-
-        button {
-            padding: 12px 24px;
-            background-color: var(--accent-color);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-            height: 48px; /* Match textarea height */
-            transition: background 0.2s;
-        }
-
-        button:hover {
-            background-color: #2980b9;
-        }
-
-        button:disabled {
-            background-color: #bdc3c7;
-            cursor: not-allowed;
-        }
-
-        /* --- Suggestions --- */
-        .suggestions-container {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-            flex-wrap: wrap;
-        }
-
-        .suggestion-btn {
-            background-color: white;
-            border: 1px solid var(--accent-color);
-            color: var(--accent-color);
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-            cursor: pointer;
-            transition: all 0.2s;
-            height: auto;
-        }
-
-        .suggestion-btn:hover {
-            background-color: var(--accent-color);
-            color: white;
-        }
-
-        .suggestion-btn.challenge {
-            border-color: #e67e22;
-            color: #e67e22;
-            font-weight: bold;
-        }
+        .message { max-width: 85%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; font-size: 0.95rem; }
+        .message.user { align-self: flex-end; background-color: var(--user-msg-bg); color: white; border-bottom-right-radius: 2px; }
+        .message.user pre { background: rgba(0,0,0,0.2); padding: 5px; border-radius: 4px; overflow-x: auto; }
+        .message.bot { align-self: flex-start; background-color: var(--bot-msg-bg); color: #2c3e50; border-bottom-left-radius: 2px; }
         
-        .suggestion-btn.challenge:hover {
-            background-color: #e67e22;
-            color: white;
-        }
+        /* Input Area */
+        .input-area { padding: 20px; border-top: 1px solid #eee; display: flex; gap: 10px; background: #f9f9f9; align-items: flex-end; }
+        textarea { flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; outline: none; font-family: 'Consolas', monospace; min-height: 45px; max-height: 150px; resize: none; }
+        textarea:focus { border-color: var(--accent-color); }
+        button#sendBtn { padding: 0 24px; height: 48px; background-color: var(--accent-color); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        
+        /* Suggestions */
+        .suggestions-container { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+        .suggestion-btn { background: white; border: 1px solid var(--accent-color); color: var(--accent-color); padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; }
+        .suggestion-btn.challenge { border-color: #e67e22; color: #e67e22; font-weight: bold; }
 
-        /* --- Resources Area --- */
-        .resources-header {
-            padding: 15px;
-            border-bottom: 1px solid #eee;
-            font-weight: 600;
-            color: var(--primary-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
+        /* Resources & Graph Tabs */
+        .tabs { display: flex; border-bottom: 1px solid #eee; background: #f8f9fa; }
+        .tab { flex: 1; padding: 12px; text-align: center; cursor: pointer; font-weight: 600; color: #7f8c8d; border-bottom: 3px solid transparent; }
+        .tab.active { color: var(--accent-color); border-bottom-color: var(--accent-color); background: white; }
+        
+        .tab-content { flex: 1; display: none; overflow: hidden; position: relative; }
+        .tab-content.active { display: block; }
 
-        .sources-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 15px;
-        }
+        /* Sources List */
+        .sources-list { height: 100%; overflow-y: auto; padding: 15px; }
+        .source-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; margin-bottom: 15px; }
+        .source-title { padding: 8px 12px; background: #e9ecef; font-size: 0.85rem; font-weight: 600; border-bottom: 1px solid #dee2e6; }
+        .source-content { padding: 10px; font-size: 0.8rem; max-height: 200px; overflow-y: auto; background: #fff; }
 
-        .source-card {
-            background: #f8f9fa;
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            overflow: hidden;
-        }
-
-        .source-title {
-            padding: 8px 12px;
-            background: #e9ecef;
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #495057;
-            border-bottom: 1px solid #dee2e6;
-            display: flex;
-            justify-content: space-between;
-        }
-
-        .source-content {
-            padding: 10px;
-            font-size: 0.8rem;
-            max-height: 200px;
-            overflow-y: auto;
-            background: #fff;
-        }
-
+        /* Graph Container */
+        #mynetwork { width: 100%; height: 100%; background: #fff; }
+        
         /* Markdown Styles */
-        .message.bot h2 { font-size: 1.1rem; margin-top: 10px; margin-bottom: 5px; color: #2c3e50; }
-        .message.bot ul, .message.bot ol { margin: 5px 0; padding-left: 20px; }
+        .message.bot h2 { font-size: 1.1rem; margin: 10px 0 5px; color: #2c3e50; }
+        .message.bot ul { margin: 5px 0; padding-left: 20px; }
         .message.bot p { margin: 5px 0; }
         .message.bot code { background: rgba(0,0,0,0.1); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
     </style>
@@ -254,7 +124,8 @@
     <!-- Chat Section -->
     <div class="chat-section">
         <div class="chat-header">
-            <div>🎓 C Programming Tutor</div>
+            🎓 C Programming Tutor
+            <span id="intentBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">Ready</span>
         </div>
         <div class="messages-container" id="messages">
             <div class="message bot">
@@ -269,27 +140,34 @@
 
     <!-- Resources Section -->
     <div class="resources-section">
-        <div class="resources-header">
-            <span>📚 Reference Material</span>
-            <span id="intentBadge" style="font-size: 0.8rem; background: #eee; padding: 2px 6px; border-radius: 4px;">Ready</span>
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('text')">📚 Sources</div>
+            <div class="tab" onclick="switchTab('graph')">🕸️ Concept Map</div>
         </div>
-        <div class="sources-list" id="sourcesList">
-            <div style="color: #888; font-style: italic; text-align: center; margin-top: 20px;">
-                Relevant code examples and concepts will appear here.
+        
+        <!-- Tab 1: Text Sources -->
+        <div id="tab-text" class="tab-content active">
+            <div class="sources-list" id="sourcesList">
+                <div style="color: #888; text-align: center; margin-top: 20px;">Relevant code examples will appear here.</div>
             </div>
+        </div>
+
+        <!-- Tab 2: Visual Graph -->
+        <div id="tab-graph" class="tab-content" style="height: 100%;">
+            <div id="mynetwork"></div>
         </div>
     </div>
 </div>
 
 <script>
-    const API_URL = "http://127.0.0.1:8000/api/v1/chat/stream";
+    const API_URL = "http://127.0.0.1:8000";
     const messagesDiv = document.getElementById('messages');
     const sourcesDiv = document.getElementById('sourcesList');
     const intentBadge = document.getElementById('intentBadge');
     const input = document.getElementById('userInput');
     const sendBtn = document.getElementById('sendBtn');
     let activeChallenge = null;
-
+    let network = null; // Vis.js network instance
 
     // Auto-resize textarea
     input.addEventListener('input', function() {
@@ -298,10 +176,22 @@
     });
 
     function handleKeyPress(e) {
-        // Allow Shift+Enter for new lines, Enter for send
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
+        }
+    }
+
+    function switchTab(tabName) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        
+        if(tabName === 'text') {
+            document.querySelectorAll('.tab')[0].classList.add('active');
+            document.getElementById('tab-text').classList.add('active');
+        } else {
+            document.querySelectorAll('.tab')[1].classList.add('active');
+            document.getElementById('tab-graph').classList.add('active');
         }
     }
 
@@ -309,10 +199,9 @@
         const rawText = overrideText || input.value.trim();
         if (!rawText) return;
 
-        // --- UI UPDATE (Show only the code) ---
         let displayHtml = rawText.replace(/\n/g, '<br>');
         if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
-            displayHtml = `<pre>${rawText}</pre>`;
+             displayHtml = `<pre>${rawText}</pre>`;
         }
         
         const userDiv = document.createElement('div');
@@ -326,15 +215,16 @@
         input.disabled = true;
         sendBtn.disabled = true;
 
-        // --- PREPARE DATA FOR BACKEND ---
-        // If there is an active challenge, we prepend it so the Agent sees it.
+        // Prepare Context for Backend
         let textToSend = rawText;
         if (activeChallenge) {
             textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
-            activeChallenge = null; // Reset after sending
+            activeChallenge = null; 
         }
 
-        // Create Bot Placeholder
+        // Trigger Graph Update (Background)
+        updateGraph(rawText);
+
         const botMsgDiv = document.createElement('div');
         botMsgDiv.className = 'message bot';
         botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
@@ -342,10 +232,9 @@
         scrollToBottom();
 
         try {
-            const response = await fetch(API_URL, {
+            const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                // Send 'textToSend' (which might include the hidden context)
                 body: JSON.stringify({ message: textToSend, user_role: "student" })
             });
 
@@ -366,11 +255,9 @@
                         
                         if (data.type === 'status' && data.stage === 'intent') {
                             intentBadge.innerText = data.message;
-                            // Color coding intent
                             if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
                             else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
                             else intentBadge.style.background = "#3498db";
-                            intentBadge.style.color = "white";
                         }
                         else if (data.type === 'answer') {
                             fullAnswer = data.text;
@@ -388,12 +275,96 @@
                 }
             }
         } catch (error) {
-            botMsgDiv.innerHTML = "Connection error. Ensure backend is running.";
+            botMsgDiv.innerHTML = "Connection error.";
             console.error(error);
         } finally {
             input.disabled = false;
             sendBtn.disabled = false;
             input.focus();
+        }
+    }
+
+    async function updateGraph(query) {
+        try {
+            const response = await fetch(`${API_URL}/api/v1/graph/context?query=${encodeURIComponent(query)}`);
+            const data = await response.json();
+            
+            if (!data.nodes || data.nodes.length === 0) return;
+
+            const container = document.getElementById('mynetwork');
+            const visData = {
+                nodes: new vis.DataSet(data.nodes),
+                edges: new vis.DataSet(data.edges)
+            };
+            
+            // --- NEW: Visual Styling Configuration ---
+            const options = {
+                nodes: {
+                    shape: 'dot',
+                    size: 25,
+                    font: { 
+                        size: 16, 
+                        face: 'Segoe UI', 
+                        color: '#2c3e50',
+                        background: '#ffffff', // White background for text makes it readable over lines
+                        strokeWidth: 0 
+                    },
+                    borderWidth: 2,
+                    shadow: true
+                },
+                edges: {
+                    width: 2,
+                    color: { color: '#bdc3c7', highlight: '#3498db' },
+                    arrows: { to: { scaleFactor: 0.5 } },
+                    smooth: { type: 'continuous' },
+                    font: { align: 'middle', size: 12, color: '#7f8c8d' } // Labels on lines
+                },
+                groups: {
+                    // The "Focus" node (What you searched for)
+                    focus: {
+                        color: { background: '#3498db', border: '#2980b9' },
+                        font: { color: 'white', background: '#3498db' },
+                        size: 40
+                    },
+                    // Concepts (Abstract ideas)
+                    Concept: {
+                        color: { background: '#f1c40f', border: '#f39c12' }, // Yellow/Orange
+                        shape: 'dot'
+                    },
+                    Control_Flow: {
+                        color: { background: '#e67e22', border: '#d35400' }, // Darker Orange
+                        shape: 'dot'
+                    },
+                    // Files (Physical resources)
+                    Document: {
+                        color: { background: '#2ecc71', border: '#27ae60' }, // Green
+                        shape: 'box', // Box shape for files
+                        font: { color: '#fff', background: '#27ae60' }
+                    },
+                    Code_Source: {
+                         color: { background: '#2ecc71', border: '#27ae60' },
+                         shape: 'box',
+                         font: { color: '#fff', background: '#27ae60' }
+                    }
+                },
+                physics: {
+                    stabilization: false,
+                    barnesHut: {
+                        gravitationalConstant: -3000, // Stronger repulsion to spread nodes out
+                        springConstant: 0.04,
+                        springLength: 150
+                    }
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 200
+                }
+            };
+            
+            network = new vis.Network(container, visData, options);
+            
+        } catch (e) {
+            console.error("Graph update failed:", e);
         }
     }
 
@@ -408,19 +379,10 @@
             if (text.toLowerCase().startsWith('challenge')) {
                 btn.classList.add('challenge');
                 btn.innerText = "💪 " + text.replace('Challenge:', '').trim();
-                
-                // SPECIAL LOGIC FOR CHALLENGE
-                btn.onclick = () => {
-                    suggDiv.remove();
-                    handleChallengeClick(text);
-                };
+                btn.onclick = () => { suggDiv.remove(); handleChallengeClick(text); };
             } else {
                 btn.innerText = text;
-                // Standard Suggestion
-                btn.onclick = () => {
-                    suggDiv.remove();
-                    sendMessage(text);
-                };
+                btn.onclick = () => { suggDiv.remove(); sendMessage(text); };
             }
             suggDiv.appendChild(btn);
         });
@@ -429,37 +391,26 @@
     }
 
     function handleChallengeClick(challengeText) {
-
-        // 1. Save the challenge text
-        activeChallenge = challengeText.replace("💪 ", "").trim(); // Remove the emoji
-
-        // 2. User "Accepts" the challenge in chat
+        activeChallenge = challengeText.replace("💪 ", "").replace("Challenge:", "").trim();
         const acceptDiv = document.createElement('div');
         acceptDiv.className = 'message user';
-        acceptDiv.innerText = "I accept: " + challengeText;
+        acceptDiv.innerText = "I accept: " + activeChallenge;
         messagesDiv.appendChild(acceptDiv);
 
-        // 3. Bot prompts for code
         const botDiv = document.createElement('div');
         botDiv.className = 'message bot';
-        botDiv.innerText = "Great! I've prepared the editor below. Paste or type your C code solution there and hit Send.";
+        botDiv.innerText = "Paste your code solution below!";
         messagesDiv.appendChild(botDiv);
         scrollToBottom();
 
-        // 4. Prepare Input Area
         input.value = "// Write your C code here:\n\n";
         input.focus();
-
-        // 5. (Optional) We could set a 'context' flag here if we wanted the backend to know WHICH challenge was accepted,
-        // but for now, the 'REVIEW' intent is smart enough to handle just the code.
     }
 
     function displaySources(sources) {
-        console.log("RECEIVED SOURCES:", sources);
         sourcesDiv.innerHTML = ''; 
-        
         if (!sources || sources.length === 0) {
-            sourcesDiv.innerHTML = '<div style="color:#888; text-align:center; font-size:0.8rem; margin-top:20px;">No specific sources found.</div>';
+            sourcesDiv.innerHTML = '<div style="color:#888; text-align:center; margin-top:20px;">No sources found.</div>';
             return;
         }
 
@@ -469,25 +420,15 @@
         uniqueSources.forEach((source) => {
             const card = document.createElement('div');
             card.className = 'source-card';
-            
             const isCode = source.document_name.endsWith('.c');
-            const icon = isCode ? '💻' : '📖';
             
-            let contentHtml = source.chunk_text || "No content available.";
-            if (isCode) {
-                contentHtml = `<pre><code class="language-c">${contentHtml.replace(/</g, '&lt;')}</code></pre>`;
-            } else {
-                // Simple markdown rendering for concepts
-                contentHtml = marked.parse(contentHtml);
-            }
+            let contentHtml = source.chunk_text || "";
+            if (isCode) contentHtml = `<pre><code class="language-c">${contentHtml.replace(/</g, '&lt;')}</code></pre>`;
+            else contentHtml = marked.parse(contentHtml);
 
             card.innerHTML = `
-                <div class="source-title">
-                    <span>${icon} ${source.document_name}</span>
-                </div>
-                <div class="source-content">
-                    ${contentHtml}
-                </div>
+                <div class="source-title"><span>${isCode ? '💻' : '📖'} ${source.document_name}</span></div>
+                <div class="source-content">${contentHtml}</div>
             `;
             sourcesDiv.appendChild(card);
         });
