@@ -1,18 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>C Programming Tutor</title>
-    
+
     <!-- Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
-    
+
     <!-- Vis.js for Graph -->
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+        window.mermaid = mermaid;
+    </script>
 
     <style>
         :root {
@@ -48,18 +54,43 @@
             flex-direction: column;
             background: var(--chat-bg);
             border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             overflow: hidden;
         }
 
         .resources-section {
             flex: 1;
-            background: var(--chat-bg);
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            border: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .resources-header {
+            background: linear-gradient(135deg, #2c3e50, #34495e);
+            color: white;
+            padding: 16px 24px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+
+        .status-badge {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: white;
         }
 
         /* Chat Styles */
@@ -70,6 +101,7 @@
             font-size: 1.2rem;
             font-weight: 600;
         }
+
         .messages-container {
             flex: 1;
             padding: 20px;
@@ -78,367 +110,598 @@
             flex-direction: column;
             gap: 15px;
         }
-        .message { max-width: 85%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; font-size: 0.95rem; }
-        .message.user { align-self: flex-end; background-color: var(--user-msg-bg); color: white; border-bottom-right-radius: 2px; }
-        .message.user pre { background: rgba(0,0,0,0.2); padding: 5px; border-radius: 4px; overflow-x: auto; }
-        .message.bot { align-self: flex-start; background-color: var(--bot-msg-bg); color: #2c3e50; border-bottom-left-radius: 2px; }
-        
+
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.5;
+            font-size: 0.95rem;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background-color: var(--user-msg-bg);
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+
+        .message.user pre {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 5px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
+        .message.bot {
+            align-self: flex-start;
+            background-color: var(--bot-msg-bg);
+            color: #2c3e50;
+            border-bottom-left-radius: 2px;
+        }
+
         /* Input Area */
-        .input-area { padding: 20px; border-top: 1px solid #eee; display: flex; gap: 10px; background: #f9f9f9; align-items: flex-end; }
-        textarea { flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; outline: none; font-family: 'Consolas', monospace; min-height: 45px; max-height: 150px; resize: none; }
-        textarea:focus { border-color: var(--accent-color); }
-        button#sendBtn { padding: 0 24px; height: 48px; background-color: var(--accent-color); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+            background: #f9f9f9;
+            align-items: flex-end;
+        }
+
+        textarea {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            outline: none;
+            font-family: 'Consolas', monospace;
+            min-height: 45px;
+            max-height: 150px;
+            resize: none;
+        }
+
+        textarea:focus {
+            border-color: var(--accent-color);
+        }
+
+        button#sendBtn {
+            padding: 0 24px;
+            height: 48px;
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
         /* Suggestions */
-        .suggestions-container { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
-        .suggestion-btn { background: white; border: 1px solid var(--accent-color); color: var(--accent-color); padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; }
-        .suggestion-btn.challenge { border-color: #e67e22; color: #e67e22; font-weight: bold; }
+        .suggestions-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .suggestion-btn {
+            background: white;
+            border: 1px solid var(--accent-color);
+            color: var(--accent-color);
+            padding: 6px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .suggestion-btn.challenge {
+            border-color: #e67e22;
+            color: #e67e22;
+            font-weight: bold;
+        }
 
         /* Resources & Graph Tabs */
-        .tabs { display: flex; border-bottom: 1px solid #eee; background: #f8f9fa; }
-        .tab { flex: 1; padding: 12px; text-align: center; cursor: pointer; font-weight: 600; color: #7f8c8d; border-bottom: 3px solid transparent; }
-        .tab.active { color: var(--accent-color); border-bottom-color: var(--accent-color); background: white; }
-        
-        .tab-content { flex: 1; display: none; overflow: hidden; position: relative; }
-        .tab-content.active { display: block; }
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #eee;
+            background: #f8f9fa;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: 600;
+            color: #7f8c8d;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab.active {
+            color: var(--accent-color);
+            border-bottom-color: var(--accent-color);
+            background: white;
+        }
+
+        .tab-content {
+            flex: 1;
+            display: none;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
 
         /* Sources List */
-        .sources-list { height: 100%; overflow-y: auto; padding: 15px; }
-        .source-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; margin-bottom: 15px; }
-        .source-title { padding: 8px 12px; background: #e9ecef; font-size: 0.85rem; font-weight: 600; border-bottom: 1px solid #dee2e6; }
-        .source-content { padding: 10px; font-size: 0.8rem; max-height: 200px; overflow-y: auto; background: #fff; }
+        /* Sources List */
+        .sources-list {
+            height: 100%;
+            overflow-y: auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+
+        /* Custom Scrollbar */
+        .sources-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sources-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .sources-list::-webkit-scrollbar-thumb {
+            background-color: rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+        }
+
+        .sources-list::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(0, 0, 0, 0.2);
+        }
+
+        .source-card {
+            background: white;
+            border: none;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            overflow: hidden;
+        }
+
+        .source-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
+        }
+
+        .source-title {
+            padding: 12px 16px;
+            background: #ffffff;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #2c3e50;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .source-content {
+            padding: 16px;
+            font-size: 0.85rem;
+            max-height: 250px;
+            overflow-y: auto;
+            background: #fff;
+            color: #555;
+            line-height: 1.6;
+        }
+
+        .source-content pre {
+            background: #f8f9fa;
+            border-radius: 6px;
+            margin: 0;
+        }
+
+        .empty-state {
+            color: #95a5a6;
+            font-style: italic;
+            text-align: center;
+            margin-top: 40px;
+            font-size: 0.9rem;
+        }
 
         /* Graph Container */
-        #mynetwork { width: 100%; height: 100%; background: #fff; }
-        
+        #mynetwork {
+            width: 100%;
+            height: 100%;
+            background: #fff;
+        }
+
         /* Markdown Styles */
-        .message.bot h2 { font-size: 1.1rem; margin: 10px 0 5px; color: #2c3e50; }
-        .message.bot ul { margin: 5px 0; padding-left: 20px; }
-        .message.bot p { margin: 5px 0; }
-        .message.bot code { background: rgba(0,0,0,0.1); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
+        .message.bot h2 {
+            font-size: 1.1rem;
+            margin: 10px 0 5px;
+            color: #2c3e50;
+        }
+
+        .message.bot ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+
+        .message.bot p {
+            margin: 5px 0;
+        }
+
+        .message.bot code {
+            background: rgba(0, 0, 0, 0.1);
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
     </style>
 </head>
+
 <body>
 
-<div class="main-container">
-    <!-- Chat Section -->
-    <div class="chat-section">
-        <div class="chat-header">
-            🎓 C Programming Tutor
-            <span id="intentBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">Ready</span>
-        </div>
-        <div class="messages-container" id="messages">
-            <div class="message bot">
-                Hello! I'm your C Tutor. I can help you understand concepts or plan out your code. What are you working on today?
+    <div class="main-container">
+        <!-- Chat Section -->
+        <div class="chat-section">
+            <div class="chat-header">
+                🎓 C Programming Tutor
+                <span id="intentBadge" class="status-badge">Ready</span>
+            </div>
+            <div class="messages-container" id="messages">
+                <div class="message bot">
+                    Hello! I'm your C Tutor. I can help you understand concepts or plan out your code. What are you
+                    working on today?
+                </div>
+            </div>
+            <div class="input-area">
+                <textarea id="userInput" placeholder="Ask a question OR paste your C code here..."
+                    onkeypress="handleKeyPress(event)"></textarea>
+                <button onclick="sendMessage()" id="sendBtn">Send</button>
             </div>
         </div>
-        <div class="input-area">
-            <textarea id="userInput" placeholder="Ask a question OR paste your C code here..." onkeypress="handleKeyPress(event)"></textarea>
-            <button onclick="sendMessage()" id="sendBtn">Send</button>
-        </div>
-    </div>
 
-    <!-- Resources Section -->
-    <div class="resources-section">
-        <div class="tabs">
-            <div class="tab active" onclick="switchTab('text')">📚 Sources</div>
-            <div class="tab" onclick="switchTab('graph')">🕸️ Concept Map</div>
-        </div>
-        
-        <!-- Tab 1: Text Sources -->
-        <div id="tab-text" class="tab-content active">
+        <!-- Resources Section -->
+        <div class="resources-section">
+            <div class="resources-header">
+                <span>📚 Reference Material</span>
+                <span class="status-badge">Ready</span>
+            </div>
+
             <div class="sources-list" id="sourcesList">
-                <div style="color: #888; text-align: center; margin-top: 20px;">Relevant code examples will appear here.</div>
+                <div class="empty-state">
+                    Relevant code examples and concepts will appear here.
+                </div>
             </div>
         </div>
-
-        <!-- Tab 2: Visual Graph -->
-        <div id="tab-graph" class="tab-content" style="height: 100%;">
-            <div id="mynetwork"></div>
-        </div>
     </div>
-</div>
 
-<script>
-    const API_URL = "http://127.0.0.1:8000";
-    const messagesDiv = document.getElementById('messages');
-    const sourcesDiv = document.getElementById('sourcesList');
-    const intentBadge = document.getElementById('intentBadge');
-    const input = document.getElementById('userInput');
-    const sendBtn = document.getElementById('sendBtn');
-    let activeChallenge = null;
-    let network = null; // Vis.js network instance
+    <script>
+        const API_URL = "http://127.0.0.1:8000";
+        const messagesDiv = document.getElementById('messages');
+        const sourcesDiv = document.getElementById('sourcesList');
+        const intentBadge = document.getElementById('intentBadge');
+        const input = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        let activeChallenge = null;
+        let network = null; // Vis.js network instance
 
-    // Auto-resize textarea
-    input.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px';
-    });
+        // Auto-resize textarea
+        input.addEventListener('input', function () {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        });
 
-    function handleKeyPress(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    }
-
-    function switchTab(tabName) {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        
-        if(tabName === 'text') {
-            document.querySelectorAll('.tab')[0].classList.add('active');
-            document.getElementById('tab-text').classList.add('active');
-        } else {
-            document.querySelectorAll('.tab')[1].classList.add('active');
-            document.getElementById('tab-graph').classList.add('active');
-        }
-    }
-
-    async function sendMessage(overrideText = null) {
-        const rawText = overrideText || input.value.trim();
-        if (!rawText) return;
-
-        let displayHtml = rawText.replace(/\n/g, '<br>');
-        if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
-             displayHtml = `<pre>${rawText}</pre>`;
-        }
-        
-        const userDiv = document.createElement('div');
-        userDiv.className = 'message user';
-        userDiv.innerHTML = displayHtml;
-        messagesDiv.appendChild(userDiv);
-        scrollToBottom();
-
-        input.value = '';
-        input.style.height = 'auto';
-        input.disabled = true;
-        sendBtn.disabled = true;
-
-        // Prepare Context for Backend
-        let textToSend = rawText;
-        if (activeChallenge) {
-            textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
-            activeChallenge = null; 
+        function handleKeyPress(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
         }
 
-        // Trigger Graph Update (Background)
-        updateGraph(rawText);
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
 
-        const botMsgDiv = document.createElement('div');
-        botMsgDiv.className = 'message bot';
-        botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
-        messagesDiv.appendChild(botMsgDiv);
-        scrollToBottom();
+            if (tabName === 'text') {
+                document.querySelectorAll('.tab')[0].classList.add('active');
+                document.getElementById('tab-text').classList.add('active');
+            } else {
+                document.querySelectorAll('.tab')[1].classList.add('active');
+                document.getElementById('tab-graph').classList.add('active');
+            }
+        }
 
-        try {
-            const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: textToSend, user_role: "student" })
-            });
+        async function sendMessage(overrideText = null) {
+            const rawText = overrideText || input.value.trim();
+            if (!rawText) return;
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let fullAnswer = "";
+            // UI: User Message
+            let displayHtml = rawText.replace(/\n/g, '<br>');
+            if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
+                displayHtml = `<pre>${rawText}</pre>`;
+            }
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.innerHTML = displayHtml;
+            messagesDiv.appendChild(userDiv);
+            scrollToBottom();
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
-                
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = JSON.parse(line.slice(6));
-                        
-                        if (data.type === 'status' && data.stage === 'intent') {
-                            intentBadge.innerText = data.message;
-                            if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
-                            else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
-                            else intentBadge.style.background = "#3498db";
-                        }
-                        else if (data.type === 'answer') {
-                            fullAnswer = data.text;
-                            botMsgDiv.innerHTML = marked.parse(fullAnswer);
-                            Prism.highlightAllUnder(botMsgDiv);
-                            scrollToBottom();
-                        }
-                        else if (data.type === 'complete') {
-                            displaySources(data.data.sources);
-                            if (data.data.suggestions && data.data.suggestions.length > 0) {
-                                displaySuggestions(data.data.suggestions, botMsgDiv);
+            input.value = '';
+            input.style.height = 'auto';
+            input.disabled = true;
+            sendBtn.disabled = true;
+
+            // Logic: Handle Context
+            let textToSend = rawText;
+            if (activeChallenge) {
+                textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
+                activeChallenge = null;
+            }
+            // updateGraph(rawText);
+
+            // UI: Bot Placeholder
+            const botMsgDiv = document.createElement('div');
+            botMsgDiv.className = 'message bot';
+            botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
+            messagesDiv.appendChild(botMsgDiv);
+            scrollToBottom();
+
+            try {
+                const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: textToSend, user_role: "student" })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullAnswer = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+
+                            if (data.type === 'status' && data.stage === 'intent') {
+                                intentBadge.innerText = data.message;
+                                if (data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
+                                else if (data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
+                                else intentBadge.style.background = "#3498db";
+                            }
+                            else if (data.type === 'answer') {
+                                fullAnswer = data.text;
+                                // Update text, but DO NOT run Prism or Mermaid yet
+                                botMsgDiv.innerHTML = marked.parse(fullAnswer);
+                                scrollToBottom();
+                            }
+                            else if (data.type === 'complete') {
+                                displaySources(data.data.sources);
+                                if (data.data.suggestions && data.data.suggestions.length > 0) {
+                                    displaySuggestions(data.data.suggestions, botMsgDiv);
+                                }
                             }
                         }
                     }
                 }
+
+                // --- FINAL RENDERING PHASE ---
+
+                // 1. Handle Mermaid Diagrams FIRST
+                const mermaidBlocks = botMsgDiv.querySelectorAll('.language-mermaid');
+                for (const block of mermaidBlocks) {
+                    try {
+                        // Get the raw text content (graph definition)
+                        const graphDefinition = block.textContent;
+
+                        // Generate unique ID
+                        const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
+
+                        // Render to SVG
+                        const { svg } = await window.mermaid.render(id, graphDefinition);
+
+                        // Create a nice container for the graph
+                        const graphContainer = document.createElement('div');
+                        graphContainer.innerHTML = svg;
+                        graphContainer.style.textAlign = 'center';
+                        graphContainer.style.marginBottom = '20px';
+
+                        // The 'block' is the <code> tag. 
+                        // Markdown puts it inside a <pre> tag. We want to replace the <pre>.
+                        const preTag = block.parentElement;
+                        if (preTag && preTag.tagName === 'PRE') {
+                            preTag.replaceWith(graphContainer);
+                        }
+                    } catch (e) {
+                        console.error("Mermaid failed to render", e);
+                        // If it fails, we leave the code block alone so the user can at least see the text
+                    }
+                }
+
+                // 2. NOW run Syntax Highlighting on remaining C code
+                // This ensures Prism doesn't mess up the Mermaid blocks before we process them
+                Prism.highlightAllUnder(botMsgDiv);
+
+                // -----------------------------
+
+            } catch (error) {
+                botMsgDiv.innerHTML = "Connection error.";
+                console.error(error);
+            } finally {
+                input.disabled = false;
+                sendBtn.disabled = false;
+                input.focus();
             }
-        } catch (error) {
-            botMsgDiv.innerHTML = "Connection error.";
-            console.error(error);
-        } finally {
-            input.disabled = false;
-            sendBtn.disabled = false;
+        }
+
+        async function updateGraph(query) {
+            try {
+                // const response = await fetch(`${API_URL}/api/v1/graph/context?query=${encodeURIComponent(query)}`);
+                const data = await response.json();
+
+                if (!data.nodes || data.nodes.length === 0) return;
+
+                const container = document.getElementById('mynetwork');
+                const visData = {
+                    nodes: new vis.DataSet(data.nodes),
+                    edges: new vis.DataSet(data.edges)
+                };
+
+                // --- NEW: Visual Styling Configuration ---
+                const options = {
+                    nodes: {
+                        shape: 'dot',
+                        size: 25,
+                        font: {
+                            size: 16,
+                            face: 'Segoe UI',
+                            color: '#2c3e50',
+                            background: '#ffffff', // White background for text makes it readable over lines
+                            strokeWidth: 0
+                        },
+                        borderWidth: 2,
+                        shadow: true
+                    },
+                    edges: {
+                        width: 2,
+                        color: { color: '#bdc3c7', highlight: '#3498db' },
+                        arrows: { to: { scaleFactor: 0.5 } },
+                        smooth: { type: 'continuous' },
+                        font: { align: 'middle', size: 12, color: '#7f8c8d' } // Labels on lines
+                    },
+                    groups: {
+                        // The "Focus" node (What you searched for)
+                        focus: {
+                            color: { background: '#3498db', border: '#2980b9' },
+                            font: { color: 'white', background: '#3498db' },
+                            size: 40
+                        },
+                        // Concepts (Abstract ideas)
+                        Concept: {
+                            color: { background: '#f1c40f', border: '#f39c12' }, // Yellow/Orange
+                            shape: 'dot'
+                        },
+                        Control_Flow: {
+                            color: { background: '#e67e22', border: '#d35400' }, // Darker Orange
+                            shape: 'dot'
+                        },
+                        // Files (Physical resources)
+                        Document: {
+                            color: { background: '#2ecc71', border: '#27ae60' }, // Green
+                            shape: 'box', // Box shape for files
+                            font: { color: '#fff', background: '#27ae60' }
+                        },
+                        Code_Source: {
+                            color: { background: '#2ecc71', border: '#27ae60' },
+                            shape: 'box',
+                            font: { color: '#fff', background: '#27ae60' }
+                        }
+                    },
+                    physics: {
+                        stabilization: false,
+                        barnesHut: {
+                            gravitationalConstant: -3000, // Stronger repulsion to spread nodes out
+                            springConstant: 0.04,
+                            springLength: 150
+                        }
+                    },
+                    interaction: {
+                        hover: true,
+                        tooltipDelay: 200
+                    }
+                };
+
+                network = new vis.Network(container, visData, options);
+
+            } catch (e) {
+                console.error("Graph update failed:", e);
+            }
+        }
+
+        function displaySuggestions(suggestions, containerDiv) {
+            const suggDiv = document.createElement('div');
+            suggDiv.className = 'suggestions-container';
+
+            suggestions.forEach(text => {
+                const btn = document.createElement('button');
+                btn.className = 'suggestion-btn';
+
+                if (text.toLowerCase().startsWith('challenge')) {
+                    btn.classList.add('challenge');
+                    btn.innerText = "💪 " + text.replace('Challenge:', '').trim();
+                    btn.onclick = () => { suggDiv.remove(); handleChallengeClick(text); };
+                } else {
+                    btn.innerText = text;
+                    btn.onclick = () => { suggDiv.remove(); sendMessage(text); };
+                }
+                suggDiv.appendChild(btn);
+            });
+            containerDiv.appendChild(suggDiv);
+            scrollToBottom();
+        }
+
+        function handleChallengeClick(challengeText) {
+            activeChallenge = challengeText.replace("💪 ", "").replace("Challenge:", "").trim();
+            const acceptDiv = document.createElement('div');
+            acceptDiv.className = 'message user';
+            acceptDiv.innerText = "I accept: " + activeChallenge;
+            messagesDiv.appendChild(acceptDiv);
+
+            const botDiv = document.createElement('div');
+            botDiv.className = 'message bot';
+            botDiv.innerText = "Paste your code solution below!";
+            messagesDiv.appendChild(botDiv);
+            scrollToBottom();
+
+            input.value = "// Write your C code here:\n\n";
             input.focus();
         }
-    }
 
-    async function updateGraph(query) {
-        try {
-            const response = await fetch(`${API_URL}/api/v1/graph/context?query=${encodeURIComponent(query)}`);
-            const data = await response.json();
-            
-            if (!data.nodes || data.nodes.length === 0) return;
-
-            const container = document.getElementById('mynetwork');
-            const visData = {
-                nodes: new vis.DataSet(data.nodes),
-                edges: new vis.DataSet(data.edges)
-            };
-            
-            // --- NEW: Visual Styling Configuration ---
-            const options = {
-                nodes: {
-                    shape: 'dot',
-                    size: 25,
-                    font: { 
-                        size: 16, 
-                        face: 'Segoe UI', 
-                        color: '#2c3e50',
-                        background: '#ffffff', // White background for text makes it readable over lines
-                        strokeWidth: 0 
-                    },
-                    borderWidth: 2,
-                    shadow: true
-                },
-                edges: {
-                    width: 2,
-                    color: { color: '#bdc3c7', highlight: '#3498db' },
-                    arrows: { to: { scaleFactor: 0.5 } },
-                    smooth: { type: 'continuous' },
-                    font: { align: 'middle', size: 12, color: '#7f8c8d' } // Labels on lines
-                },
-                groups: {
-                    // The "Focus" node (What you searched for)
-                    focus: {
-                        color: { background: '#3498db', border: '#2980b9' },
-                        font: { color: 'white', background: '#3498db' },
-                        size: 40
-                    },
-                    // Concepts (Abstract ideas)
-                    Concept: {
-                        color: { background: '#f1c40f', border: '#f39c12' }, // Yellow/Orange
-                        shape: 'dot'
-                    },
-                    Control_Flow: {
-                        color: { background: '#e67e22', border: '#d35400' }, // Darker Orange
-                        shape: 'dot'
-                    },
-                    // Files (Physical resources)
-                    Document: {
-                        color: { background: '#2ecc71', border: '#27ae60' }, // Green
-                        shape: 'box', // Box shape for files
-                        font: { color: '#fff', background: '#27ae60' }
-                    },
-                    Code_Source: {
-                         color: { background: '#2ecc71', border: '#27ae60' },
-                         shape: 'box',
-                         font: { color: '#fff', background: '#27ae60' }
-                    }
-                },
-                physics: {
-                    stabilization: false,
-                    barnesHut: {
-                        gravitationalConstant: -3000, // Stronger repulsion to spread nodes out
-                        springConstant: 0.04,
-                        springLength: 150
-                    }
-                },
-                interaction: {
-                    hover: true,
-                    tooltipDelay: 200
-                }
-            };
-            
-            network = new vis.Network(container, visData, options);
-            
-        } catch (e) {
-            console.error("Graph update failed:", e);
-        }
-    }
-
-    function displaySuggestions(suggestions, containerDiv) {
-        const suggDiv = document.createElement('div');
-        suggDiv.className = 'suggestions-container';
-
-        suggestions.forEach(text => {
-            const btn = document.createElement('button');
-            btn.className = 'suggestion-btn';
-            
-            if (text.toLowerCase().startsWith('challenge')) {
-                btn.classList.add('challenge');
-                btn.innerText = "💪 " + text.replace('Challenge:', '').trim();
-                btn.onclick = () => { suggDiv.remove(); handleChallengeClick(text); };
-            } else {
-                btn.innerText = text;
-                btn.onclick = () => { suggDiv.remove(); sendMessage(text); };
+        function displaySources(sources) {
+            sourcesDiv.innerHTML = '';
+            if (!sources || sources.length === 0) {
+                sourcesDiv.innerHTML = '<div style="color:#888; text-align:center; margin-top:20px;">No sources found.</div>';
+                return;
             }
-            suggDiv.appendChild(btn);
-        });
-        containerDiv.appendChild(suggDiv);
-        scrollToBottom();
-    }
 
-    function handleChallengeClick(challengeText) {
-        activeChallenge = challengeText.replace("💪 ", "").replace("Challenge:", "").trim();
-        const acceptDiv = document.createElement('div');
-        acceptDiv.className = 'message user';
-        acceptDiv.innerText = "I accept: " + activeChallenge;
-        messagesDiv.appendChild(acceptDiv);
+            const uniqueSources = new Map();
+            sources.forEach(s => uniqueSources.set(s.document_name, s));
 
-        const botDiv = document.createElement('div');
-        botDiv.className = 'message bot';
-        botDiv.innerText = "Paste your code solution below!";
-        messagesDiv.appendChild(botDiv);
-        scrollToBottom();
+            uniqueSources.forEach((source) => {
+                const card = document.createElement('div');
+                card.className = 'source-card';
+                const isCode = source.document_name.endsWith('.c');
 
-        input.value = "// Write your C code here:\n\n";
-        input.focus();
-    }
+                let contentHtml = source.chunk_text || "";
+                if (isCode) contentHtml = `<pre><code class="language-c">${contentHtml.replace(/</g, '&lt;')}</code></pre>`;
+                else contentHtml = marked.parse(contentHtml);
 
-    function displaySources(sources) {
-        sourcesDiv.innerHTML = ''; 
-        if (!sources || sources.length === 0) {
-            sourcesDiv.innerHTML = '<div style="color:#888; text-align:center; margin-top:20px;">No sources found.</div>';
-            return;
-        }
-
-        const uniqueSources = new Map();
-        sources.forEach(s => uniqueSources.set(s.document_name, s));
-
-        uniqueSources.forEach((source) => {
-            const card = document.createElement('div');
-            card.className = 'source-card';
-            const isCode = source.document_name.endsWith('.c');
-            
-            let contentHtml = source.chunk_text || "";
-            if (isCode) contentHtml = `<pre><code class="language-c">${contentHtml.replace(/</g, '&lt;')}</code></pre>`;
-            else contentHtml = marked.parse(contentHtml);
-
-            card.innerHTML = `
+                card.innerHTML = `
                 <div class="source-title"><span>${isCode ? '💻' : '📖'} ${source.document_name}</span></div>
                 <div class="source-content">${contentHtml}</div>
             `;
-            sourcesDiv.appendChild(card);
-        });
-        Prism.highlightAllUnder(sourcesDiv);
-    }
+                sourcesDiv.appendChild(card);
+            });
+            Prism.highlightAllUnder(sourcesDiv);
+        }
 
-    function scrollToBottom() {
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }
-</script>
+        function scrollToBottom() {
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+    </script>
 
 </body>
+
 </html>

@@ -1,2 +1,4 @@
 How do I declare a variable to count students?
 How do I use a switch statement to check grades?
+How does an if/else statement work?
+what is crypto?
