@@ -351,8 +351,19 @@
         <!-- Chat Section -->
         <div class="chat-section">
             <div class="chat-header">
-                🎓 C Programming Tutor
-                <span id="intentBadge" class="status-badge">Ready</span>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    🎓 C Programming Tutor
+                    <span id="intentBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">Ready</span>
+                </div>
+                
+                <!-- NEW: Role Selector -->
+                <div style="font-size: 0.9rem;">
+                    <label for="roleSelector" style="margin-right: 5px; opacity: 0.9;">View as:</label>
+                    <select id="roleSelector" onchange="updateRoleUI()" style="padding: 4px; border-radius: 4px; border: none; font-weight: bold; color: #2c3e50;">
+                        <option value="student">Student</option>
+                        <option value="teacher">Teacher</option>
+                    </select>
+                </div>
             </div>
             <div class="messages-container" id="messages">
                 <div class="message bot">
@@ -422,11 +433,16 @@
             const rawText = overrideText || input.value.trim();
             if (!rawText) return;
 
-            // UI: User Message
+            // 1. Get Role FIRST (Fixes ReferenceError)
+            const roleSelector = document.getElementById('roleSelector');
+            const currentRole = roleSelector ? roleSelector.value : "student"; 
+
+            // UI Setup
             let displayHtml = rawText.replace(/\n/g, '<br>');
             if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
                 displayHtml = `<pre>${rawText}</pre>`;
             }
+            
             const userDiv = document.createElement('div');
             userDiv.className = 'message user';
             userDiv.innerHTML = displayHtml;
@@ -438,15 +454,14 @@
             input.disabled = true;
             sendBtn.disabled = true;
 
-            // Logic: Handle Context
+            // Context Logic
             let textToSend = rawText;
             if (activeChallenge) {
                 textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
-                activeChallenge = null;
+                activeChallenge = null; 
             }
-            // updateGraph(rawText);
 
-            // UI: Bot Placeholder
+            // Bot Placeholder
             const botMsgDiv = document.createElement('div');
             botMsgDiv.className = 'message bot';
             botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
@@ -457,7 +472,10 @@
                 const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: textToSend, user_role: "student" })
+                    body: JSON.stringify({ 
+                        message: textToSend, 
+                        user_role: currentRole // <--- Using the variable defined at top
+                    })
                 });
 
                 const reader = response.body.getReader();
@@ -467,23 +485,22 @@
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-
+                    
                     const chunk = decoder.decode(value);
                     const lines = chunk.split('\n');
-
+                    
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             const data = JSON.parse(line.slice(6));
-
+                            
                             if (data.type === 'status' && data.stage === 'intent') {
                                 intentBadge.innerText = data.message;
-                                if (data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
-                                else if (data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
+                                if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
+                                else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
                                 else intentBadge.style.background = "#3498db";
                             }
                             else if (data.type === 'answer') {
                                 fullAnswer = data.text;
-                                // Update text, but DO NOT run Prism or Mermaid yet
                                 botMsgDiv.innerHTML = marked.parse(fullAnswer);
                                 scrollToBottom();
                             }
@@ -497,44 +514,22 @@
                     }
                 }
 
-                // --- FINAL RENDERING PHASE ---
-
-                // 1. Handle Mermaid Diagrams FIRST
-                const mermaidBlocks = botMsgDiv.querySelectorAll('.language-mermaid');
-                for (const block of mermaidBlocks) {
+                // Render Mermaid
+                const graphs = botMsgDiv.querySelectorAll('.language-mermaid');
+                for (const graph of graphs) {
                     try {
-                        // Get the raw text content (graph definition)
-                        const graphDefinition = block.textContent;
-
-                        // Generate unique ID
                         const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
-
-                        // Render to SVG
-                        const { svg } = await window.mermaid.render(id, graphDefinition);
-
-                        // Create a nice container for the graph
-                        const graphContainer = document.createElement('div');
-                        graphContainer.innerHTML = svg;
-                        graphContainer.style.textAlign = 'center';
-                        graphContainer.style.marginBottom = '20px';
-
-                        // The 'block' is the <code> tag. 
-                        // Markdown puts it inside a <pre> tag. We want to replace the <pre>.
-                        const preTag = block.parentElement;
-                        if (preTag && preTag.tagName === 'PRE') {
-                            preTag.replaceWith(graphContainer);
-                        }
+                        const { svg } = await window.mermaid.render(id, graph.textContent);
+                        const div = document.createElement('div');
+                        div.innerHTML = svg;
+                        div.style.textAlign = 'center';
+                        div.style.margin = '15px 0';
+                        graph.parentElement.replaceWith(div);
                     } catch (e) {
                         console.error("Mermaid failed to render", e);
-                        // If it fails, we leave the code block alone so the user can at least see the text
                     }
                 }
-
-                // 2. NOW run Syntax Highlighting on remaining C code
-                // This ensures Prism doesn't mess up the Mermaid blocks before we process them
                 Prism.highlightAllUnder(botMsgDiv);
-
-                // -----------------------------
 
             } catch (error) {
                 botMsgDiv.innerHTML = "Connection error.";
@@ -545,7 +540,7 @@
                 input.focus();
             }
         }
-
+        
         async function updateGraph(query) {
             try {
                 // const response = await fetch(`${API_URL}/api/v1/graph/context?query=${encodeURIComponent(query)}`);
@@ -628,6 +623,24 @@
             } catch (e) {
                 console.error("Graph update failed:", e);
             }
+        }
+
+        function updateRoleUI() {
+            const role = document.getElementById('roleSelector').value;
+            const header = document.querySelector('.chat-header');
+            
+            if (role === 'teacher') {
+                header.style.background = "#8e44ad"; // Purple for Teacher
+            } else {
+                header.style.background = "#2c3e50"; // Blue/Grey for Student
+            }
+            
+            // Clear chat to avoid confusion between sessions
+            document.getElementById('messages').innerHTML = `
+                <div class="message bot">
+                    Switched to <b>${role.toUpperCase()}</b> mode. How can I help you?
+                </div>
+            `;
         }
 
         function displaySuggestions(suggestions, containerDiv) {
