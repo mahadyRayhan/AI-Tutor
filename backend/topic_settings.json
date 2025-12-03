@@ -1,8 +1,8 @@
 {
     "Variables": true,
     "Control Flow": true,
-    "Functions": false,
-    "Arrays": false,
+    "Functions": true,
+    "Arrays": true,
     "Strings": true,
     "Pointers": true,
     "Structures": true,
