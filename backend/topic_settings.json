@@ -2,7 +2,7 @@
     "Variables": true,
     "Control Flow": true,
     "Functions": true,
-    "Arrays": true,
+    "Arrays": false,
     "Strings": true,
     "Pointers": true,
     "Structures": true,

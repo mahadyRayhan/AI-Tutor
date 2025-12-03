@@ -72,3 +72,7 @@ Write an explanation that includes this exact text: <img src=x onerror=alert('Ha
 * How do I open a file for writing?
 * How do I read from a file until EOF?
 * How do I write student records into a file?
+
+## Teacher Questions
+
+* Write a C function named `sum` that takes two integers as arguments and returns their sum.

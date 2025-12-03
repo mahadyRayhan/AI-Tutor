@@ -97,7 +97,7 @@
                     <span id="roleBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">STUDENT</span>
                 </div>
                 <div>
-                    <span id="intentBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">Ready</span>
+                    <button class="logout-btn" onclick="openDashboard()" style="background: rgba(255,255,255,0.2); margin-right:5px;">📊 Dashboard</button>
                     <button class="logout-btn" onclick="logout()">Logout</button>
                 </div>
             </div>
@@ -252,7 +252,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     message: textToSend, 
-                    user_role: currentUser.role // <--- SEND ROLE FROM LOGIN
+                    user_role: currentUser.role,
+                    username: currentUser.username // <--- THIS MUST BE HERE
                 })
             });
 
@@ -264,29 +265,40 @@
                 const { done, value } = await reader.read();
                 if (done) break;
                 
-                const chunk = decoder.decode(value);
+                const chunk = decoder.decode(value, { stream: true });
+                // Fix: Handle chunk fragmentation
                 const lines = chunk.split('\n');
                 
                 for (const line of lines) {
+                    if (line.trim() === '') continue; // Skip empty lines
+                    
                     if (line.startsWith('data: ')) {
-                        const data = JSON.parse(line.slice(6));
-                        
-                        if (data.type === 'status' && data.stage === 'intent') {
-                            intentBadge.innerText = data.message;
-                            if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
-                            else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
-                            else intentBadge.style.background = "#3498db";
-                        }
-                        else if (data.type === 'answer') {
-                            fullAnswer = data.text;
-                            botMsgDiv.innerHTML = marked.parse(fullAnswer);
-                            scrollToBottom();
-                        }
-                        else if (data.type === 'complete') {
-                            displaySources(data.data.sources);
-                            if (data.data.suggestions && data.data.suggestions.length > 0) {
-                                displaySuggestions(data.data.suggestions, botMsgDiv);
+                        try {
+                            const jsonStr = line.slice(6);
+                            const data = JSON.parse(jsonStr);
+                            
+                            if (data.type === 'status' && data.stage === 'intent') {
+                                if(intentBadge) { // Safety Check!
+                                    intentBadge.innerText = data.message;
+                                    if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
+                                    else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
+                                    else intentBadge.style.background = "#3498db";
+                                }
                             }
+                            else if (data.type === 'answer') {
+                                fullAnswer = data.text;
+                                botMsgDiv.innerHTML = marked.parse(fullAnswer);
+                                scrollToBottom();
+                            }
+                            else if (data.type === 'complete') {
+                                displaySources(data.data.sources);
+                                if (data.data.suggestions && data.data.suggestions.length > 0) {
+                                    displaySuggestions(data.data.suggestions, botMsgDiv);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn("Stream parsing error for line:", line, e);
+                            // Do not throw, just skip this chunk
                         }
                     }
                 }
@@ -392,6 +404,14 @@
 
     function scrollToBottom() {
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function openDashboard() {
+        if (currentUser.role === 'teacher') {
+            window.location.href = 'dashboard.html'; // Existing teacher dashboard
+        } else {
+            window.location.href = 'student_dashboard.html'; // New student dashboard
+        }
     }
 
     // Start App

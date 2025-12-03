@@ -16,6 +16,7 @@ from app.db.graph_db import Neo4jGraphDB
 from app.agents.cot_rag_agent import ChainOfThoughtRAGAgent
 from app.core.settings_manager import settings_manager
 from app.core.user_manager import user_manager # <--- Import this
+from app.core.history_manager import history_manager # <--- Import
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -82,7 +83,9 @@ async def shutdown_event():
 class ChatRequest(BaseModel):
     message: str
     user_role: Optional[str] = "student"
-    # Old fields kept for compatibility but ignored
+    username: Optional[str] = "anonymous"  # <--- CRITICAL
+    
+    # Old legacy fields (keep them to prevent validation errors if UI sends them)
     socratic: Optional[bool] = False
     topic_class: Optional[str] = "Auto"
     enable_cot: Optional[bool] = True
@@ -181,7 +184,17 @@ async def chat_stream(request: ChatRequest):
             duration = time.time() - start_time
             
             # 3. Stream the "Intent" (Concept vs Problem)
-            intent = result.get('intent', 'UNKNOWN')
+            try:
+                # 1. Get username safely
+                user_id = request.username if request.username else "anonymous"
+                
+                # 2. Get Intent safely
+                intent = result.get('intent', 'UNKNOWN')
+                
+                # 3. Log
+                history_manager.log_interaction(user_id, request.message, intent, result['answer'])
+            except Exception as log_err:
+                logger.error(f"Logging failed: {log_err}")
             yield f"data: {json.dumps({'type': 'status', 'message': f'Identified as {intent} query', 'stage': 'intent'})}\n\n"
             
             # 4. Stream the final answer
@@ -239,6 +252,57 @@ async def login(creds: LoginRequest):
     else:
         # Return 401 Unauthorized
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+@app.get("/api/v1/analytics/student/{username}")
+async def get_student_analytics(username: str):
+    """
+    Returns stats and an LLM-generated report card.
+    """
+    history = history_manager.get_student_history(username)
+    
+    if not history:
+        return {"stats": {}, "report": "No history found."}
+
+    # 1. Calculate Stats
+    stats = {"CONCEPT": 0, "PROBLEM": 0, "DEBUG": 0, "REVIEW": 0}
+    for h in history:
+        i = h.get('intent', 'UNKNOWN')
+        if i in stats: stats[i] += 1
+    
+    # 2. Generate LLM Report
+    # We take the last 15 queries to analyze trends
+    recent_logs = history[-15:]
+    log_text = "\n".join([f"- [{log['intent']}] Q: {log['query']}" for log in recent_logs])
+    
+    prompt = f"""
+    Analyze this student's recent interaction history with a C Tutor AI.
+    
+    Student Logs:
+    {log_text}
+    
+    Task: Write a helpful "Progress Report" (max 3 sentences per section).
+    1. **Focus Areas:** What topics are they asking about most?
+    2. **Strengths:** Are they asking good conceptual questions or writing code?
+    3. **Weakness/Recommendations:** What should they practice next?
+    
+    Return JSON: {{ "focus": "...", "strengths": "...", "weakness": "..." }}
+    """
+    
+    report_raw = llm_interface.generate_response(prompt)
+    
+    # Simple cleanup to ensure JSON
+    try:
+        import json
+        clean_json = report_raw.replace("```json", "").replace("```", "").strip()
+        report_data = json.loads(clean_json)
+    except:
+        report_data = {"focus": "Analysis failed", "strengths": "N/A", "weakness": "N/A"}
+
+    return {
+        "stats": stats,
+        "total_queries": len(history),
+        "report": report_data
+    }
 
 if __name__ == "__main__":
     import uvicorn

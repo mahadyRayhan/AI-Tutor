@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Student Progress</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f4f4f9; padding: 40px; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .back-btn { padding: 10px 20px; background: #2c3e50; color: white; text-decoration: none; border-radius: 6px; }
+        
+        .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        
+        h2 { margin-top: 0; color: #2c3e50; font-size: 1.2rem; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        
+        .stat-big { font-size: 2.5rem; font-weight: bold; color: #3498db; text-align: center; }
+        .stat-label { text-align: center; color: #7f8c8d; }
+        
+        .report-section { margin-bottom: 20px; }
+        .report-section h3 { font-size: 1rem; color: #e67e22; margin-bottom: 5px; }
+        .report-content { line-height: 1.6; font-size: 0.95rem; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>📊 My Learning Progress</h1>
+        <a href="index.html" class="back-btn">Back to Tutor</a>
+    </div>
+
+    <div class="grid">
+        <!-- Left Col: Stats -->
+        <div style="display:flex; flex-direction:column; gap:20px;">
+            <div class="card">
+                <h2>Total Interactions</h2>
+                <div class="stat-big" id="totalCount">0</div>
+                <div class="stat-label">Questions Asked</div>
+            </div>
+            <div class="card">
+                <h2>Learning Style</h2>
+                <canvas id="intentChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Right Col: AI Analysis -->
+        <div class="card">
+            <h2>🤖 AI Tutor Assessment</h2>
+            <div id="loading">Analyzing your history...</div>
+            <div id="report" style="display:none;">
+                <div class="report-section">
+                    <h3>🔍 Current Focus</h3>
+                    <p class="report-content" id="rep-focus"></p>
+                </div>
+                <div class="report-section">
+                    <h3>💪 Strengths</h3>
+                    <p class="report-content" id="rep-strengths"></p>
+                </div>
+                <div class="report-section">
+                    <h3>🚀 Recommendations</h3>
+                    <p class="report-content" id="rep-weakness"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
+    
+    if (!currentUser) window.location.href = 'index.html';
+
+    async function loadData() {
+        try {
+            const res = await fetch(`http://127.0.0.1:8000/api/v1/analytics/student/${currentUser.username}`);
+            const data = await res.json();
+
+            // 1. Basic Stats
+            document.getElementById('totalCount').innerText = data.total_queries;
+
+            // 2. Chart
+            const ctx = document.getElementById('intentChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Concepts', 'Problem Solving', 'Debugging', 'Code Review'],
+                    datasets: [{
+                        data: [
+                            data.stats.CONCEPT, 
+                            data.stats.PROBLEM, 
+                            data.stats.DEBUG, 
+                            data.stats.REVIEW
+                        ],
+                        backgroundColor: ['#3498db', '#2ecc71', '#e74c3c', '#f1c40f']
+                    }]
+                }
+            });
+
+            // 3. AI Report
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('report').style.display = 'block';
+            document.getElementById('rep-focus').innerText = data.report.focus;
+            document.getElementById('rep-strengths').innerText = data.report.strengths;
+            document.getElementById('rep-weakness').innerText = data.report.weakness;
+
+        } catch (e) {
+            console.error(e);
+            document.getElementById('loading').innerText = "No history available yet. Go ask some questions!";
+        }
+    }
+
+    loadData();
+</script>
+
+</body>
+</html>
