@@ -15,6 +15,7 @@ from app.db.vector_store import ChromaVectorStore
 from app.db.graph_db import Neo4jGraphDB
 from app.agents.cot_rag_agent import ChainOfThoughtRAGAgent
 from app.core.settings_manager import settings_manager
+from app.core.user_manager import user_manager # <--- Import this
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -40,6 +41,10 @@ cot_rag_agent = None
 class TopicUpdate(BaseModel):
     topic: str
     enabled: bool
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 @app.on_event("startup")
 async def startup_event():
@@ -225,6 +230,15 @@ async def update_topic(update: TopicUpdate):
     """Enable or Disable a topic"""
     settings_manager.update_topic(update.topic, update.enabled)
     return {"status": "success", "topic": update.topic, "enabled": update.enabled}
+
+@app.post("/api/v1/auth/login")
+async def login(creds: LoginRequest):
+    user = user_manager.authenticate(creds.username, creds.password)
+    if user:
+        return {"status": "success", "user": user}
+    else:
+        # Return 401 Unauthorized
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
 if __name__ == "__main__":
     import uvicorn

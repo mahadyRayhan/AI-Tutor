@@ -1,19 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>C Programming Tutor</title>
-
+    
     <!-- Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
-
-    <!-- Vis.js for Graph -->
-    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
         mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
@@ -21,359 +17,97 @@
     </script>
 
     <style>
-        :root {
-            --bg-color: #f4f4f9;
-            --chat-bg: #ffffff;
-            --primary-color: #2c3e50;
-            --accent-color: #3498db;
-            --user-msg-bg: #3498db;
-            --bot-msg-bg: #ecf0f1;
+        /* ... (Keep your existing CSS for chat) ... */
+        :root { --bg-color: #f4f4f9; --chat-bg: #ffffff; --primary-color: #2c3e50; --accent-color: #3498db; --user-msg-bg: #3498db; --bot-msg-bg: #ecf0f1; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg-color); margin: 0; display: flex; height: 100vh; color: #333; }
+        
+        /* LOGIN SCREEN STYLES */
+        #login-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(135deg, #2c3e50, #3498db);
+            display: flex; justify-content: center; align-items: center; z-index: 1000;
         }
+        .login-card {
+            background: white; padding: 40px; border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2); width: 350px; text-align: center;
+        }
+        .login-card h2 { margin-top: 0; color: #2c3e50; }
+        .login-input {
+            width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd;
+            border-radius: 6px; box-sizing: border-box;
+        }
+        .login-btn {
+            width: 100%; padding: 12px; background: #3498db; color: white;
+            border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 10px;
+        }
+        .login-btn:hover { background: #2980b9; }
+        .error-msg { color: #e74c3c; font-size: 0.9rem; margin-top: 10px; display: none; }
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-color);
-            margin: 0;
-            display: flex;
-            height: 100vh;
-            color: #333;
-        }
+        /* APP SCREEN (Hidden by default) */
+        #app-screen { display: none; width: 100%; height: 100%; }
 
-        .main-container {
-            display: flex;
-            width: 100%;
-            max-width: 1400px;
-            margin: 0 auto;
-            gap: 20px;
-            padding: 20px;
-        }
-
-        .chat-section {
-            flex: 2;
-            display: flex;
-            flex-direction: column;
-            background: var(--chat-bg);
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-
-        .resources-section {
-            flex: 1;
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            border: 1px solid rgba(0, 0, 0, 0.05);
-        }
-
-        .resources-header {
-            background: linear-gradient(135deg, #2c3e50, #34495e);
-            color: white;
-            padding: 16px 24px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            z-index: 10;
-        }
-
-        .status-badge {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-            color: white;
-        }
-
-        /* Chat Styles */
-        .chat-header {
-            background: var(--primary-color);
-            color: white;
-            padding: 15px 20px;
-            font-size: 1.2rem;
-            font-weight: 600;
-        }
-
-        .messages-container {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-
-        .message {
-            max-width: 85%;
-            padding: 12px 16px;
-            border-radius: 12px;
-            line-height: 1.5;
-            font-size: 0.95rem;
-        }
-
-        .message.user {
-            align-self: flex-end;
-            background-color: var(--user-msg-bg);
-            color: white;
-            border-bottom-right-radius: 2px;
-        }
-
-        .message.user pre {
-            background: rgba(0, 0, 0, 0.2);
-            padding: 5px;
-            border-radius: 4px;
-            overflow-x: auto;
-        }
-
-        .message.bot {
-            align-self: flex-start;
-            background-color: var(--bot-msg-bg);
-            color: #2c3e50;
-            border-bottom-left-radius: 2px;
-        }
-
-        /* Input Area */
-        .input-area {
-            padding: 20px;
-            border-top: 1px solid #eee;
-            display: flex;
-            gap: 10px;
-            background: #f9f9f9;
-            align-items: flex-end;
-        }
-
-        textarea {
-            flex: 1;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            outline: none;
-            font-family: 'Consolas', monospace;
-            min-height: 45px;
-            max-height: 150px;
-            resize: none;
-        }
-
-        textarea:focus {
-            border-color: var(--accent-color);
-        }
-
-        button#sendBtn {
-            padding: 0 24px;
-            height: 48px;
-            background-color: var(--accent-color);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-
-        /* Suggestions */
-        .suggestions-container {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-            flex-wrap: wrap;
-        }
-
-        .suggestion-btn {
-            background: white;
-            border: 1px solid var(--accent-color);
-            color: var(--accent-color);
-            padding: 6px 12px;
-            border-radius: 20px;
-            cursor: pointer;
-            font-size: 0.85rem;
-        }
-
-        .suggestion-btn.challenge {
-            border-color: #e67e22;
-            color: #e67e22;
-            font-weight: bold;
-        }
-
-        /* Resources & Graph Tabs */
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid #eee;
-            background: #f8f9fa;
-        }
-
-        .tab {
-            flex: 1;
-            padding: 12px;
-            text-align: center;
-            cursor: pointer;
-            font-weight: 600;
-            color: #7f8c8d;
-            border-bottom: 3px solid transparent;
-        }
-
-        .tab.active {
-            color: var(--accent-color);
-            border-bottom-color: var(--accent-color);
-            background: white;
-        }
-
-        .tab-content {
-            flex: 1;
-            display: none;
-            overflow: hidden;
-            position: relative;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Sources List */
-        /* Sources List */
-        .sources-list {
-            height: 100%;
-            overflow-y: auto;
-            padding: 20px;
-            background-color: #f8f9fa;
-        }
-
-        /* Custom Scrollbar */
-        .sources-list::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .sources-list::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .sources-list::-webkit-scrollbar-thumb {
-            background-color: rgba(0, 0, 0, 0.1);
-            border-radius: 10px;
-        }
-
-        .sources-list::-webkit-scrollbar-thumb:hover {
-            background-color: rgba(0, 0, 0, 0.2);
-        }
-
-        .source-card {
-            background: white;
-            border: none;
-            border-radius: 12px;
-            margin-bottom: 16px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-            overflow: hidden;
-        }
-
-        .source-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
-        }
-
-        .source-title {
-            padding: 12px 16px;
-            background: #ffffff;
-            font-size: 0.9rem;
-            font-weight: 700;
-            color: #2c3e50;
-            border-bottom: 1px solid #f0f0f0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .source-content {
-            padding: 16px;
-            font-size: 0.85rem;
-            max-height: 250px;
-            overflow-y: auto;
-            background: #fff;
-            color: #555;
-            line-height: 1.6;
-        }
-
-        .source-content pre {
-            background: #f8f9fa;
-            border-radius: 6px;
-            margin: 0;
-        }
-
-        .empty-state {
-            color: #95a5a6;
-            font-style: italic;
-            text-align: center;
-            margin-top: 40px;
-            font-size: 0.9rem;
-        }
-
-        /* Graph Container */
-        #mynetwork {
-            width: 100%;
-            height: 100%;
-            background: #fff;
-        }
-
-        /* Markdown Styles */
-        .message.bot h2 {
-            font-size: 1.1rem;
-            margin: 10px 0 5px;
-            color: #2c3e50;
-        }
-
-        .message.bot ul {
-            margin: 5px 0;
-            padding-left: 20px;
-        }
-
-        .message.bot p {
-            margin: 5px 0;
-        }
-
-        .message.bot code {
-            background: rgba(0, 0, 0, 0.1);
-            padding: 2px 4px;
-            border-radius: 4px;
-            font-family: monospace;
-        }
+        /* ... Reuse your existing Chat CSS ... */
+        .main-container { display: flex; width: 100%; max-width: 1400px; margin: 0 auto; gap: 20px; padding: 20px; height: 100%; box-sizing: border-box; }
+        .chat-section { flex: 2; display: flex; flex-direction: column; background: var(--chat-bg); border-radius: 12px; overflow: hidden; }
+        .resources-section { flex: 1; background: var(--chat-bg); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+        .chat-header { background: var(--primary-color); color: white; padding: 15px 20px; font-size: 1.2rem; font-weight: 600; display: flex; justify-content: space-between; }
+        .messages-container { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .message { max-width: 85%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; font-size: 0.95rem; }
+        .message.user { align-self: flex-end; background-color: var(--user-msg-bg); color: white; border-bottom-right-radius: 2px; }
+        .message.user pre { background: rgba(0,0,0,0.2); padding: 5px; border-radius: 4px; overflow-x: auto; }
+        .message.bot { align-self: flex-start; background-color: var(--bot-msg-bg); color: #2c3e50; border-bottom-left-radius: 2px; }
+        .input-area { padding: 20px; border-top: 1px solid #eee; display: flex; gap: 10px; background: #f9f9f9; align-items: flex-end; }
+        textarea { flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; outline: none; font-family: 'Consolas', monospace; min-height: 45px; max-height: 150px; resize: none; }
+        button#sendBtn { padding: 0 24px; height: 48px; background-color: var(--accent-color); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        .suggestions-container { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+        .suggestion-btn { background: white; border: 1px solid var(--accent-color); color: var(--accent-color); padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; }
+        .suggestion-btn.challenge { border-color: #e67e22; color: #e67e22; font-weight: bold; }
+        .resources-header { padding: 15px; border-bottom: 1px solid #eee; font-weight: 600; color: var(--primary-color); display: flex; justify-content: space-between; align-items: center; }
+        .sources-list { height: 100%; overflow-y: auto; padding: 15px; }
+        .source-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; margin-bottom: 15px; }
+        .source-title { padding: 8px 12px; background: #e9ecef; font-size: 0.85rem; font-weight: 600; border-bottom: 1px solid #dee2e6; }
+        .source-content { padding: 10px; font-size: 0.8rem; max-height: 200px; overflow-y: auto; background: #fff; }
+        
+        /* Logout Button */
+        .logout-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; margin-left: 10px; }
+        .logout-btn:hover { background: rgba(255,255,255,0.3); }
     </style>
 </head>
-
 <body>
 
+<!-- LOGIN SCREEN -->
+<div id="login-screen">
+    <div class="login-card">
+        <h2>🎓 C Tutor Login</h2>
+        <input type="text" id="username" class="login-input" placeholder="Username (e.g., student1)">
+        <input type="password" id="password" class="login-input" placeholder="Password">
+        <button class="login-btn" onclick="performLogin()">Login</button>
+        <div class="error-msg" id="loginError">Invalid credentials</div>
+    </div>
+</div>
+
+<!-- APP SCREEN -->
+<div id="app-screen">
     <div class="main-container">
         <!-- Chat Section -->
         <div class="chat-section">
             <div class="chat-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     🎓 C Programming Tutor
-                    <span id="intentBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">Ready</span>
+                    <span id="roleBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">STUDENT</span>
                 </div>
-                
-                <!-- NEW: Role Selector -->
-                <div style="font-size: 0.9rem;">
-                    <label for="roleSelector" style="margin-right: 5px; opacity: 0.9;">View as:</label>
-                    <select id="roleSelector" onchange="updateRoleUI()" style="padding: 4px; border-radius: 4px; border: none; font-weight: bold; color: #2c3e50;">
-                        <option value="student">Student</option>
-                        <option value="teacher">Teacher</option>
-                    </select>
+                <div>
+                    <span id="intentBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">Ready</span>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
                 </div>
             </div>
             <div class="messages-container" id="messages">
                 <div class="message bot">
-                    Hello! I'm your C Tutor. I can help you understand concepts or plan out your code. What are you
-                    working on today?
+                    Hello! I'm your C Tutor. I can help you understand concepts or plan out your code. What are you working on today?
                 </div>
             </div>
             <div class="input-area">
-                <textarea id="userInput" placeholder="Ask a question OR paste your C code here..."
-                    onkeypress="handleKeyPress(event)"></textarea>
+                <textarea id="userInput" placeholder="Ask a question OR paste your C code here..." onkeypress="handleKeyPress(event)"></textarea>
                 <button onclick="sendMessage()" id="sendBtn">Send</button>
             </div>
         </div>
@@ -382,339 +116,287 @@
         <div class="resources-section">
             <div class="resources-header">
                 <span>📚 Reference Material</span>
-                <span class="status-badge">Ready</span>
             </div>
-
             <div class="sources-list" id="sourcesList">
-                <div class="empty-state">
+                <div style="color: #888; font-style: italic; text-align: center; margin-top: 20px;">
                     Relevant code examples and concepts will appear here.
                 </div>
             </div>
         </div>
     </div>
+</div>
 
-    <script>
-        const API_URL = "http://127.0.0.1:8000";
-        const messagesDiv = document.getElementById('messages');
-        const sourcesDiv = document.getElementById('sourcesList');
-        const intentBadge = document.getElementById('intentBadge');
-        const input = document.getElementById('userInput');
-        const sendBtn = document.getElementById('sendBtn');
-        let activeChallenge = null;
-        let network = null; // Vis.js network instance
+<script>
+    const API_URL = "http://127.0.0.1:8000";
+    const messagesDiv = document.getElementById('messages');
+    const sourcesDiv = document.getElementById('sourcesList');
+    const intentBadge = document.getElementById('intentBadge');
+    const input = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    let activeChallenge = null;
+    
+    // CURRENT USER STATE
+    let currentUser = null;
 
-        // Auto-resize textarea
-        input.addEventListener('input', function () {
-            this.style.height = 'auto';
-            this.style.height = (this.scrollHeight) + 'px';
-        });
-
-        function handleKeyPress(e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
+    // --- AUTH LOGIC ---
+    function checkAuth() {
+        const storedUser = localStorage.getItem('c_tutor_user');
+        if (storedUser) {
+            currentUser = JSON.parse(storedUser);
+            showApp();
+        } else {
+            document.getElementById('login-screen').style.display = 'flex';
+            document.getElementById('app-screen').style.display = 'none';
         }
+    }
 
-        function switchTab(tabName) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    async function performLogin() {
+        const u = document.getElementById('username').value;
+        const p = document.getElementById('password').value;
+        const err = document.getElementById('loginError');
 
-            if (tabName === 'text') {
-                document.querySelectorAll('.tab')[0].classList.add('active');
-                document.getElementById('tab-text').classList.add('active');
+        try {
+            const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: u, password: p })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                currentUser = data.user;
+                localStorage.setItem('c_tutor_user', JSON.stringify(currentUser));
+                showApp();
             } else {
-                document.querySelectorAll('.tab')[1].classList.add('active');
-                document.getElementById('tab-graph').classList.add('active');
+                err.style.display = 'block';
             }
+        } catch (e) {
+            err.innerText = "Server Error";
+            err.style.display = 'block';
         }
+    }
 
-        async function sendMessage(overrideText = null) {
-            const rawText = overrideText || input.value.trim();
-            if (!rawText) return;
+    function logout() {
+        localStorage.removeItem('c_tutor_user');
+        location.reload();
+    }
 
-            // 1. Get Role FIRST (Fixes ReferenceError)
-            const roleSelector = document.getElementById('roleSelector');
-            const currentRole = roleSelector ? roleSelector.value : "student"; 
+    function showApp() {
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app-screen').style.display = 'block';
+        
+        // Update Header UI
+        const badge = document.getElementById('roleBadge');
+        const header = document.querySelector('.chat-header');
+        
+        badge.innerText = currentUser.role.toUpperCase();
+        if (currentUser.role === 'teacher') {
+            header.style.background = "#8e44ad"; // Purple
+        } else {
+            header.style.background = "#2c3e50"; // Blue
+        }
+    }
 
-            // UI Setup
-            let displayHtml = rawText.replace(/\n/g, '<br>');
-            if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
-                displayHtml = `<pre>${rawText}</pre>`;
-            }
-            
-            const userDiv = document.createElement('div');
-            userDiv.className = 'message user';
-            userDiv.innerHTML = displayHtml;
-            messagesDiv.appendChild(userDiv);
-            scrollToBottom();
+    // --- CHAT LOGIC ---
+    // Auto-resize textarea
+    input.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = (this.scrollHeight) + 'px';
+    });
 
-            input.value = '';
-            input.style.height = 'auto';
-            input.disabled = true;
-            sendBtn.disabled = true;
+    function handleKeyPress(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    }
 
-            // Context Logic
-            let textToSend = rawText;
-            if (activeChallenge) {
-                textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
-                activeChallenge = null; 
-            }
+    async function sendMessage(overrideText = null) {
+        const rawText = overrideText || input.value.trim();
+        if (!rawText) return;
 
-            // Bot Placeholder
-            const botMsgDiv = document.createElement('div');
-            botMsgDiv.className = 'message bot';
-            botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
-            messagesDiv.appendChild(botMsgDiv);
-            scrollToBottom();
+        // Ensure user is logged in
+        if (!currentUser) return logout();
 
-            try {
-                const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        message: textToSend, 
-                        user_role: currentRole // <--- Using the variable defined at top
-                    })
-                });
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let fullAnswer = "";
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
-                    
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const data = JSON.parse(line.slice(6));
-                            
-                            if (data.type === 'status' && data.stage === 'intent') {
-                                intentBadge.innerText = data.message;
-                                if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
-                                else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
-                                else intentBadge.style.background = "#3498db";
-                            }
-                            else if (data.type === 'answer') {
-                                fullAnswer = data.text;
-                                botMsgDiv.innerHTML = marked.parse(fullAnswer);
-                                scrollToBottom();
-                            }
-                            else if (data.type === 'complete') {
-                                displaySources(data.data.sources);
-                                if (data.data.suggestions && data.data.suggestions.length > 0) {
-                                    displaySuggestions(data.data.suggestions, botMsgDiv);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Render Mermaid
-                const graphs = botMsgDiv.querySelectorAll('.language-mermaid');
-                for (const graph of graphs) {
-                    try {
-                        const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
-                        const { svg } = await window.mermaid.render(id, graph.textContent);
-                        const div = document.createElement('div');
-                        div.innerHTML = svg;
-                        div.style.textAlign = 'center';
-                        div.style.margin = '15px 0';
-                        graph.parentElement.replaceWith(div);
-                    } catch (e) {
-                        console.error("Mermaid failed to render", e);
-                    }
-                }
-                Prism.highlightAllUnder(botMsgDiv);
-
-            } catch (error) {
-                botMsgDiv.innerHTML = "Connection error.";
-                console.error(error);
-            } finally {
-                input.disabled = false;
-                sendBtn.disabled = false;
-                input.focus();
-            }
+        let displayHtml = rawText.replace(/\n/g, '<br>');
+        if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
+             displayHtml = `<pre>${rawText}</pre>`;
         }
         
-        async function updateGraph(query) {
-            try {
-                // const response = await fetch(`${API_URL}/api/v1/graph/context?query=${encodeURIComponent(query)}`);
-                const data = await response.json();
+        const userDiv = document.createElement('div');
+        userDiv.className = 'message user';
+        userDiv.innerHTML = displayHtml;
+        messagesDiv.appendChild(userDiv);
+        scrollToBottom();
 
-                if (!data.nodes || data.nodes.length === 0) return;
+        input.value = '';
+        input.style.height = 'auto';
+        input.disabled = true;
+        sendBtn.disabled = true;
 
-                const container = document.getElementById('mynetwork');
-                const visData = {
-                    nodes: new vis.DataSet(data.nodes),
-                    edges: new vis.DataSet(data.edges)
-                };
-
-                // --- NEW: Visual Styling Configuration ---
-                const options = {
-                    nodes: {
-                        shape: 'dot',
-                        size: 25,
-                        font: {
-                            size: 16,
-                            face: 'Segoe UI',
-                            color: '#2c3e50',
-                            background: '#ffffff', // White background for text makes it readable over lines
-                            strokeWidth: 0
-                        },
-                        borderWidth: 2,
-                        shadow: true
-                    },
-                    edges: {
-                        width: 2,
-                        color: { color: '#bdc3c7', highlight: '#3498db' },
-                        arrows: { to: { scaleFactor: 0.5 } },
-                        smooth: { type: 'continuous' },
-                        font: { align: 'middle', size: 12, color: '#7f8c8d' } // Labels on lines
-                    },
-                    groups: {
-                        // The "Focus" node (What you searched for)
-                        focus: {
-                            color: { background: '#3498db', border: '#2980b9' },
-                            font: { color: 'white', background: '#3498db' },
-                            size: 40
-                        },
-                        // Concepts (Abstract ideas)
-                        Concept: {
-                            color: { background: '#f1c40f', border: '#f39c12' }, // Yellow/Orange
-                            shape: 'dot'
-                        },
-                        Control_Flow: {
-                            color: { background: '#e67e22', border: '#d35400' }, // Darker Orange
-                            shape: 'dot'
-                        },
-                        // Files (Physical resources)
-                        Document: {
-                            color: { background: '#2ecc71', border: '#27ae60' }, // Green
-                            shape: 'box', // Box shape for files
-                            font: { color: '#fff', background: '#27ae60' }
-                        },
-                        Code_Source: {
-                            color: { background: '#2ecc71', border: '#27ae60' },
-                            shape: 'box',
-                            font: { color: '#fff', background: '#27ae60' }
-                        }
-                    },
-                    physics: {
-                        stabilization: false,
-                        barnesHut: {
-                            gravitationalConstant: -3000, // Stronger repulsion to spread nodes out
-                            springConstant: 0.04,
-                            springLength: 150
-                        }
-                    },
-                    interaction: {
-                        hover: true,
-                        tooltipDelay: 200
-                    }
-                };
-
-                network = new vis.Network(container, visData, options);
-
-            } catch (e) {
-                console.error("Graph update failed:", e);
-            }
+        let textToSend = rawText;
+        if (activeChallenge) {
+            textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
+            activeChallenge = null; 
         }
 
-        function updateRoleUI() {
-            const role = document.getElementById('roleSelector').value;
-            const header = document.querySelector('.chat-header');
-            
-            if (role === 'teacher') {
-                header.style.background = "#8e44ad"; // Purple for Teacher
-            } else {
-                header.style.background = "#2c3e50"; // Blue/Grey for Student
-            }
-            
-            // Clear chat to avoid confusion between sessions
-            document.getElementById('messages').innerHTML = `
-                <div class="message bot">
-                    Switched to <b>${role.toUpperCase()}</b> mode. How can I help you?
-                </div>
-            `;
-        }
+        const botMsgDiv = document.createElement('div');
+        botMsgDiv.className = 'message bot';
+        botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
+        messagesDiv.appendChild(botMsgDiv);
+        scrollToBottom();
 
-        function displaySuggestions(suggestions, containerDiv) {
-            const suggDiv = document.createElement('div');
-            suggDiv.className = 'suggestions-container';
-
-            suggestions.forEach(text => {
-                const btn = document.createElement('button');
-                btn.className = 'suggestion-btn';
-
-                if (text.toLowerCase().startsWith('challenge')) {
-                    btn.classList.add('challenge');
-                    btn.innerText = "💪 " + text.replace('Challenge:', '').trim();
-                    btn.onclick = () => { suggDiv.remove(); handleChallengeClick(text); };
-                } else {
-                    btn.innerText = text;
-                    btn.onclick = () => { suggDiv.remove(); sendMessage(text); };
-                }
-                suggDiv.appendChild(btn);
+        try {
+            const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    message: textToSend, 
+                    user_role: currentUser.role // <--- SEND ROLE FROM LOGIN
+                })
             });
-            containerDiv.appendChild(suggDiv);
-            scrollToBottom();
-        }
 
-        function handleChallengeClick(challengeText) {
-            activeChallenge = challengeText.replace("💪 ", "").replace("Challenge:", "").trim();
-            const acceptDiv = document.createElement('div');
-            acceptDiv.className = 'message user';
-            acceptDiv.innerText = "I accept: " + activeChallenge;
-            messagesDiv.appendChild(acceptDiv);
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let fullAnswer = "";
 
-            const botDiv = document.createElement('div');
-            botDiv.className = 'message bot';
-            botDiv.innerText = "Paste your code solution below!";
-            messagesDiv.appendChild(botDiv);
-            scrollToBottom();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
+                
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = JSON.parse(line.slice(6));
+                        
+                        if (data.type === 'status' && data.stage === 'intent') {
+                            intentBadge.innerText = data.message;
+                            if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
+                            else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
+                            else intentBadge.style.background = "#3498db";
+                        }
+                        else if (data.type === 'answer') {
+                            fullAnswer = data.text;
+                            botMsgDiv.innerHTML = marked.parse(fullAnswer);
+                            scrollToBottom();
+                        }
+                        else if (data.type === 'complete') {
+                            displaySources(data.data.sources);
+                            if (data.data.suggestions && data.data.suggestions.length > 0) {
+                                displaySuggestions(data.data.suggestions, botMsgDiv);
+                            }
+                        }
+                    }
+                }
+            }
 
-            input.value = "// Write your C code here:\n\n";
+            // Render Mermaid
+            const graphs = botMsgDiv.querySelectorAll('.language-mermaid');
+            for (const graph of graphs) {
+                try {
+                    const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
+                    const { svg } = await window.mermaid.render(id, graph.textContent);
+                    const div = document.createElement('div');
+                    div.innerHTML = svg;
+                    div.style.textAlign = 'center';
+                    div.style.margin = '15px 0';
+                    graph.parentElement.replaceWith(div);
+                } catch (e) {
+                    console.error("Mermaid failed to render", e);
+                }
+            }
+            Prism.highlightAllUnder(botMsgDiv);
+
+        } catch (error) {
+            botMsgDiv.innerHTML = "Connection error.";
+            console.error(error);
+        } finally {
+            input.disabled = false;
+            sendBtn.disabled = false;
             input.focus();
         }
+    }
 
-        function displaySources(sources) {
-            sourcesDiv.innerHTML = '';
-            if (!sources || sources.length === 0) {
-                sourcesDiv.innerHTML = '<div style="color:#888; text-align:center; margin-top:20px;">No sources found.</div>';
-                return;
+    function displaySuggestions(suggestions, containerDiv) {
+        const suggDiv = document.createElement('div');
+        suggDiv.className = 'suggestions-container';
+
+        suggestions.forEach(text => {
+            const btn = document.createElement('button');
+            btn.className = 'suggestion-btn';
+            
+            if (text.toLowerCase().startsWith('challenge')) {
+                btn.classList.add('challenge');
+                btn.innerText = "💪 " + text.replace('Challenge:', '').trim();
+                btn.onclick = () => { suggDiv.remove(); handleChallengeClick(text); };
+            } else {
+                btn.innerText = text;
+                btn.onclick = () => { suggDiv.remove(); sendMessage(text); };
             }
+            suggDiv.appendChild(btn);
+        });
+        containerDiv.appendChild(suggDiv);
+        scrollToBottom();
+    }
 
-            const uniqueSources = new Map();
-            sources.forEach(s => uniqueSources.set(s.document_name, s));
+    function handleChallengeClick(challengeText) {
+        activeChallenge = challengeText.replace("💪 ", "").replace("Challenge:", "").trim();
+        const acceptDiv = document.createElement('div');
+        acceptDiv.className = 'message user';
+        acceptDiv.innerText = "I accept: " + activeChallenge;
+        messagesDiv.appendChild(acceptDiv);
 
-            uniqueSources.forEach((source) => {
-                const card = document.createElement('div');
-                card.className = 'source-card';
-                const isCode = source.document_name.endsWith('.c');
+        const botDiv = document.createElement('div');
+        botDiv.className = 'message bot';
+        botDiv.innerText = "Paste your code solution below!";
+        messagesDiv.appendChild(botDiv);
+        scrollToBottom();
 
-                let contentHtml = source.chunk_text || "";
-                if (isCode) contentHtml = `<pre><code class="language-c">${contentHtml.replace(/</g, '&lt;')}</code></pre>`;
-                else contentHtml = marked.parse(contentHtml);
+        input.value = "// Write your C code here:\n\n";
+        input.focus();
+    }
 
-                card.innerHTML = `
-                <div class="source-title"><span>${isCode ? '💻' : '📖'} ${source.document_name}</span></div>
+    function displaySources(sources) {
+        sourcesDiv.innerHTML = ''; 
+        if (!sources || sources.length === 0) {
+            sourcesDiv.innerHTML = '<div style="color:#888; text-align:center; margin-top:20px;">No sources found.</div>';
+            return;
+        }
+
+        const uniqueSources = new Map();
+        sources.forEach(s => uniqueSources.set(s.document_name, s));
+
+        uniqueSources.forEach((source) => {
+            const card = document.createElement('div');
+            card.className = 'source-card';
+            const isCode = source.document_name.endsWith('.c');
+            const isRestricted = source.access_level === 'teacher';
+            const icon = isRestricted ? '🔒' : (isCode ? '💻' : '📖');
+            
+            let contentHtml = source.chunk_text || "";
+            if (isCode) contentHtml = `<pre><code class="language-c">${contentHtml.replace(/</g, '&lt;')}</code></pre>`;
+            else contentHtml = marked.parse(contentHtml);
+
+            card.innerHTML = `
+                <div class="source-title" style="${isRestricted ? 'background:#ffecb3;' : ''}">
+                    <span>${icon} ${source.document_name}</span>
+                </div>
                 <div class="source-content">${contentHtml}</div>
             `;
-                sourcesDiv.appendChild(card);
-            });
-            Prism.highlightAllUnder(sourcesDiv);
-        }
+            sourcesDiv.appendChild(card);
+        });
+        Prism.highlightAllUnder(sourcesDiv);
+    }
 
-        function scrollToBottom() {
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-    </script>
+    function scrollToBottom() {
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    // Start App
+    checkAuth();
+</script>
 
 </body>
-
 </html>
