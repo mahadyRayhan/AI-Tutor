@@ -1,6 +1,8 @@
 # backend/app/main.py
 
-from fastapi import FastAPI, HTTPException
+import shutil
+import subprocess
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
@@ -10,6 +12,7 @@ import json
 from fastapi.responses import StreamingResponse
 
 # Import components
+from app.core import config
 from app.db.llm_interface import LLMInterface
 from app.db.vector_store import ChromaVectorStore
 from app.db.graph_db import Neo4jGraphDB
@@ -303,6 +306,54 @@ async def get_student_analytics(username: str):
         "total_queries": len(history),
         "report": report_data
     }
+
+# --- RESOURCE MANAGEMENT ENDPOINTS ---
+@app.post("/api/v1/resources/upload")
+async def upload_resource(
+    files: List[UploadFile] = File(...), 
+    resource_type: str = "code" # 'code', 'concept', 'metadata'
+):
+    """
+    Uploads files to the specific resource folder and triggers ingestion.
+    """
+    saved_files = []
+    
+    # 1. Determine Target Directory
+    if resource_type == "code":
+        target_dir = config.PROJECT_ROOT / "resources" / "code"
+    elif resource_type == "concept":
+        target_dir = config.PROJECT_ROOT / "resources" / "concepts"
+    elif resource_type == "metadata":
+        target_dir = config.PROJECT_ROOT / "resources" / "metadata"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid resource type")
+
+    # 2. Save Files
+    for file in files:
+        file_path = target_dir / file.filename
+        try:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            saved_files.append(file.filename)
+        except Exception as e:
+            logger.error(f"Failed to save {file.filename}: {e}")
+
+    # 3. Trigger Re-Ingestion (Run scripts in background)
+    # We use subprocess to run the scripts exactly as if you typed them in terminal
+    try:
+        script_name = "ingest_manual_graph.py" if resource_type == "metadata" else "ingest_data.py"
+        script_path = config.PROJECT_ROOT / "scripts" / script_name
+        
+        # Run the script
+        subprocess.Popen(["python", str(script_path)])
+        
+        return {
+            "status": "success", 
+            "message": f"Uploaded {len(saved_files)} files. Database update started in background.",
+            "files": saved_files
+        }
+    except Exception as e:
+        return {"status": "warning", "message": f"Files saved, but ingestion failed to start: {e}"}
 
 if __name__ == "__main__":
     import uvicorn

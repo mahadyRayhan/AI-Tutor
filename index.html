@@ -166,11 +166,19 @@
                 const data = await res.json();
                 currentUser = data.user;
                 localStorage.setItem('c_tutor_user', JSON.stringify(currentUser));
-                showApp();
+                
+                // --- NEW ROUTING LOGIC ---
+                if (currentUser.role === 'teacher') {
+                    window.location.href = 'teacher_dashboard.html'; // Teachers go to Dashboard
+                } else {
+                    showApp(); // Students stay on Chat
+                }
+                // -------------------------
             } else {
                 err.style.display = 'block';
             }
         } catch (e) {
+            console.error(e);
             err.innerText = "Server Error";
             err.style.display = 'block';
         }
@@ -408,7 +416,7 @@
 
     function openDashboard() {
         if (currentUser.role === 'teacher') {
-            window.location.href = 'dashboard.html'; // Existing teacher dashboard
+            window.location.href = 'teacher_dashboard.html'; // Existing teacher dashboard
         } else {
             window.location.href = 'student_dashboard.html'; // New student dashboard
         }

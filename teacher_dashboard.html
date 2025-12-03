@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teacher Dashboard - C Tutor</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f4f4f9; padding: 40px; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; }
+        
+        /* Header */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #ddd; padding-bottom: 20px; }
+        .header h1 { margin: 0; color: #8e44ad; }
+        .nav-btn { padding: 10px 20px; background: #2c3e50; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        .nav-btn:hover { background: #34495e; }
+
+        /* Sections */
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 30px; }
+        h2 { margin-top: 0; color: #2c3e50; font-size: 1.3rem; margin-bottom: 20px; }
+
+        /* Grid for Toggles */
+        .control-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; }
+        .topic-card { border: 1px solid #eee; padding: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+        
+        /* Switch CSS */
+        .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2ecc71; }
+        input:checked + .slider:before { transform: translateX(26px); }
+
+        /* Upload Section */
+        .upload-area { border: 2px dashed #bdc3c7; padding: 30px; text-align: center; border-radius: 8px; background: #fafafa; }
+        select, input[type="file"] { padding: 10px; margin: 10px; border-radius: 4px; border: 1px solid #ddd; }
+        .upload-btn { background: #8e44ad; color: white; border: none; padding: 10px 25px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .upload-btn:hover { background: #9b59b6; }
+        .upload-btn:disabled { background: #ccc; }
+        #uploadStatus { margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>👨‍🏫 Teacher Dashboard</h1>
+        <div>
+            <a href="index.html" class="nav-btn">💬 Go to Chatbot</a>
+            <button onclick="logout()" class="nav-btn" style="background:#e74c3c; margin-left:10px;">Logout</button>
+        </div>
+    </div>
+    
+    <!-- Upload Section -->
+    <div class="card">
+        <h2>📤 Upload New Resources</h2>
+        <div class="upload-area">
+            <p>Upload new C files, Markdown concepts, or Exam Solutions. The system will automatically learn them.</p>
+            
+            <select id="resourceType">
+                <option value="code">C Code (.c)</option>
+                <option value="concept">Concept / Exam (.md)</option>
+                <option value="metadata">Knowledge Graph (.json)</option>
+            </select>
+            
+            <input type="file" id="fileInput" multiple>
+            <br>
+            <button class="upload-btn" onclick="uploadFiles()">Upload & Update Database</button>
+            <div id="uploadStatus"></div>
+        </div>
+    </div>
+
+    <!-- Controls Section -->
+    <div class="card">
+        <h2>👁️ Topic Visibility Control</h2>
+        <p style="color: #666; margin-bottom: 20px;">Hide topics to prevent students from accessing them before you teach them.</p>
+        <div id="topicGrid" class="control-grid">
+            <!-- Topics load here -->
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_URL = "http://127.0.0.1:8000";
+
+    // 1. Auth Check
+    const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
+    if (!currentUser || currentUser.role !== 'teacher') window.location.href = 'index.html';
+
+    function logout() {
+        localStorage.removeItem('c_tutor_user');
+        window.location.href = 'index.html';
+    }
+
+    // 2. Load Topics
+    async function loadTopics() {
+        const response = await fetch(`${API_URL}/api/v1/config/topics`);
+        const topics = await response.json();
+        const grid = document.getElementById('topicGrid');
+        grid.innerHTML = '';
+
+        for (const [topic, isEnabled] of Object.entries(topics)) {
+            const div = document.createElement('div');
+            div.className = 'topic-card';
+            div.innerHTML = `
+                <span style="font-weight:600;">${topic}</span>
+                <label class="switch">
+                    <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="toggleTopic('${topic}', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            `;
+            grid.appendChild(div);
+        }
+    }
+
+    async function toggleTopic(topic, enabled) {
+        await fetch(`${API_URL}/api/v1/config/topics`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic: topic, enabled: enabled })
+        });
+    }
+
+    // 3. Upload Logic
+    async function uploadFiles() {
+        const fileInput = document.getElementById('fileInput');
+        const typeSelect = document.getElementById('resourceType');
+        const statusDiv = document.getElementById('uploadStatus');
+        
+        if (fileInput.files.length === 0) {
+            statusDiv.innerText = "Please select files first.";
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('resource_type', typeSelect.value);
+        for (let i = 0; i < fileInput.files.length; i++) {
+            formData.append('files', fileInput.files[i]);
+        }
+
+        statusDiv.innerText = "Uploading and processing...";
+        statusDiv.style.color = "#3498db";
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/resources/upload`, {
+                method: 'POST',
+                body: formData // No Content-Type header (browser sets it for FormData)
+            });
+
+            if (res.ok) {
+                statusDiv.innerText = "✅ Success! Database is updating in background (Give it ~10 seconds).";
+                statusDiv.style.color = "#27ae60";
+                fileInput.value = ""; // Reset
+                // Reload topics after a delay just in case new topics appeared
+                setTimeout(loadTopics, 3000); 
+            } else {
+                statusDiv.innerText = "❌ Upload failed.";
+                statusDiv.style.color = "#e74c3c";
+            }
+        } catch (e) {
+            console.error(e);
+            statusDiv.innerText = "❌ Server error.";
+            statusDiv.style.color = "#e74c3c";
+        }
+    }
+
+    loadTopics();
+</script>
+
+</body>
+</html>
