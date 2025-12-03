@@ -85,6 +85,30 @@ def _extract_concept_metadata(chunk_text: str, llm: LLMInterface) -> Dict[str, A
     
     return {}
 
+def _determine_metadata(filename: str) -> Dict[str, str]:
+    """
+    Auto-tags content based on filename.
+    """
+    name = filename.lower()
+    
+    # 1. Determine Access Level
+    # If file implies exam or solution, it's teacher only
+    access_level = "student" 
+    if "exam" in name or "solution" in name or "quiz" in name:
+        access_level = "teacher"
+
+    # 2. Determine Topic (Categories)
+    topic = "General"
+    if "array" in name: topic = "Arrays"
+    elif "loop" in name or "control" in name or "switch" in name: topic = "Control Flow"
+    elif "string" in name: topic = "Strings"
+    elif "pointer" in name: topic = "Pointers"
+    elif "function" in name: topic = "Functions"
+    elif "var" in name or "type" in name: topic = "Variables"
+    elif "struct" in name: topic = "Structures"
+    
+    return {"access_level": access_level, "topic": topic}
+
 def process_and_chunk_documents(
     resource_paths: List[str],
     graph_db: Neo4jGraphDB,
@@ -147,6 +171,9 @@ def process_and_chunk_documents(
                 {"name": filename, "type": file_type}
             )
 
+            # GET METADATA
+            meta = _determine_metadata(filename) # <--- NEW CALL
+
             # B. PROCESSING EACH CHUNK
             for i, chunk_obj in enumerate(chunks):
                 text = chunk_obj.page_content
@@ -159,7 +186,9 @@ def process_and_chunk_documents(
                     "metadata": {
                         "chunk_id": chunk_id,
                         "document_name": filename,
-                        "type": file_type
+                        "type": file_type,
+                        "access_level": meta["access_level"], # <--- SAVED
+                        "topic": meta["topic"]                # <--- SAVED
                     }
                 }
                 all_chunks_for_vector_store.append(vector_record)

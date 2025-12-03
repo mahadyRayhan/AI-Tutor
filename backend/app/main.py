@@ -14,6 +14,7 @@ from app.db.llm_interface import LLMInterface
 from app.db.vector_store import ChromaVectorStore
 from app.db.graph_db import Neo4jGraphDB
 from app.agents.cot_rag_agent import ChainOfThoughtRAGAgent
+from app.core.settings_manager import settings_manager
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -35,6 +36,10 @@ llm_interface = None
 vector_store = None
 graph_db = None
 cot_rag_agent = None
+
+class TopicUpdate(BaseModel):
+    topic: str
+    enabled: bool
 
 @app.on_event("startup")
 async def startup_event():
@@ -209,6 +214,17 @@ async def chat_stream(request: ChatRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+@app.get("/api/v1/config/topics")
+async def get_topics():
+    """Get list of topics and their visibility status"""
+    return settings_manager.get_settings()
+
+@app.post("/api/v1/config/topics")
+async def update_topic(update: TopicUpdate):
+    """Enable or Disable a topic"""
+    settings_manager.update_topic(update.topic, update.enabled)
+    return {"status": "success", "topic": update.topic, "enabled": update.enabled}
 
 if __name__ == "__main__":
     import uvicorn

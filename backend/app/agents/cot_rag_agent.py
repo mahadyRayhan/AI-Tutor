@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from app.db.llm_interface import LLMInterface
 from app.db.vector_store import VectorStore
 from app.db.graph_db import Neo4jGraphDB
+from app.core.settings_manager import settings_manager
 
 @dataclass
 class CoTStep:
@@ -58,7 +59,10 @@ class ChainOfThoughtRAGAgent:
                 expanded_terms.append(record['name'])
         return list(set(expanded_terms))
 
-    def _execute_retrieval(self, query: str, intent: str) -> List[Dict[str, Any]]:
+    def _execute_retrieval(self, query: str, intent: str, user_role: str = 'student') -> List[Dict[str, Any]]:
+        """
+        Retrieves documents with Graph expansion, Vector search, and Strict Filtering (Gatekeeper).
+        """
         # 1. Extract keywords
         extract_prompt = f"Extract the main C programming terms from: '{query}'. Return as comma-separated list."
         entities_str = self.llm_interface.generate_response(extract_prompt)
@@ -72,26 +76,63 @@ class ChainOfThoughtRAGAgent:
 
         # 3. Vector Search
         query_embedding = self.llm_interface.get_embedding(query)
-        raw_chunks = self.vector_store.query(query_embedding, top_k=3)
+        # We fetch more candidates (top_k=8) because the Gatekeeper might filter some out
+        raw_chunks = self.vector_store.query(query_embedding, top_k=8)
 
-        # 4. Graph Related Search
+        # 4. Graph Related Search (Optional expansion)
         if related_terms:
             expanded_query = " ".join(related_terms)
             expanded_embedding = self.llm_interface.get_embedding(expanded_query)
-            related_chunks = self.vector_store.query(expanded_embedding, top_k=2)
+            related_chunks = self.vector_store.query(expanded_embedding, top_k=3)
             raw_chunks.extend(related_chunks)
 
-        # --- NEW: STRICT SCORE FILTERING ---
-        # Filter out weak matches (prevent hallucinations on 'crypto')
-        # Adjust threshold (0.25 - 0.3) based on your embedding model's sensitivity
-        SCORE_THRESHOLD = 0.28 
+        # --- GATEKEEPER LOGIC (Filtering) ---
         valid_chunks = []
+        # Load the current visibility settings from the dashboard manager
+        topic_settings = settings_manager.get_settings()
+        
+        # Strictness level for vector match (0.0 to 1.0)
+        # Higher = stricter (fewer hallucinations), Lower = more lenient
+        SCORE_THRESHOLD = 0.28 
+
+        seen_ids = set()
+
         for chunk in raw_chunks:
-            if chunk.get('score', 0) > SCORE_THRESHOLD:
-                valid_chunks.append(chunk)
+            # Deduplicate based on chunk ID
+            chunk_id = chunk.get('metadata', {}).get('chunk_id')
+            if chunk_id in seen_ids:
+                continue
+            seen_ids.add(chunk_id)
+
+            meta = chunk.get('metadata', {})
+            
+            # CHECK A: Relevance Score
+            # If the vector database says this match is weak, ignore it.
+            if chunk.get('score', 0) <= SCORE_THRESHOLD:
+                continue
+
+            # CHECK B: Access Level (Teacher vs Student)
+            # If the user is a 'student', they cannot see documents marked 'teacher'
+            chunk_access = meta.get('access_level', 'student')
+            if user_role == 'student' and chunk_access == 'teacher':
+                self.logger.info(f"⛔ Access Denied: Student tried to access '{meta.get('document_name')}'")
+                continue
+
+            # CHECK C: Topic Visibility (Dashboard Toggle)
+            # If the teacher turned off this topic in the dashboard, hide it.
+            topic = meta.get('topic', 'General')
+            # If topic is not in settings, default to True (Visible)
+            is_visible = topic_settings.get(topic, True)
+            
+            if not is_visible:
+                self.logger.info(f"🙈 Hidden Content: Topic '{topic}' is currently disabled.")
+                continue
+
+            # If it passes all checks, add it
+            valid_chunks.append(chunk)
         
         if not valid_chunks:
-            self.logger.warning(f"No relevant documents found (All scores below {SCORE_THRESHOLD}).")
+            self.logger.warning(f"No relevant documents found after filtering (Role: {user_role}).")
             return []
             
         return valid_chunks
@@ -215,7 +256,7 @@ class ChainOfThoughtRAGAgent:
         intent = self._classify_intent(query)
         self.logger.info(f"Intent Classified: {intent}")
         
-        retrieved_chunks = self._execute_retrieval(query, intent)
+        retrieved_chunks = self._execute_retrieval(query, intent, user_role) 
         
         # --- FIX: STRICT HALLUCINATION PREVENTION ---
         # If retrieval yielded 0 results (or all were filtered by low score)
