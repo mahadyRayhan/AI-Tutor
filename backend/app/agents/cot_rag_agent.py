@@ -10,6 +10,7 @@ from app.db.llm_interface import LLMInterface
 from app.db.vector_store import VectorStore
 from app.db.graph_db import Neo4jGraphDB
 from app.core.settings_manager import settings_manager
+from app.core.user_knowledge_manager import knowledge_manager
 
 @dataclass
 class CoTStep:
@@ -43,6 +44,22 @@ class ChainOfThoughtRAGAgent:
         Respond with ONE word: CONCEPT, PROBLEM, DEBUG, or REVIEW.
         """
         return self.llm_interface.generate_response(prompt).strip().upper()
+    
+    def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
+        """
+        Queries the Graph to see if the requested topic has hard prerequisites.
+        """
+        prereqs = []
+        for entity in initial_entities:
+            # Cypher: Find what this entity REQUIRES
+            cypher = """
+            MATCH (target:Concept {name: $name})-[:REQUIRES_UNDERSTANDING_OF]->(req)
+            RETURN req.name as name
+            """
+            results = self.graph_db.execute_query(cypher, {"name": entity})
+            for record in results:
+                prereqs.append(record['name'])
+        return list(set(prereqs))
 
     def _sanitize_mermaid(self, text: str) -> str:
         """
@@ -258,21 +275,25 @@ class ChainOfThoughtRAGAgent:
         Reference Material: {context}
 
         **MANDATORY RULES:**
-        1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information about [Concept] in my current reference library."
-        2. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences).
-        3. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`) if the concept involves flow/structure.
+        1. **STRICT LIMITATION:** Check the Reference Material. If the concept (e.g., 'switch', 'crypto') is NOT present, you MUST say:
+           "I don't have information about [Concept] in my current reference library."
+        2. **PERSONALIZATION (NEW):** Check the "USER CONTEXT" at the top of the Reference Material.
+           - If it lists concepts the user knows, **acknowledge them** in your first sentence.
+           - Example: "Since you already mastered [Known Concept], understanding [New Concept] will be easier because..."
+        3. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences). Use analogies.
+        4. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`) if the concept involves flow/structure.
            - **CRITICAL SANITIZATION:** 
              - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
-             - ABSOLUTELY NO BRACKETS `[]` inside node labels.
-             - ABSOLUTELY NO QUOTES `"` inside node labels.
-             - **BAD:** `A[Function(int x)]` or `B{{x[0] > 5}}`
-             - **GOOD:** `A[Function int x]` or `B{{x at 0 is greater than 5}}`
-        4. **SOURCE GROUNDING:** Quote specific examples from text.
+             - ABSOLUTELY NO BRACKETS `[]` inside node labels (except the outer ones defining the node).
+             - ABSOLUTELY NO QUOTES `"` inside node labels. Use single quotes `'` if needed.
+             - **BAD:** `A[Function(int x)]` or `B{{x[0] > 5}}` or `C[Print "Hello"]`
+             - **GOOD:** `A[Function int x]` or `B{{x at 0 is greater than 5}}` or `C[Print 'Hello']`
+        5. **SOURCE GROUNDING:** Quote specific examples from text.
 
         **STRICT RESPONSE FORMAT:**
         
         ## Explanation
-        [Text explanation]
+        [Start by bridging from known concepts if applicable. Then explain the new concept using text and analogies.]
 
         ## Visual Model
         ```mermaid
@@ -283,37 +304,83 @@ class ChainOfThoughtRAGAgent:
         ```
         
         ## Example from Class
-        [Reference specific code]
+        [Reference specific code from text]
         """
         return self.llm_interface.generate_response(prompt)
 
     def run(self, query: str, user_role: str = 'student', **kwargs) -> Dict[str, Any]:
         self.logger.info(f"Processing Query: {query}")
         
+        # Get Username from kwargs (passed from main.py)
+        username = kwargs.get('username', 'anonymous')
+
+        # 1. Intent & Entities
         intent = self._classify_intent(query)
-        self.logger.info(f"Intent Classified: {intent}")
+        extract_prompt = f"Extract the main C programming terms from: '{query}'. Return as comma-separated list."
+        entities_str = self.llm_interface.generate_response(extract_prompt)
+        entities = [e.strip() for e in entities_str.split(',') if e.strip()]
+
+        # --- STEP A: LEARN FROM USER INPUT ---
+        # If user clicks "I know Variables...", we detect that and save it.
+        if "i know" in query.lower():
+            for entity in entities:
+                knowledge_manager.mark_concept_as_known(username, entity)
+                self.logger.info(f"🧠 Learned that {username} knows {entity}")
+        # -------------------------------------
+
+        # --- STEP B: CHECK PREREQUISITES (Smart) ---
+        should_check_prereqs = "anyway" not in query.lower() and "skip" not in query.lower() and "know" not in query.lower()
+
+        if intent == "CONCEPT" and should_check_prereqs:
+            all_prereqs = self._check_prerequisites(query, entities)
+            
+            # Filter: Only show prerequisites the user DOES NOT know yet
+            unknown_prereqs = []
+            for p in all_prereqs:
+                # Don't check self-loops
+                if p.lower() in [e.lower() for e in entities]: continue
+                
+                # Check DB
+                if not knowledge_manager.has_mastered(username, p):
+                    unknown_prereqs.append(p)
+
+            if unknown_prereqs:
+                prereq_str = ", ".join(unknown_prereqs)
+                return {
+                    "answer": f"## 🛑 Hold on!\n\nTo understand **{entities[0]}**, you really need to know **{prereq_str}** first.\n\nSince I don't have a record of you learning {prereq_str} yet, I recommend we start there.",
+                    "sources": [],
+                    "intent": "GUIDANCE",
+                    "suggestions": [
+                        f"Explain {unknown_prereqs[0]} first",
+                        f"I know {unknown_prereqs[0]}, teach me {entities[0]} anyway" 
+                    ],
+                    "cot_analysis": None,
+                    "reasoning_quality": 1.0
+                }
+        # -------------------------------------------
+
+        # 2. Retrieval
+        retrieved_chunks = self._execute_retrieval(query, intent, user_role)
         
-        retrieved_chunks = self._execute_retrieval(query, intent, user_role) 
-        
-        # --- FIX: STRICT HALLUCINATION PREVENTION ---
-        # If retrieval yielded 0 results (or all were filtered by low score)
         if not retrieved_chunks:
-            return {
-                "answer": f"I'm sorry, but I don't have any information about '{query}' in my current reference library. I can only teach you based on the materials provided in this course (Variables, Loops, Arrays, Functions).",
-                "sources": [],
-                "intent": intent,
-                "suggestions": ["Ask about Arrays", "Ask about Loops", "Ask about Variables"],
-                "cot_analysis": None,
-                "reasoning_quality": 0.0 
-            }
-        # --------------------------------------------
-        
-        context_text = ""
+             # ... (Keep existing empty logic) ...
+             return { "answer": "I don't know...", "suggestions": [], "sources": [] }
+
+        # --- STEP C: INJECT USER CONTEXT ---
+        # We tell the LLM what the user already knows so it can be smarter.
+        known_concepts = knowledge_manager.get_known_concepts(username)
+        user_context_str = ""
+        if known_concepts:
+            user_context_str = f"USER CONTEXT: The student already knows: {', '.join(known_concepts)}. You can reference these concepts freely without re-explaining them."
+
+        context_text = f"{user_context_str}\n\n"
         for c in retrieved_chunks:
             source = c.get('metadata', {}).get('document_name', 'Unknown')
             text = c.get('text', '')
             context_text += f"--- Source: {source} ---\n{text}\n\n"
+        # -----------------------------------
         
+        # 3. Generation Logic (Same as before)
         if intent == "REVIEW":
             final_answer = self._generate_code_review(query, context_text)
         elif intent == "PROBLEM" or intent == "DEBUG":
@@ -323,13 +390,13 @@ class ChainOfThoughtRAGAgent:
 
         suggestions = self._generate_suggestions(query, final_answer, context_text)
 
+        # 4. Structure Response
         formatted_sources = []
         for c in retrieved_chunks:
             source_data = c.get('metadata', {}).copy()
             source_data['chunk_text'] = c.get('text') or c.get('chunk_text') or 'Text missing'
             formatted_sources.append(source_data)
 
-        final_answer = self._sanitize_mermaid(final_answer)
         return {
             "answer": final_answer,
             "sources": formatted_sources,

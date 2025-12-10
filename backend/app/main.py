@@ -165,64 +165,58 @@ async def health():
 #     return {"nodes": nodes, "edges": edges}
 
 @app.post("/api/v1/chat/stream")
-@app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """
-    Stream the response from the C Tutor Agent with Topic Tracking.
-    """
     async def generate_stream():
         if not cot_rag_agent:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
             return
 
         try:
-            # 1. Send status update
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing your C programming question...', 'stage': 'init'})}\n\n"
+            # 1. SETUP: Get User ID immediately
+            user_id = request.username if request.username else "anonymous"
+
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing...', 'stage': 'init'})}\n\n"
             
             start_time = time.time()
             
-            # 2. Run the Agent
-            result = cot_rag_agent.run(request.message, request.user_role)
+            # 2. RUN AGENT: Pass the user_id correctly
+            result = cot_rag_agent.run(
+                query=request.message, 
+                user_role=request.user_role, 
+                username=user_id  
+            )
             
             duration = time.time() - start_time
             
-            # 3. Log History with Topic Detection
+            # 3. LOGGING
             try:
-                # A. Get Username
-                user_id = request.username if request.username else "anonymous"
-                
-                # B. Get Intent
                 intent = result.get('intent', 'UNKNOWN')
                 
-                # C. Detect Topic (New Logic)
-                # We look at the first source retrieved to guess the topic.
+                # Detect Topic from sources
                 sources = result.get('sources', [])
                 detected_topic = "General"
                 
                 if intent == "GUIDANCE":
                     detected_topic = "Prerequisite Check"
                 elif sources:
-                    # 'topic' was added to metadata in data_processing.py
                     detected_topic = sources[0].get('topic', 'General')
                 
-                # D. Log to file (Requires updated HistoryManager)
+                # Log interaction
                 history_manager.log_interaction(
                     user_id, 
                     request.message, 
                     intent, 
                     result['answer'], 
-                    detected_topic  # <--- The new argument
+                    detected_topic
                 )
             except Exception as log_err:
                 logger.error(f"Logging failed: {log_err}")
 
-            # 4. Stream Status
-            yield f"data: {json.dumps({'type': 'status', 'message': f'Identified as {intent} query', 'stage': 'intent'})}\n\n"
-            
-            # 5. Stream Answer
+            # 4. Stream Response
+            yield f"data: {json.dumps({'type': 'status', 'message': f'Identified as {intent}', 'stage': 'intent'})}\n\n"
             yield f"data: {json.dumps({'type': 'answer', 'text': result['answer'], 'time': duration})}\n\n"
 
-            # 6. Send Complete Signal
+            # 5. Final Payload
             final_payload = {
                 "type": "complete",
                 "data": {
@@ -230,11 +224,7 @@ async def chat_stream(request: ChatRequest):
                     "sources": result.get('sources', []),
                     "suggestions": result.get('suggestions', []),
                     "query_domain": "C Programming",
-                    "cot_analysis": {
-                        "complexity": intent,
-                        "reasoning_steps": [],
-                        "validation": None
-                    },
+                    "cot_analysis": None,
                     "timings": {"total": round(duration, 2)}
                 }
             }
