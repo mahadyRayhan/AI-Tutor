@@ -143,3 +143,8 @@ function displaySources(sources) {
 
     container.innerHTML = html;
 }
+
+so, whatever has been done so far, if I want to submit this as a conference paper. But I am not sure whether this is enough of not.
+I have some other ideas to add, like security check, llm security, rag security and all.
+could you tell me what else I should add to make it a good conference paper (inital focus is ICHMS) including evalaution
+I need a good to the point plan for this.

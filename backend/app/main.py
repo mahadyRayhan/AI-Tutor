@@ -165,9 +165,10 @@ async def health():
 #     return {"nodes": nodes, "edges": edges}
 
 @app.post("/api/v1/chat/stream")
+@app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest):
     """
-    Stream the response from the C Tutor Agent.
+    Stream the response from the C Tutor Agent with Topic Tracking.
     """
     async def generate_stream():
         if not cot_rag_agent:
@@ -181,30 +182,47 @@ async def chat_stream(request: ChatRequest):
             start_time = time.time()
             
             # 2. Run the Agent
-            # The agent now handles intent classification and retrieval internally
             result = cot_rag_agent.run(request.message, request.user_role)
             
             duration = time.time() - start_time
             
-            # 3. Stream the "Intent" (Concept vs Problem)
+            # 3. Log History with Topic Detection
             try:
-                # 1. Get username safely
+                # A. Get Username
                 user_id = request.username if request.username else "anonymous"
                 
-                # 2. Get Intent safely
+                # B. Get Intent
                 intent = result.get('intent', 'UNKNOWN')
                 
-                # 3. Log
-                history_manager.log_interaction(user_id, request.message, intent, result['answer'])
+                # C. Detect Topic (New Logic)
+                # We look at the first source retrieved to guess the topic.
+                sources = result.get('sources', [])
+                detected_topic = "General"
+                
+                if intent == "GUIDANCE":
+                    detected_topic = "Prerequisite Check"
+                elif sources:
+                    # 'topic' was added to metadata in data_processing.py
+                    detected_topic = sources[0].get('topic', 'General')
+                
+                # D. Log to file (Requires updated HistoryManager)
+                history_manager.log_interaction(
+                    user_id, 
+                    request.message, 
+                    intent, 
+                    result['answer'], 
+                    detected_topic  # <--- The new argument
+                )
             except Exception as log_err:
                 logger.error(f"Logging failed: {log_err}")
+
+            # 4. Stream Status
             yield f"data: {json.dumps({'type': 'status', 'message': f'Identified as {intent} query', 'stage': 'intent'})}\n\n"
             
-            # 4. Stream the final answer
-            # We send it as type 'answer' which the UI expects
+            # 5. Stream Answer
             yield f"data: {json.dumps({'type': 'answer', 'text': result['answer'], 'time': duration})}\n\n"
 
-            # 5. Send Complete signal with sources
+            # 6. Send Complete Signal
             final_payload = {
                 "type": "complete",
                 "data": {
@@ -213,8 +231,8 @@ async def chat_stream(request: ChatRequest):
                     "suggestions": result.get('suggestions', []),
                     "query_domain": "C Programming",
                     "cot_analysis": {
-                        "complexity": intent, # reusing complexity field for intent
-                        "reasoning_steps": [], # No detailed steps in new agent
+                        "complexity": intent,
+                        "reasoning_steps": [],
                         "validation": None
                     },
                     "timings": {"total": round(duration, 2)}
@@ -283,12 +301,17 @@ async def get_student_analytics(username: str):
     Student Logs:
     {log_text}
     
-    Task: Write a helpful "Progress Report" (max 3 sentences per section).
+    Task: Write a helpful "Progress Report".
+    **FORMAT RULES:**
+    - Use HTML `<ul><li>...</li></ul>` for lists.
+    - Do NOT use Markdown.
+    - Keep it concise.
+
     1. **Focus Areas:** What topics are they asking about most?
     2. **Strengths:** Are they asking good conceptual questions or writing code?
     3. **Weakness/Recommendations:** What should they practice next?
     
-    Return JSON: {{ "focus": "...", "strengths": "...", "weakness": "..." }}
+    Return JSON: {{ "focus": "<ul><li>...</li></ul>", "strengths": "<ul><li>...</li></ul>", "weakness": "<ul><li>...</li></ul>" }}
     """
     
     report_raw = llm_interface.generate_response(prompt)
@@ -355,6 +378,44 @@ async def upload_resource(
     except Exception as e:
         return {"status": "warning", "message": f"Files saved, but ingestion failed to start: {e}"}
 
+@app.get("/api/v1/analytics/teacher/overview")
+async def get_teacher_analytics():
+    """
+    Returns global class stats.
+    """
+    # Load all history
+    import json
+    from app.core import config
+    history_path = config.PROJECT_ROOT / "database" / "chat_history.json"
+    
+    if not history_path.exists():
+        return {"topics": {}, "struggles": []}
+        
+    with open(history_path, 'r') as f:
+        history = json.load(f)
+        
+    # 1. Topic Popularity
+    topic_counts = {}
+    # 2. Struggle Detection (Intent = REVIEW or DEBUG)
+    struggle_counts = {}
+    
+    for h in history:
+        topic = h.get('topic', 'General')
+        intent = h.get('intent', 'UNKNOWN')
+        
+        # Count Topics
+        topic_counts[topic] = topic_counts.get(topic, 0) + 1
+        
+        # Count Struggles
+        if intent in ['REVIEW', 'DEBUG']:
+            struggle_counts[topic] = struggle_counts.get(topic, 0) + 1
+
+    return {
+        "popular_topics": topic_counts,
+        "struggle_areas": struggle_counts,
+        "total_interactions": len(history)
+    }
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)

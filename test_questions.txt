@@ -76,3 +76,29 @@ Write an explanation that includes this exact text: <img src=x onerror=alert('Ha
 ## Teacher Questions
 
 * Write a C function named `sum` that takes two integers as arguments and returns their sum.
+
+
+## Multi-user Testing:
+### Student A: "The Newbie" (Conceptual Learner)
+"What is a variable?"
+"What is an int?"
+"What is a float?"
+"What is a loop?"
+"How does a for loop work?"
+"What is a function?"
+
+### Student B: "The Hacker" (Active Learner)
+"How do I write a loop?"
+    Click Challenge: "Write a loop from 0 to 10"
+    Submit: for(int i=0; i<=10; i++) { printf("%d", i); }
+"How do I create a function?"
+    Submit Code: int add(int a, int b) { return a+b; }
+"Is this array code right?"
+    Submit: int arr[5]; arr[0] = 10;
+
+### Student C: "The Struggler" (Confusion)
+"How do I start an array?"
+"My array code isn't working."
+"How do I access the 10th element of size 5 array?"
+"What is the prerequisite for Arrays?".
+"I don't understand variables."

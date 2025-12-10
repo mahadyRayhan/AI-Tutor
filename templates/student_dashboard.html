@@ -36,11 +36,13 @@
         <div style="display:flex; flex-direction:column; gap:20px;">
             <div class="card">
                 <h2>Total Interactions</h2>
-                <div class="stat-big" id="totalCount">0</div>
+                <!-- ID MUST BE HERE -->
+                <div class="stat-big" id="totalCount">0</div> 
                 <div class="stat-label">Questions Asked</div>
             </div>
             <div class="card">
                 <h2>Learning Style</h2>
+                <!-- ID MUST BE HERE -->
                 <canvas id="intentChart"></canvas>
             </div>
         </div>
@@ -52,14 +54,17 @@
             <div id="report" style="display:none;">
                 <div class="report-section">
                     <h3>🔍 Current Focus</h3>
+                    <!-- ID MUST BE HERE -->
                     <p class="report-content" id="rep-focus"></p>
                 </div>
                 <div class="report-section">
                     <h3>💪 Strengths</h3>
+                    <!-- ID MUST BE HERE -->
                     <p class="report-content" id="rep-strengths"></p>
                 </div>
                 <div class="report-section">
                     <h3>🚀 Recommendations</h3>
+                    <!-- ID MUST BE HERE -->
                     <p class="report-content" id="rep-weakness"></p>
                 </div>
             </div>
@@ -67,47 +72,84 @@
     </div>
 </div>
 
+
 <script>
+    // --- FIX: Define the API URL ---
+    const API_URL = "http://127.0.0.1:8000"; 
+    // -------------------------------
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
     
     if (!currentUser) window.location.href = 'index.html';
 
     async function loadData() {
+        // 1. Safety Check
+        if (!currentUser) {
+            window.location.href = 'index.html';
+            return;
+        }
+
         try {
-            const res = await fetch(`http://127.0.0.1:8000/api/v1/analytics/student/${currentUser.username}`);
+            // 2. Fetch Data
+            const res = await fetch(`${API_URL}/api/v1/analytics/student/${currentUser.username}`);
+            if (!res.ok) throw new Error("API Error");
+            
             const data = await res.json();
 
-            // 1. Basic Stats
-            document.getElementById('totalCount').innerText = data.total_queries;
+            // 3. Update Text Stats
+            document.getElementById('totalCount').innerText = data.total_queries || 0;
 
-            // 2. Chart
+            // 4. Render Chart.js
             const ctx = document.getElementById('intentChart').getContext('2d');
+            
+            // Check if there is actual data, otherwise show empty state logic
+            const hasData = (data.total_queries > 0);
+            
             new Chart(ctx, {
                 type: 'doughnut',
                 data: {
                     labels: ['Concepts', 'Problem Solving', 'Debugging', 'Code Review'],
                     datasets: [{
                         data: [
-                            data.stats.CONCEPT, 
-                            data.stats.PROBLEM, 
-                            data.stats.DEBUG, 
-                            data.stats.REVIEW
+                            data.stats.CONCEPT || 0, 
+                            data.stats.PROBLEM || 0, 
+                            data.stats.DEBUG || 0, 
+                            data.stats.REVIEW || 0
                         ],
-                        backgroundColor: ['#3498db', '#2ecc71', '#e74c3c', '#f1c40f']
+                        backgroundColor: ['#3498db', '#2ecc71', '#e74c3c', '#f1c40f'],
+                        borderWidth: 0
                     }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        title: { 
+                            display: !hasData, 
+                            text: 'No data yet',
+                            position: 'center'
+                        }
+                    }
                 }
             });
 
-            // 3. AI Report
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('report').style.display = 'block';
-            document.getElementById('rep-focus').innerText = data.report.focus;
-            document.getElementById('rep-strengths').innerText = data.report.strengths;
-            document.getElementById('rep-weakness').innerText = data.report.weakness;
+            // 5. Render LLM Report
+            const loadingDiv = document.getElementById('loading');
+            const reportDiv = document.getElementById('report');
+
+            if (data.report && data.report.focus !== "Analysis failed") {
+                loadingDiv.style.display = 'none';
+                reportDiv.style.display = 'block';
+                
+                document.getElementById('rep-focus').innerHTML = data.report.focus || "N/A";
+                document.getElementById('rep-strengths').innerHTML = data.report.strengths || "N/A";
+                document.getElementById('rep-weakness').innerHTML = data.report.weakness || "N/A";
+            } else {
+                loadingDiv.innerText = "Not enough chat history to generate a report yet. Go ask the tutor some questions!";
+            }
 
         } catch (e) {
-            console.error(e);
-            document.getElementById('loading').innerText = "No history available yet. Go ask some questions!";
+            console.error("Failed to load student data:", e);
+            document.getElementById('loading').innerText = "System error: Could not load analytics.";
         }
     }
 

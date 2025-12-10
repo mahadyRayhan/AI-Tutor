@@ -38,6 +38,8 @@
         .upload-btn:disabled { background: #ccc; }
         #uploadStatus { margin-top: 15px; font-weight: bold; }
     </style>
+    <!-- Add Chart.js to head -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -66,6 +68,21 @@
             <br>
             <button class="upload-btn" onclick="uploadFiles()">Upload & Update Database</button>
             <div id="uploadStatus"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📊 Class Analytics</h2>
+        <p style="color: #666; margin-bottom: 20px;">Real-time insights into student activity and struggle areas.</p>
+        <div class="control-grid">
+            <div style="min-height: 250px;">
+                <h3 style="text-align:center; font-size:1rem; color:#7f8c8d;">Most Discussed Topics</h3>
+                <canvas id="topicChart"></canvas>
+            </div>
+            <div style="min-height: 250px;">
+                <h3 style="text-align:center; font-size:1rem; color:#7f8c8d;">Code Struggle Areas</h3>
+                <canvas id="struggleChart"></canvas>
+            </div>
         </div>
     </div>
 
@@ -163,7 +180,45 @@
         }
     }
 
+    async function loadAnalytics() {
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/overview`);
+            const data = await res.json();
+            
+            // 1. Topic Popularity Chart
+            new Chart(document.getElementById('topicChart'), {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(data.popular_topics),
+                    datasets: [{ 
+                        label: 'Interactions', 
+                        data: Object.values(data.popular_topics), 
+                        backgroundColor: '#3498db' 
+                    }]
+                },
+                options: { scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+            });
+
+            // 2. Struggle Chart
+            new Chart(document.getElementById('struggleChart'), {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(data.struggle_areas),
+                    datasets: [{ 
+                        label: 'Code Issues / Debugging', 
+                        data: Object.values(data.struggle_areas), 
+                        backgroundColor: '#e74c3c' 
+                    }]
+                },
+                options: { scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+            });
+        } catch (e) {
+            console.error("Analytics Error", e);
+        }
+    }
+
     loadTopics();
+    loadAnalytics();
 </script>
 
 </body>

@@ -18,14 +18,14 @@ class HistoryManager:
             with open(self.file_path, 'w') as f:
                 json.dump([], f)
 
-    def log_interaction(self, username: str, query: str, intent: str, response: str):
-        """Saves a chat interaction."""
+    def log_interaction(self, username: str, query: str, intent: str, response: str, topic: str = "General"):
         entry = {
             "timestamp": datetime.now().isoformat(),
             "username": username,
             "query": query,
             "intent": intent,
-            "response_snippet": response[:200] + "..." # Save space
+            "topic": topic, # <--- NEW FIELD
+            "response_snippet": response[:200]
         }
         
         # Read, Append, Write (Simple JSON implementation)
