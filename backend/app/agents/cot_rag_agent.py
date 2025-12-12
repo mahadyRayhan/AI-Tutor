@@ -48,12 +48,16 @@ class ChainOfThoughtRAGAgent:
     def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
         """
         Queries the Graph to see if the requested topic has hard prerequisites.
+        Uses fuzzy matching (CONTAINS) to handle singular/plural mismatch.
         """
         prereqs = []
         for entity in initial_entities:
-            # Cypher: Find what this entity REQUIRES
+            # Cypher: Find what this entity REQUIRES (Case insensitive fuzzy match)
             cypher = """
-            MATCH (target:Concept {name: $name})-[:REQUIRES_UNDERSTANDING_OF]->(req)
+            MATCH (target:Concept)
+            WHERE toLower(target.name) CONTAINS toLower($name) 
+               OR toLower($name) CONTAINS toLower(target.name)
+            MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req)
             RETURN req.name as name
             """
             results = self.graph_db.execute_query(cypher, {"name": entity})
@@ -229,7 +233,13 @@ class ChainOfThoughtRAGAgent:
         """
         return self.llm_interface.generate_response(prompt)
 
-    def _generate_socratic_plan(self, query: str, context: str) -> str:
+    def _generate_socratic_plan(self, query: str, context: str, user_goal: str = None) -> str:
+        
+        # Build dynamic instruction based on whether a goal exists
+        goal_instruction = ""
+        if user_goal:
+            goal_instruction = f"6. **GOAL ALIGNMENT:** The student's current learning goal is: '{user_goal}'. If the topic of their query helps them reach that goal, explicitly mention it in the Strategy section to motivate them."
+
         prompt = f"""
         You are an encouraging C Programming Tutor for junior students.
         
@@ -238,6 +248,7 @@ class ChainOfThoughtRAGAgent:
 
         **CRITICAL RULES:**
         1. **CONCEPT LIMITATION:** You may ONLY teach concepts present in the Reference Material.
+           - If the answer is NOT in the Reference Material, state that you do not have information on it.
         2. **SOURCE GROUNDING:** Mention specific variable names/examples from the text.
         3. **TEXT FIRST:** Text explanation MUST come before any diagrams.
         4. **VISUALIZATION:** If appropriate, include a Mermaid diagram.
@@ -247,11 +258,13 @@ class ChainOfThoughtRAGAgent:
              - ABSOLUTELY NO QUOTES `"` inside node labels.
              - **BAD:** `A[sum(a,b)]` or `B{{arr[i]}}`
              - **GOOD:** `A[sum a b]` or `B{{arr index i}}`
+        5. **TONE INSTRUCTIONS:** Speak DIRECTLY to the student. Use "You" and "We".
+        {goal_instruction}
 
-        Format:
+        Format your response like this:
         
         ## Strategy
-        [Text Explanation]
+        [Text Explanation. Mention the Goal here if applicable.]
 
         ## Visual Logic
         ```mermaid
@@ -260,10 +273,15 @@ class ChainOfThoughtRAGAgent:
         ```
         
         ## Implementation Plan
-        1. **[Step Name]**: ...
+        1. **[Step Name]**: [Description]
+           - *Example from text:* "In [Filename], we saw..."
+           ```c
+           // Generic Syntax
+           code...
+           ```
         
         ## Guiding Question
-        ...
+        [Your question here]
         """
         return self.llm_interface.generate_response(prompt)
     
@@ -310,87 +328,151 @@ class ChainOfThoughtRAGAgent:
 
     def run(self, query: str, user_role: str = 'student', **kwargs) -> Dict[str, Any]:
         self.logger.info(f"Processing Query: {query}")
-        
-        # Get Username from kwargs (passed from main.py)
         username = kwargs.get('username', 'anonymous')
-
+        
         # 1. Intent & Entities
         intent = self._classify_intent(query)
         extract_prompt = f"Extract the main C programming terms from: '{query}'. Return as comma-separated list."
         entities_str = self.llm_interface.generate_response(extract_prompt)
         entities = [e.strip() for e in entities_str.split(',') if e.strip()]
 
-        # --- STEP A: LEARN FROM USER INPUT ---
-        # If user clicks "I know Variables...", we detect that and save it.
-        if "i know" in query.lower():
-            for entity in entities:
-                knowledge_manager.mark_concept_as_known(username, entity)
-                self.logger.info(f"🧠 Learned that {username} knows {entity}")
-        # -------------------------------------
+        # ---------------------------------------------------------
+        # CHECK 1: TOPIC VISIBILITY (The Gatekeeper)
+        # ---------------------------------------------------------
+        from app.core.settings_manager import settings_manager
+        topic_settings = settings_manager.get_settings()
+        
+        blocked = False
+        blocked_topic_name = ""
+        
+        for entity in entities:
+            # Fuzzy match entity to settings keys
+            for setting_topic, is_enabled in topic_settings.items():
+                # e.g. If setting is "Functions" and entity is "function"
+                if (entity.lower() in setting_topic.lower() or setting_topic.lower() in entity.lower()):
+                    if not is_enabled:
+                        blocked = True
+                        blocked_topic_name = setting_topic
+                        break
+            if blocked: break
+        
+        if blocked:
+             return {
+                "answer": f"🔒 **Topic Locked**\n\nThe topic **{blocked_topic_name}** is currently not available. Please check with your instructor to unlock it.",
+                "sources": [],
+                "intent": intent,
+                "suggestions": ["Ask about a different topic", "Check my Dashboard"],
+                "cot_analysis": None,
+                "reasoning_quality": 0.0 
+            }
 
-        # --- STEP B: CHECK PREREQUISITES (Smart) ---
+        # ---------------------------------------------------------
+        # CHECK 2: LEARNING FROM INPUT
+        # ---------------------------------------------------------
+        if "i know" in query.lower():
+            # If the user says "I know them" or "I know variables", 
+            # we need to credit them for the PREREQUISITES of the current topic.
+            
+            # 1. Find what the topic requires
+            # (We re-run the check to see what was likely missing)
+            reqs = self._check_prerequisites(query, entities)
+            
+            for req in reqs:
+                knowledge_manager.mark_concept_as_known(username, req)
+                self.logger.info(f"🧠 Learned that {username} knows prerequisite: {req}")
+            
+            # Also mark the explicit entity if they said "I know Variables" specifically
+            # But NOT if they said "Teach me Function anyway" (they don't know Function yet)
+            if "teach me" not in query.lower():
+                 for entity in entities:
+                    knowledge_manager.mark_concept_as_known(username, entity)
+
+        # ---------------------------------------------------------
+        # CHECK 3: PREREQUISITES (The Conversation)
+        # ---------------------------------------------------------
+        # Skip logic: if user explicitly says "skip", "anyway", or "i know"
         should_check_prereqs = "anyway" not in query.lower() and "skip" not in query.lower() and "know" not in query.lower()
 
-        if intent == "CONCEPT" and should_check_prereqs:
+        if (intent == "CONCEPT" or intent == "PROBLEM") and should_check_prereqs:
             all_prereqs = self._check_prerequisites(query, entities)
             
-            # Filter: Only show prerequisites the user DOES NOT know yet
             unknown_prereqs = []
             for p in all_prereqs:
-                # Don't check self-loops
+                # Ignore self-loops (e.g. Array requires Array)
                 if p.lower() in [e.lower() for e in entities]: continue
-                
-                # Check DB
+                # Check User Knowledge DB
                 if not knowledge_manager.has_mastered(username, p):
                     unknown_prereqs.append(p)
 
             if unknown_prereqs:
-                prereq_str = ", ".join(unknown_prereqs)
+                # Create a nice list string: "Variables, Control Flow"
+                prereq_str = "**" + "**, **".join(unknown_prereqs) + "**"
+                
+                # --- FIX: GENERATE BUTTONS FOR ALL MISSING ITEMS ---
+                suggestion_buttons = []
+                for p in unknown_prereqs:
+                    suggestion_buttons.append(f"Explain {p} first")
+                
+                # Add the "Skip" button at the end
+                suggestion_buttons.append(f"I know them, teach me {entities[0]} anyway")
+                # ---------------------------------------------------
+
                 return {
-                    "answer": f"## 🛑 Hold on!\n\nTo understand **{entities[0]}**, you really need to know **{prereq_str}** first.\n\nSince I don't have a record of you learning {prereq_str} yet, I recommend we start there.",
+                    "answer": f"## 🛑 Hold on!\n\nTo understand **{entities[0]}**, you really need to know: {prereq_str} first.\n\nSince I don't have a record of you learning them yet, I recommend we start there.",
                     "sources": [],
                     "intent": "GUIDANCE",
-                    "suggestions": [
-                        f"Explain {unknown_prereqs[0]} first",
-                        f"I know {unknown_prereqs[0]}, teach me {entities[0]} anyway" 
-                    ],
+                    "suggestions": suggestion_buttons, 
                     "cot_analysis": None,
                     "reasoning_quality": 1.0
                 }
-        # -------------------------------------------
 
-        # 2. Retrieval
-        retrieved_chunks = self._execute_retrieval(query, intent, user_role)
-        
+        # ---------------------------------------------------------
+        # 4. STANDARD RETRIEVAL & GENERATION
+        # ---------------------------------------------------------
+        search_query = query
+        if len(query.split()) > 5 and entities:
+            # "I know them, teach me function anyway" -> "function"
+            search_query = " ".join(entities)
+            
+        retrieved_chunks = self._execute_retrieval(search_query, intent, user_role)
+                
         if not retrieved_chunks:
-             # ... (Keep existing empty logic) ...
-             return { "answer": "I don't know...", "suggestions": [], "sources": [] }
+             return {
+                "answer": f"I'm sorry, but I don't have any information about **{entities[0] if entities else query}** in my current reference library.",
+                "sources": [],
+                "intent": intent,
+                "suggestions": ["Ask about Arrays", "Ask about Loops", "Ask about Variables"],
+                "cot_analysis": None,
+                "reasoning_quality": 0.0 
+            }
 
-        # --- STEP C: INJECT USER CONTEXT ---
-        # We tell the LLM what the user already knows so it can be smarter.
+        # Context Injection (Personalization)
         known_concepts = knowledge_manager.get_known_concepts(username)
         user_context_str = ""
         if known_concepts:
-            user_context_str = f"USER CONTEXT: The student already knows: {', '.join(known_concepts)}. You can reference these concepts freely without re-explaining them."
+            user_context_str = f"USER CONTEXT: The student already knows: {', '.join(known_concepts)}."
 
         context_text = f"{user_context_str}\n\n"
         for c in retrieved_chunks:
             source = c.get('metadata', {}).get('document_name', 'Unknown')
             text = c.get('text', '')
             context_text += f"--- Source: {source} ---\n{text}\n\n"
-        # -----------------------------------
         
-        # 3. Generation Logic (Same as before)
+        # Generation Logic
+        user_goal = kwargs.get('user_goal')
+        
         if intent == "REVIEW":
             final_answer = self._generate_code_review(query, context_text)
         elif intent == "PROBLEM" or intent == "DEBUG":
-            final_answer = self._generate_socratic_plan(query, context_text)
+            final_answer = self._generate_socratic_plan(query, context_text, user_goal)
         else:
             final_answer = self._generate_concept_explanation(query, context_text)
 
         suggestions = self._generate_suggestions(query, final_answer, context_text)
+        
+        # Final Sanitization
+        final_answer = self._sanitize_mermaid(final_answer)
 
-        # 4. Structure Response
         formatted_sources = []
         for c in retrieved_chunks:
             source_data = c.get('metadata', {}).copy()

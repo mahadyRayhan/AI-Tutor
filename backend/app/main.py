@@ -20,6 +20,7 @@ from app.agents.cot_rag_agent import ChainOfThoughtRAGAgent
 from app.core.settings_manager import settings_manager
 from app.core.user_manager import user_manager # <--- Import this
 from app.core.history_manager import history_manager # <--- Import
+from app.core.user_knowledge_manager import knowledge_manager # Ensure this is imported
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -49,6 +50,50 @@ class TopicUpdate(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    
+class GoalRequest(BaseModel):
+    username: str
+    goal: str
+
+
+def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
+    """
+    Calculates a 0-100 mastery score per topic based on interaction types.
+    """
+    scores = {}
+    topic_interactions = {}
+
+    for h in history:
+        t = h.get('topic', 'General')
+        i = h.get('intent', 'UNKNOWN')
+        
+        if t not in scores: scores[t] = 0
+        if t not in topic_interactions: topic_interactions[t] = 0
+        
+        topic_interactions[t] += 1
+        
+        # Scoring Logic
+        if i == "REVIEW": 
+            scores[t] += 15  # Tried writing code (High effort)
+        elif i == "PROBLEM":
+            scores[t] += 10  # Asked for a plan (Medium effort)
+        elif i == "CONCEPT":
+            scores[t] += 5   # Reading (Passive)
+        elif i == "DEBUG":
+            scores[t] += 2   # Struggling (Needs help, but trying)
+            
+    # Normalize (Simple heuristic: 50 points = 100% mastery for this demo)
+    final_scores = {}
+    for t, score in scores.items():
+        # Cap at 100, minimum based on interaction count
+        normalized = min(100, score)
+        # Penalize if they ONLY ask debug questions (High count, low score)
+        if topic_interactions[t] > 5 and score < 20:
+            normalized = max(10, normalized - 10)
+            
+        final_scores[t] = normalized
+        
+    return final_scores
 
 @app.on_event("startup")
 async def startup_event():
@@ -180,6 +225,7 @@ async def chat_stream(request: ChatRequest):
             start_time = time.time()
             
             # 2. RUN AGENT: Pass the user_id correctly
+            user_goal = knowledge_manager.get_goal(user_id)
             result = cot_rag_agent.run(
                 query=request.message, 
                 user_role=request.user_role, 
@@ -266,22 +312,23 @@ async def login(creds: LoginRequest):
 
 @app.get("/api/v1/analytics/student/{username}")
 async def get_student_analytics(username: str):
-    """
-    Returns stats and an LLM-generated report card.
-    """
     history = history_manager.get_student_history(username)
+    goal = knowledge_manager.get_goal(username) # <--- Correct Manager
+ 
     
     if not history:
-        return {"stats": {}, "report": "No history found."}
+        return {"stats": {}, "mastery": {}, "report": "No history found.", "goal": goal}
 
-    # 1. Calculate Stats
+    # 1. Mastery Calculation
+    mastery = _calculate_mastery(history) # Make sure _calculate_mastery is defined above this function
+
+    # 2. Basic Stats
     stats = {"CONCEPT": 0, "PROBLEM": 0, "DEBUG": 0, "REVIEW": 0}
     for h in history:
         i = h.get('intent', 'UNKNOWN')
         if i in stats: stats[i] += 1
     
-    # 2. Generate LLM Report
-    # We take the last 15 queries to analyze trends
+    # 3. Generate LLM Report
     recent_logs = history[-15:]
     log_text = "\n".join([f"- [{log['intent']}] Q: {log['query']}" for log in recent_logs])
     
@@ -301,23 +348,25 @@ async def get_student_analytics(username: str):
     2. **Strengths:** Are they asking good conceptual questions or writing code?
     3. **Weakness/Recommendations:** What should they practice next?
     
-    Return JSON: {{ "focus": "<ul><li>...</li></ul>", "strengths": "<ul><li>...</li></ul>", "weakness": "<ul><li>...</li></ul>" }}
+    Return JSON: {{ "focus": "...", "strengths": "...", "weakness": "..." }}
     """
     
     report_raw = llm_interface.generate_response(prompt)
     
-    # Simple cleanup to ensure JSON
     try:
         import json
         clean_json = report_raw.replace("```json", "").replace("```", "").strip()
         report_data = json.loads(clean_json)
+        # --- FIX: Removed the hardcoded overwrite line here ---
     except:
         report_data = {"focus": "Analysis failed", "strengths": "N/A", "weakness": "N/A"}
 
     return {
         "stats": stats,
+        "mastery": mastery, 
         "total_queries": len(history),
-        "report": report_data
+        "report": report_data,
+        "goal": goal
     }
 
 # --- RESOURCE MANAGEMENT ENDPOINTS ---
@@ -405,6 +454,47 @@ async def get_teacher_analytics():
         "struggle_areas": struggle_counts,
         "total_interactions": len(history)
     }
+    
+@app.get("/api/v1/analytics/teacher/detailed")
+async def get_teacher_detailed_analytics():
+    """
+    Returns a matrix of all students and their mastery scores.
+    """
+    import csv
+    # 1. Get all students
+    users = []
+    # Read users.csv manually or via manager
+    with open(config.PROJECT_ROOT / "database" / "users.csv", 'r') as f:
+        reader = csv.DictReader(f)
+        users = [row['username'] for row in reader if row['role'] == 'student']
+
+    class_matrix = []
+    
+    for student in users:
+        history = history_manager.get_student_history(student)
+        mastery = _calculate_mastery(history)
+        
+        # Determine "Risk Level"
+        avg_mastery = sum(mastery.values()) / len(mastery) if mastery else 0
+        risk = "Low"
+        if avg_mastery < 30 and len(history) > 5: risk = "High"
+        elif avg_mastery < 50: risk = "Medium"
+        
+        class_matrix.append({
+            "username": student,
+            "mastery": mastery,
+            "total_interactions": len(history),
+            "risk_level": risk,
+            "last_active": history[-1]['timestamp'] if history else "Never"
+        })
+        
+    return class_matrix
+
+@app.post("/api/v1/user/goal")
+async def set_user_goal(req: GoalRequest):
+    from app.core.user_knowledge_manager import knowledge_manager
+    knowledge_manager.set_goal(req.username, req.goal)
+    return {"status": "success", "goal": req.goal}
     
 if __name__ == "__main__":
     import uvicorn

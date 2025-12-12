@@ -2,159 +2,213 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Student Progress</title>
+    <title>My Learning Journey</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #f4f4f9; padding: 40px; color: #333; }
-        .container { max-width: 1000px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-        .back-btn { padding: 10px 20px; background: #2c3e50; color: white; text-decoration: none; border-radius: 6px; }
+        .container { max-width: 1100px; margin: 0 auto; }
         
-        .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
+        .back-btn { padding: 10px 20px; background: #2c3e50; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        
         .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        
-        h2 { margin-top: 0; color: #2c3e50; font-size: 1.2rem; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        
-        .stat-big { font-size: 2.5rem; font-weight: bold; color: #3498db; text-align: center; }
-        .stat-label { text-align: center; color: #7f8c8d; }
-        
-        .report-section { margin-bottom: 20px; }
-        .report-section h3 { font-size: 1rem; color: #e67e22; margin-bottom: 5px; }
-        .report-content { line-height: 1.6; font-size: 0.95rem; }
+        h2 { margin: 0 0 15px 0; color: #2c3e50; font-size: 1.2rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; }
+
+        /* Goal Section */
+        .goal-box { background: linear-gradient(135deg, #1abc9c, #16a085); color: white; padding: 25px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 4px 15px rgba(26, 188, 156, 0.2); }
+        .goal-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .goal-label { font-weight: bold; text-transform: uppercase; opacity: 0.8; font-size: 0.9rem; }
+        .goal-text { font-size: 1.5rem; font-weight: bold; }
+        .goal-input { padding: 8px; border-radius: 4px; border: none; width: 60%; }
+        .goal-btn { background: rgba(0,0,0,0.2); border: none; color: white; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .goal-btn:hover { background: rgba(0,0,0,0.3); }
+
+        /* Grid Layout */
+        .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+        .full-width { grid-column: span 2; }
+
+        /* Skill Tree */
+        .skill-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
+        .skill-item { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef; }
+        .progress-bar { height: 8px; background: #ddd; border-radius: 4px; margin-top: 8px; overflow: hidden; }
+        .fill { height: 100%; transition: width 1s; }
+
+        /* AI Report */
+        .report-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+        .report-col h3 { font-size: 1rem; color: #2980b9; margin-bottom: 10px; }
+        .report-content ul { padding-left: 20px; margin: 0; color: #555; font-size: 0.95rem; }
+        .report-content li { margin-bottom: 5px; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <div class="header">
-        <h1>📊 My Learning Progress</h1>
+        <h1>📊 Learning Analytics</h1>
         <a href="index.html" class="back-btn">Back to Tutor</a>
     </div>
 
-    <div class="grid">
-        <!-- Left Col: Stats -->
-        <div style="display:flex; flex-direction:column; gap:20px;">
-            <div class="card">
-                <h2>Total Interactions</h2>
-                <!-- ID MUST BE HERE -->
-                <div class="stat-big" id="totalCount">0</div> 
-                <div class="stat-label">Questions Asked</div>
-            </div>
-            <div class="card">
-                <h2>Learning Style</h2>
-                <!-- ID MUST BE HERE -->
-                <canvas id="intentChart"></canvas>
-            </div>
+    <!-- 1. Goal Section -->
+    <div class="goal-box">
+        <div class="goal-top">
+            <span class="goal-label">🎯 Current Objective</span>
+            <button onclick="toggleEdit()" class="goal-btn">Edit Goal</button>
+        </div>
+        <div id="goalDisplay" class="goal-text">Loading...</div>
+        <div id="goalEdit" style="display:none; margin-top:10px;">
+            <input type="text" id="goalInput" class="goal-input" placeholder="E.g. Master Loops by Friday">
+            <button onclick="saveGoal()" class="goal-btn" style="background:white; color:#16a085;">Save</button>
+        </div>
+    </div>
+
+    <div class="dash-grid">
+        <!-- 2. Learning Style -->
+        <div class="card">
+            <h2>🧠 Learning Style</h2>
+            <div style="height:250px"><canvas id="donutChart"></canvas></div>
         </div>
 
-        <!-- Right Col: AI Analysis -->
+        <!-- 3. Skill Balance -->
         <div class="card">
-            <h2>🤖 AI Tutor Assessment</h2>
-            <div id="loading">Analyzing your history...</div>
-            <div id="report" style="display:none;">
-                <div class="report-section">
+            <h2>⚖️ Skill Balance</h2>
+            <div style="height:250px"><canvas id="radarChart"></canvas></div>
+        </div>
+
+        <!-- 4. Mastery Tree -->
+        <div class="card full-width">
+            <h2>🌲 Concept Mastery</h2>
+            <div class="skill-list" id="skillList"></div>
+        </div>
+
+        <!-- 5. AI Insights -->
+        <div class="card full-width">
+            <h2>🤖 Personal Tutor Assessment</h2>
+            <div id="loadingReport" style="text-align:center; padding:20px; color:#999;">Analyzing...</div>
+            <div id="reportContent" class="report-grid" style="display:none;">
+                <div class="report-col">
                     <h3>🔍 Current Focus</h3>
-                    <!-- ID MUST BE HERE -->
-                    <p class="report-content" id="rep-focus"></p>
+                    <div id="rep-focus" class="report-content"></div>
                 </div>
-                <div class="report-section">
+                <div class="report-col">
                     <h3>💪 Strengths</h3>
-                    <!-- ID MUST BE HERE -->
-                    <p class="report-content" id="rep-strengths"></p>
+                    <div id="rep-strengths" class="report-content"></div>
                 </div>
-                <div class="report-section">
+                <div class="report-col">
                     <h3>🚀 Recommendations</h3>
-                    <!-- ID MUST BE HERE -->
-                    <p class="report-content" id="rep-weakness"></p>
+                    <div id="rep-weakness" class="report-content"></div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-
 <script>
-    // --- FIX: Define the API URL ---
-    const API_URL = "http://127.0.0.1:8000"; 
-    // -------------------------------
+    const API_URL = "http://127.0.0.1:8000";
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
-    
     if (!currentUser) window.location.href = 'index.html';
 
-    async function loadData() {
-        // 1. Safety Check
-        if (!currentUser) {
-            window.location.href = 'index.html';
-            return;
-        }
+    const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings", "Pointers", "Structures"];
 
+    // --- Goal Logic ---
+    function toggleEdit() {
+        const display = document.getElementById('goalDisplay');
+        const edit = document.getElementById('goalEdit');
+        if (edit.style.display === 'none') {
+            edit.style.display = 'block';
+            display.style.display = 'none';
+            document.getElementById('goalInput').value = display.innerText;
+        } else {
+            edit.style.display = 'none';
+            display.style.display = 'block';
+        }
+    }
+
+    async function saveGoal() {
+        const newGoal = document.getElementById('goalInput').value;
+        await fetch(`${API_URL}/api/v1/user/goal`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ username: currentUser.username, goal: newGoal })
+        });
+        location.reload();
+    }
+
+    // --- Load Data ---
+    async function loadData() {
         try {
-            // 2. Fetch Data
             const res = await fetch(`${API_URL}/api/v1/analytics/student/${currentUser.username}`);
-            if (!res.ok) throw new Error("API Error");
-            
             const data = await res.json();
 
-            // 3. Update Text Stats
-            document.getElementById('totalCount').innerText = data.total_queries || 0;
+            // 1. Goal
+            document.getElementById('goalDisplay').innerText = data.goal || "Set a goal to get specific guidance!";
 
-            // 4. Render Chart.js
-            const ctx = document.getElementById('intentChart').getContext('2d');
-            
-            // Check if there is actual data, otherwise show empty state logic
-            const hasData = (data.total_queries > 0);
-            
-            new Chart(ctx, {
+            // 2. Charts
+            new Chart(document.getElementById('donutChart'), {
                 type: 'doughnut',
                 data: {
-                    labels: ['Concepts', 'Problem Solving', 'Debugging', 'Code Review'],
+                    labels: ['Concept', 'Problem', 'Debug', 'Review'],
                     datasets: [{
-                        data: [
-                            data.stats.CONCEPT || 0, 
-                            data.stats.PROBLEM || 0, 
-                            data.stats.DEBUG || 0, 
-                            data.stats.REVIEW || 0
-                        ],
-                        backgroundColor: ['#3498db', '#2ecc71', '#e74c3c', '#f1c40f'],
-                        borderWidth: 0
+                        data: [data.stats.CONCEPT, data.stats.PROBLEM, data.stats.DEBUG, data.stats.REVIEW],
+                        backgroundColor: ['#3498db', '#2ecc71', '#e74c3c', '#f1c40f']
                     }]
                 },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        legend: { position: 'bottom' },
-                        title: { 
-                            display: !hasData, 
-                            text: 'No data yet',
-                            position: 'center'
-                        }
-                    }
+                options: { maintainAspectRatio: false }
+            });
+
+            const masteryScores = TOPICS.map(t => data.mastery[t] || 0);
+            new Chart(document.getElementById('radarChart'), {
+                type: 'radar',
+                data: {
+                    labels: TOPICS,
+                    datasets: [{
+                        label: 'Mastery',
+                        data: masteryScores,
+                        backgroundColor: 'rgba(52, 152, 219, 0.2)',
+                        borderColor: '#3498db'
+                    }]
+                },
+                options: { 
+                    maintainAspectRatio: false,
+                    scales: { r: { min: 0, max: 100 } } 
                 }
             });
 
-            // 5. Render LLM Report
-            const loadingDiv = document.getElementById('loading');
-            const reportDiv = document.getElementById('report');
+            // 3. Skill Bars
+            const skillDiv = document.getElementById('skillList');
+            skillDiv.innerHTML = '';
+            TOPICS.forEach((t, i) => {
+                const score = masteryScores[i];
+                const color = score > 70 ? '#2ecc71' : (score > 30 ? '#f1c40f' : '#e74c3c');
+                skillDiv.innerHTML += `
+                    <div class="skill-item">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-weight:600; font-size:0.9rem;">
+                            <span>${t}</span>
+                            <span>${score}%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="fill" style="width:${score}%; background:${color};"></div>
+                        </div>
+                    </div>`;
+            });
 
-            if (data.report && data.report.focus !== "Analysis failed") {
-                loadingDiv.style.display = 'none';
-                reportDiv.style.display = 'block';
-                
-                document.getElementById('rep-focus').innerHTML = data.report.focus || "N/A";
-                document.getElementById('rep-strengths').innerHTML = data.report.strengths || "N/A";
-                document.getElementById('rep-weakness').innerHTML = data.report.weakness || "N/A";
+            // 4. Report
+            const rep = data.report;
+            if (rep && rep.focus && rep.focus !== "Analysis failed") {
+                document.getElementById('loadingReport').style.display = 'none';
+                document.getElementById('reportContent').style.display = 'grid';
+                document.getElementById('rep-focus').innerHTML = rep.focus;
+                document.getElementById('rep-strengths').innerHTML = rep.strengths;
+                document.getElementById('rep-weakness').innerHTML = rep.weakness;
             } else {
-                loadingDiv.innerText = "Not enough chat history to generate a report yet. Go ask the tutor some questions!";
+                document.getElementById('loadingReport').innerText = "Not enough data yet.";
             }
 
         } catch (e) {
-            console.error("Failed to load student data:", e);
-            document.getElementById('loading').innerText = "System error: Could not load analytics.";
+            console.error(e);
         }
     }
 
     loadData();
 </script>
-
 </body>
 </html>
