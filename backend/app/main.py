@@ -219,6 +219,9 @@ async def chat_stream(request: ChatRequest):
         try:
             # 1. SETUP: Get User ID immediately
             user_id = request.username if request.username else "anonymous"
+            print("DEBUG: User ID is:", user_id) # <--- ADD THIS
+            user_goal = knowledge_manager.get_goal(user_id)
+            print("DEBUG: User Goal is:", user_goal) # <--- ADD THIS
 
             yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing...', 'stage': 'init'})}\n\n"
             
@@ -229,7 +232,8 @@ async def chat_stream(request: ChatRequest):
             result = cot_rag_agent.run(
                 query=request.message, 
                 user_role=request.user_role, 
-                username=user_id  
+                username=user_id,
+                user_goal=user_goal 
             )
             
             duration = time.time() - start_time

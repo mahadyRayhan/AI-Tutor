@@ -212,7 +212,12 @@ class ChainOfThoughtRAGAgent:
         except:
             return ["Tell me more", "Show an example", "Challenge: Try writing the code"]
 
-    def _generate_code_review(self, query: str, context: str) -> str:
+    def _generate_code_review(self, query: str, context: str, user_goal: str = None) -> str:
+        
+        goal_prompt = ""
+        if user_goal:
+            goal_prompt = f"6. **GOAL CHECK:** Does this code show progress towards their goal: '{user_goal}'? If yes, mention it in the 'What looks good' section."
+            
         prompt = f"""
         You are a supportive C Code Reviewer.
         
@@ -224,7 +229,9 @@ class ChainOfThoughtRAGAgent:
         2. **SANDWICH METHOD:** Positive -> Improvement -> Hint.
         3. **SOURCE GROUNDING:** Use variable names from Reference Material.
         4. **NO SOLUTIONS:** Do not rewrite code.
-        
+        5. **CHECK LOGIC:** Look for common beginner mistakes.
+        {goal_prompt}
+
         Format:
         ## Code Review
         **✅ What looks good:** ...
@@ -285,11 +292,23 @@ class ChainOfThoughtRAGAgent:
         """
         return self.llm_interface.generate_response(prompt)
     
-    def _generate_concept_explanation(self, query: str, context: str) -> str:
+    def _generate_concept_explanation(self, query: str, context: str, user_goal: str = None) -> str:
+        print(f"DEBUG: Generating concept for goal: '{user_goal}'") # <--- ADD THIS
+        # Dynamic Goal Instruction
+        goal_section = ""
+        if user_goal:
+            goal_section = f"""
+            6. **GOAL CONNECTION (CRITICAL):** The student's goal is: "{user_goal}". 
+               - You MUST explicitly explain how the current concept helps them achieve "{user_goal}".
+               - Example: If goal is "Master Games" and topic is "Structs", say: "Structs are essential for Games because they let you define Player stats like health and score."
+            """
+            
+        
         prompt = f"""
         You are an expert C Programming Tutor.
         
         Student Query: "{query}"
+        User's Goal: "{user_goal if user_goal else 'None'}"
         Reference Material: {context}
 
         **MANDATORY RULES:**
@@ -307,11 +326,13 @@ class ChainOfThoughtRAGAgent:
              - **BAD:** `A[Function(int x)]` or `B{{x[0] > 5}}` or `C[Print "Hello"]`
              - **GOOD:** `A[Function int x]` or `B{{x at 0 is greater than 5}}` or `C[Print 'Hello']`
         5. **SOURCE GROUNDING:** Quote specific examples from text.
-
+        6. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
+        
         **STRICT RESPONSE FORMAT:**
         
         ## Explanation
         [Start by bridging from known concepts if applicable. Then explain the new concept using text and analogies.]
+        {goal_section}
 
         ## Visual Model
         ```mermaid
@@ -460,13 +481,14 @@ class ChainOfThoughtRAGAgent:
         
         # Generation Logic
         user_goal = kwargs.get('user_goal')
+        print("DEBUG: User Goal in run():", user_goal)  # <--- ADD THIS
         
         if intent == "REVIEW":
-            final_answer = self._generate_code_review(query, context_text)
+            final_answer = self._generate_code_review(query, context_text, user_goal)
         elif intent == "PROBLEM" or intent == "DEBUG":
             final_answer = self._generate_socratic_plan(query, context_text, user_goal)
         else:
-            final_answer = self._generate_concept_explanation(query, context_text)
+            final_answer = self._generate_concept_explanation(query, context_text, user_goal)
 
         suggestions = self._generate_suggestions(query, final_answer, context_text)
         
