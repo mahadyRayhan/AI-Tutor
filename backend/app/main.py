@@ -236,6 +236,9 @@ async def chat_stream(request: ChatRequest):
                 user_goal=user_goal 
             )
             
+            # Capture Flags
+            causal_flags = result.get('causal_flags', {})
+            
             duration = time.time() - start_time
             
             # 3. LOGGING
@@ -251,13 +254,23 @@ async def chat_stream(request: ChatRequest):
                 elif sources:
                     detected_topic = sources[0].get('topic', 'General')
                 
+                # Add Computed Context (Mastery Score)
+                # We calculate this ON THE FLY so we know their state AT THAT MOMENT
+                current_history = history_manager.get_student_history(user_id)
+                current_mastery_map = _calculate_mastery(current_history)
+                
+                # Average mastery of the specific topic discussed
+                topic_mastery = current_mastery_map.get(detected_topic, 0)
+                causal_flags["context_mastery_score"] = topic_mastery
+                
                 # Log interaction
                 history_manager.log_interaction(
                     user_id, 
                     request.message, 
                     intent, 
                     result['answer'], 
-                    detected_topic
+                    detected_topic,
+                    metadata=causal_flags # <--- SAVE IT
                 )
             except Exception as log_err:
                 logger.error(f"Logging failed: {log_err}")

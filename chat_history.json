@@ -1,0 +1,130 @@
+[
+  {
+    "timestamp": "2025-12-12T11:24:29.376068",
+    "username": "student_newbie",
+    "query": "How do I create an Array?",
+    "intent": "PROBLEM",
+    "topic": "General",
+    "response_snippet": "\ud83d\udd12 **Topic Locked**\n\nThe topic **Arrays** is currently not available. Please check with your instructor to unlock it."
+  },
+  {
+    "timestamp": "2025-12-12T11:26:24.353637",
+    "username": "student_newbie",
+    "query": "What is a Function?",
+    "intent": "GUIDANCE",
+    "topic": "Prerequisite Check",
+    "response_snippet": "## \ud83d\uded1 Hold on!\n\nTo understand **Function**, you really need to know: **Variables**, **Control Flow** first.\n\nSince I don't have a record of you learning them yet, I recommend we start there."
+  },
+  {
+    "timestamp": "2025-12-12T11:27:24.309478",
+    "username": "student_newbie",
+    "query": "Explain Variables first",
+    "intent": "CONCEPT",
+    "topic": "Variables",
+    "response_snippet": "## Explanation\nIn C programming, a **variable** is essentially a named storage location in your computer's memory that holds a value. You can think of a variable like a labeled box. The label on the b"
+  },
+  {
+    "timestamp": "2025-12-12T11:30:47.779475",
+    "username": "student_hacker",
+    "query": "How do I write a for loop?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\nA `for` loop in C is a powerful way to repeat a block of code a specific number of times. It's best used when you know exactly how many iterations you need, like counting from 1 to 10, "
+  },
+  {
+    "timestamp": "2025-12-12T11:32:29.624067",
+    "username": "student_hacker",
+    "query": "[CONTEXT: User is solving Challenge: \"Modify the example `for` loop to print numbers from 1 to 10.\"]\n\nUser Code:\n// Write your C code here:\n\nfor(int i=0; i<10) { print(i); }",
+    "intent": "REVIEW",
+    "topic": "Control Flow",
+    "response_snippet": "## Code Review\n**\u2705 What looks good:**\nYou've correctly started your `for` loop with an `int i=0` for initialization, which is a common and effective way to begin counting in loops, as demonstrated in "
+  },
+  {
+    "timestamp": "2025-12-12T11:33:09.501529",
+    "username": "student_hacker",
+    "query": "How do I write a for loop?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\nA `for` loop is a powerful tool in C programming that allows you to repeat a block of code a specific number of times. It's particularly useful when you know in advance how many iterati"
+  },
+  {
+    "timestamp": "2025-12-12T11:36:43.451724",
+    "username": "student_hacker",
+    "query": "[CONTEXT: User is solving Challenge: \"Modify the example `for` loop to print numbers from 1 to 5 instead of 0 to 4.\"]\n\nUser Code:\n// Write your C code here:\n\nfor(int i=0; i<=5) { print(i); }",
+    "intent": "REVIEW",
+    "topic": "Control Flow",
+    "response_snippet": "## Code Review\n**\u2705 What looks good:**\nYou've correctly identified that a `for` loop is the right tool for this task, as it's ideal when you know exactly how many times you want to loop, as mentioned i"
+  },
+  {
+    "timestamp": "2025-12-12T11:38:37.489638",
+    "username": "student_hacker",
+    "query": "How do I hack a bank using C?",
+    "intent": "GUIDANCE",
+    "topic": "Prerequisite Check",
+    "response_snippet": "## \ud83d\uded1 Hold on!\n\nTo understand **C**, you really need to know: **Variables**, **Control Flow**, **Pointers**, **Operators** first.\n\nSince I don't have a record of you learning them yet, I recommend we s"
+  },
+  {
+    "timestamp": "2025-12-12T11:39:31.591683",
+    "username": "student_hacker",
+    "query": "What is crypto?",
+    "intent": "CONCEPT",
+    "topic": "General",
+    "response_snippet": "I don't have information about crypto in my current reference library."
+  },
+  {
+    "timestamp": "2025-12-12T16:18:11.810436",
+    "username": "student_hacker",
+    "query": "What is a Switch statement?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\nA `switch` statement in C provides a more organized and often cleaner way to handle situations where you need to check a single variable against multiple possible constant values. Think"
+  },
+  {
+    "timestamp": "2025-12-12T16:26:03.299737",
+    "username": "student_hacker",
+    "query": "What is a Switch statement?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\n\nA `switch` statement in C provides a cleaner and more organized way to check a single variable against multiple possible constant values. Think of it as a specialized version of an `if"
+  },
+  {
+    "timestamp": "2025-12-12T16:40:12.906837",
+    "username": "student_hacker",
+    "query": "What is a Switch statement?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\n\nA `switch` statement in C provides a cleaner and more organized way to check a single variable against multiple specific values. Instead of using a long chain of `if-else if` statement"
+  },
+  {
+    "timestamp": "2025-12-12T16:41:56.124823",
+    "username": "student_hacker",
+    "query": "What is a Switch statement?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\n\nA `switch` statement in C provides a structured and often cleaner way to handle situations where you need to check a single variable against multiple possible constant values. Instead "
+  },
+  {
+    "timestamp": "2025-12-12T16:43:51.280101",
+    "username": "student_hacker",
+    "query": "What is a Switch statement?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\n\nA `switch` statement in C provides a cleaner and often more efficient way to control the flow of your program when you need to check a single variable against many specific, constant v"
+  },
+  {
+    "timestamp": "2025-12-12T17:00:44.839904",
+    "username": "student_hacker",
+    "query": "What is a Switch statement?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\n\nA `switch` statement in C is a powerful control flow mechanism that provides a cleaner and more efficient way to handle multiple conditional branches based on the value of a single var"
+  },
+  {
+    "timestamp": "2025-12-15T11:45:37.775521",
+    "username": "student_hacker",
+    "query": "how loop works?",
+    "intent": "CONCEPT",
+    "topic": "Control Flow",
+    "response_snippet": "## Explanation\n\nLoops are fundamental control flow structures in C that allow you to repeat a block of code multiple times. Instead of writing the same lines of code over and over, you can use a loop "
+  }
+]

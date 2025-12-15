@@ -48,18 +48,29 @@ class ChainOfThoughtRAGAgent:
     def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
         """
         Queries the Graph to see if the requested topic has hard prerequisites.
-        Uses fuzzy matching (CONTAINS) to handle singular/plural mismatch.
         """
         prereqs = []
         for entity in initial_entities:
-            # Cypher: Find what this entity REQUIRES (Case insensitive fuzzy match)
+            # FIX: Removed ':Concept' label restriction. Now matches ANY node.
             cypher = """
-            MATCH (target:Concept)
+            MATCH (target) 
+            WHERE (toLower(target.name) CONTAINS toLower($name) 
+               OR toLower($name) CONTAINS toLower(target.name))
+               AND target:Concept OR target:Control_Flow OR target:Data_Structure OR target:Core_Concept 
+               // Or simpler: just match (target) where we define the relationship
+            MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req)
+            RETURN req.name as name
+            """
+            
+            # Let's use the cleanest version (No label restriction, relies on relationship):
+            cypher = """
+            MATCH (target)
             WHERE toLower(target.name) CONTAINS toLower($name) 
                OR toLower($name) CONTAINS toLower(target.name)
             MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req)
             RETURN req.name as name
             """
+            
             results = self.graph_db.execute_query(cypher, {"name": entity})
             for record in results:
                 prereqs.append(record['name'])
@@ -348,6 +359,17 @@ class ChainOfThoughtRAGAgent:
         return self.llm_interface.generate_response(prompt)
 
     def run(self, query: str, user_role: str = 'student', **kwargs) -> Dict[str, Any]:
+        
+        # 1. Initialize Causal Flags (Treatments)
+        causal_flags = {
+            "treatment_diagram": False,       # Did we show a visualization?
+            "treatment_prereq_check": False,  # Did we stop them for prerequisites?
+            "treatment_code_review": False,   # Did we review their code?
+            "treatment_topic_block": False,   # Did we block a topic?
+            "context_mastery_score": 0,       # Student's current mastery (Context)
+            "context_has_goal": False         # Did they have a goal? (Context)
+        }
+        
         self.logger.info(f"Processing Query: {query}")
         username = kwargs.get('username', 'anonymous')
         
@@ -378,7 +400,8 @@ class ChainOfThoughtRAGAgent:
             if blocked: break
         
         if blocked:
-             return {
+            causal_flags["treatment_topic_block"] = True # <--- FLAG
+            return {
                 "answer": f"🔒 **Topic Locked**\n\nThe topic **{blocked_topic_name}** is currently not available. Please check with your instructor to unlock it.",
                 "sources": [],
                 "intent": intent,
@@ -426,6 +449,7 @@ class ChainOfThoughtRAGAgent:
                     unknown_prereqs.append(p)
 
             if unknown_prereqs:
+                causal_flags["treatment_prereq_check"] = True # <--- FLAG
                 # Create a nice list string: "Variables, Control Flow"
                 prereq_str = "**" + "**, **".join(unknown_prereqs) + "**"
                 
@@ -444,7 +468,8 @@ class ChainOfThoughtRAGAgent:
                     "intent": "GUIDANCE",
                     "suggestions": suggestion_buttons, 
                     "cot_analysis": None,
-                    "reasoning_quality": 1.0
+                    "reasoning_quality": 1.0,
+                    "causal_flags": causal_flags # <--- RETURN TO MAIN
                 }
 
         # ---------------------------------------------------------
@@ -484,11 +509,17 @@ class ChainOfThoughtRAGAgent:
         print("DEBUG: User Goal in run():", user_goal)  # <--- ADD THIS
         
         if intent == "REVIEW":
+            causal_flags["treatment_code_review"] = True # <--- FLAG
             final_answer = self._generate_code_review(query, context_text, user_goal)
         elif intent == "PROBLEM" or intent == "DEBUG":
+            # Check if answer contains Mermaid
             final_answer = self._generate_socratic_plan(query, context_text, user_goal)
         else:
             final_answer = self._generate_concept_explanation(query, context_text, user_goal)
+            
+        # Detect Diagram Treatment
+        if "```mermaid" in final_answer:
+            causal_flags["treatment_diagram"] = True # <--- FLAG
 
         suggestions = self._generate_suggestions(query, final_answer, context_text)
         
@@ -506,6 +537,7 @@ class ChainOfThoughtRAGAgent:
             "sources": formatted_sources,
             "intent": intent,
             "suggestions": suggestions,
+            "causal_flags": causal_flags, # <--- RETURN TO MAIN
             "cot_analysis": None,
             "reasoning_quality": 1.0 
         }

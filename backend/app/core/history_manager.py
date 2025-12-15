@@ -18,23 +18,25 @@ class HistoryManager:
             with open(self.file_path, 'w') as f:
                 json.dump([], f)
 
-    def log_interaction(self, username: str, query: str, intent: str, response: str, topic: str = "General"):
+    def log_interaction(self, username: str, query: str, intent: str, response: str, topic: str, metadata: dict = None):
+        """
+        Saves a chat interaction with Research Metadata.
+        """
         entry = {
             "timestamp": datetime.now().isoformat(),
             "username": username,
             "query": query,
             "intent": intent,
-            "topic": topic, # <--- NEW FIELD
+            "topic": topic,
+            # CAUSAL DATA POINTS
+            "metadata": metadata or {}, 
             "response_snippet": response[:200]
         }
         
-        # Read, Append, Write (Simple JSON implementation)
         try:
             with open(self.file_path, 'r') as f:
                 history = json.load(f)
-            
             history.append(entry)
-            
             with open(self.file_path, 'w') as f:
                 json.dump(history, f, indent=2)
         except Exception as e:

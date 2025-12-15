@@ -1,0 +1,369 @@
+{
+  "summary": {
+    "total_tests": 11,
+    "success_rate": 1.0,
+    "validation_pass_rate": 1.0,
+    "average_quality": 0.9136363636363637,
+    "average_correction_attempts": 0.0
+  },
+  "complexity_analysis": {
+    "high": {
+      "total": 6,
+      "passed": 6,
+      "avg_quality": 0.9583333333333334,
+      "pass_rate": 1.0
+    },
+    "medium": {
+      "total": 5,
+      "passed": 5,
+      "avg_quality": 0.8600000000000001,
+      "pass_rate": 1.0
+    }
+  },
+  "failure_patterns": {
+    "most_common_issues": [
+      [
+        "Minor ambiguity in the parenthetical explanations for matrix multiplication vs. outer product in steps 4 and 6. While the formulas themselves (`delta_o * a_h^T` and `delta_h * x^T`) are correct for column vectors `delta_o`, `a_h`, `delta_h`, and `x`, the accompanying text 'or matrix multiplication if `delta_o` is a row vector and `a_h` is a column vector' (and similarly for step 6) could be clearer or removed to avoid potential confusion regarding vector orientations and matrix product definitions.",
+        1
+      ],
+      [
+        "Step 9 introduces 'instability (sensitive to small changes in data)' as a disadvantage of Decision Trees without this specific point being explicitly discussed or compared in the preceding detailed steps (3-7). While technically true, its inclusion in the summary without prior premise weakens the 'conclusions follow from premises' aspect for this specific point.",
+        1
+      ],
+      [
+        "Step 11 introduces 'complex hyperparameter tuning' as a disadvantage of Neural Networks without this specific point being explicitly discussed or compared in the preceding detailed steps (3-7). While technically true, its inclusion in the summary without prior premise weakens the 'conclusions follow from premises' aspect for this specific point.",
+        1
+      ]
+    ],
+    "failed_tests": 0
+  },
+  "recommendations": [],
+  "detailed_results": [
+    {
+      "test_case": {
+        "query": "Derive the gradient descent update rule and explain why it minimizes the cost function",
+        "expected_failures": [
+          "mathematical_error",
+          "incomplete_reasoning"
+        ],
+        "complexity": "high",
+        "domain": "machine_learning"
+      },
+      "response_quality": 1.0,
+      "complexity_detected": "high",
+      "num_reasoning_steps": 8,
+      "validation_passed": true,
+      "confidence_score": 1.0,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "step_confidence_stats": {
+        "min": 0.95,
+        "max": 1.0,
+        "avg": 0.99375,
+        "std": 0.017677669529663705
+      },
+      "query": "Derive the gradient descent update rule and explain why it minimizes the cost function",
+      "processing_time": 54.66108584403992,
+      "success": true,
+      "timestamp": "2025-09-24T12:58:36.154723"
+    },
+    {
+      "test_case": {
+        "query": "What is the difference between MSE and Huber loss, and when should you use each?",
+        "expected_failures": [
+          "incomplete_reasoning"
+        ],
+        "complexity": "medium",
+        "domain": "machine_learning"
+      },
+      "response_quality": 1.0,
+      "complexity_detected": "high",
+      "num_reasoning_steps": 9,
+      "validation_passed": true,
+      "confidence_score": 1.0,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "step_confidence_stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "avg": 1.0,
+        "std": 0.0
+      },
+      "query": "What is the difference between MSE and Huber loss, and when should you use each?",
+      "processing_time": 63.41709899902344,
+      "success": true,
+      "timestamp": "2025-09-24T12:59:39.574003"
+    },
+    {
+      "test_case": {
+        "query": "Prove that the derivative of x^2 is 2x using the definition of a derivative",
+        "expected_failures": [
+          "mathematical_error",
+          "incomplete_reasoning"
+        ],
+        "complexity": "high",
+        "domain": "mathematics"
+      },
+      "response_quality": 1.0,
+      "complexity_detected": "high",
+      "num_reasoning_steps": 9,
+      "validation_passed": true,
+      "confidence_score": 1.0,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "step_confidence_stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "avg": 1.0,
+        "std": 0.0
+      },
+      "query": "Prove that the derivative of x^2 is 2x using the definition of a derivative",
+      "processing_time": 35.564769983291626,
+      "success": true,
+      "timestamp": "2025-09-24T13:00:15.139468"
+    },
+    {
+      "test_case": {
+        "query": "If all cats are mammals and Fluffy is a cat, what can we conclude about dogs?",
+        "expected_failures": [
+          "logical_inconsistency",
+          "scope_creep"
+        ],
+        "complexity": "medium",
+        "domain": "logic"
+      },
+      "response_quality": 0.8,
+      "complexity_detected": "low",
+      "num_reasoning_steps": 0,
+      "validation_passed": true,
+      "confidence_score": 0.8,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "query": "If all cats are mammals and Fluffy is a cat, what can we conclude about dogs?",
+      "processing_time": 1.4535150527954102,
+      "success": true,
+      "timestamp": "2025-09-24T13:00:16.595191"
+    },
+    {
+      "test_case": {
+        "query": "Explain why correlation does not imply causation with examples",
+        "expected_failures": [
+          "incomplete_reasoning",
+          "overconfident_conclusion"
+        ],
+        "complexity": "medium",
+        "domain": "statistics"
+      },
+      "response_quality": 0.8,
+      "complexity_detected": "low",
+      "num_reasoning_steps": 0,
+      "validation_passed": true,
+      "confidence_score": 0.8,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "query": "Explain why correlation does not imply causation with examples",
+      "processing_time": 6.7360289096832275,
+      "success": true,
+      "timestamp": "2025-09-24T13:00:23.331635"
+    },
+    {
+      "test_case": {
+        "query": "How does quicksort work and what is its time complexity in the worst case?",
+        "expected_failures": [
+          "incomplete_reasoning"
+        ],
+        "complexity": "high",
+        "domain": "algorithms"
+      },
+      "response_quality": 1.0,
+      "complexity_detected": "medium",
+      "num_reasoning_steps": 7,
+      "validation_passed": true,
+      "confidence_score": 1.0,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "step_confidence_stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "avg": 1.0,
+        "std": 0.0
+      },
+      "query": "How does quicksort work and what is its time complexity in the worst case?",
+      "processing_time": 41.97131419181824,
+      "success": true,
+      "timestamp": "2025-09-24T13:01:05.303372"
+    },
+    {
+      "test_case": {
+        "query": "Explain the backpropagation algorithm step by step for a simple neural network",
+        "expected_failures": [
+          "mathematical_error",
+          "incomplete_reasoning"
+        ],
+        "complexity": "high",
+        "domain": "machine_learning"
+      },
+      "response_quality": 0.95,
+      "complexity_detected": "high",
+      "num_reasoning_steps": 8,
+      "validation_passed": true,
+      "confidence_score": 0.95,
+      "correction_attempts": 0,
+      "detected_issues": [
+        "Minor ambiguity in the parenthetical explanations for matrix multiplication vs. outer product in steps 4 and 6. While the formulas themselves (`delta_o * a_h^T` and `delta_h * x^T`) are correct for column vectors `delta_o`, `a_h`, `delta_h`, and `x`, the accompanying text 'or matrix multiplication if `delta_o` is a row vector and `a_h` is a column vector' (and similarly for step 6) could be clearer or removed to avoid potential confusion regarding vector orientations and matrix product definitions."
+      ],
+      "applied_corrections": [
+        "In Step 4, for `dL/dW_ho`, clarify the parenthetical explanation to: 'Therefore, `dL/dW_ho = delta_o * a_h^T` (outer product, assuming `delta_o` is a column vector and `a_h^T` is a row vector).'\nAlternatively, simplify to: 'Therefore, `dL/dW_ho = delta_o * a_h^T` (where `delta_o` is a column vector and `a_h^T` is its transpose, resulting in a matrix of gradients).'",
+        "In Step 6, for `dL/dW_ih`, apply a similar clarification: 'Therefore, `dL/dW_ih = delta_h * x^T` (outer product, assuming `delta_h` is a column vector and `x^T` is a row vector).'\nAlternatively, simplify to: 'Therefore, `dL/dW_ih = delta_h * x^T` (where `delta_h` is a column vector and `x^T` is its transpose, resulting in a matrix of gradients).'"
+      ],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "step_confidence_stats": {
+        "min": 1.0,
+        "max": 1.0,
+        "avg": 1.0,
+        "std": 0.0
+      },
+      "query": "Explain the backpropagation algorithm step by step for a simple neural network",
+      "processing_time": 98.53627896308899,
+      "success": true,
+      "timestamp": "2025-09-24T13:02:43.840510"
+    },
+    {
+      "test_case": {
+        "query": "Compare bubble sort and merge sort in terms of efficiency and implementation complexity",
+        "expected_failures": [
+          "scope_creep",
+          "incomplete_reasoning"
+        ],
+        "complexity": "medium",
+        "domain": "algorithms"
+      },
+      "response_quality": 0.8,
+      "complexity_detected": "low",
+      "num_reasoning_steps": 0,
+      "validation_passed": true,
+      "confidence_score": 0.8,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "query": "Compare bubble sort and merge sort in terms of efficiency and implementation complexity",
+      "processing_time": 0.9613356590270996,
+      "success": true,
+      "timestamp": "2025-09-24T13:02:44.803335"
+    },
+    {
+      "test_case": {
+        "query": "What are the advantages and disadvantages of decision trees vs neural networks?",
+        "expected_failures": [
+          "scope_creep",
+          "overconfident_conclusion"
+        ],
+        "complexity": "medium",
+        "domain": "machine_learning"
+      },
+      "response_quality": 0.9,
+      "complexity_detected": "medium",
+      "num_reasoning_steps": 11,
+      "validation_passed": true,
+      "confidence_score": 0.9,
+      "correction_attempts": 0,
+      "detected_issues": [
+        "Step 9 introduces 'instability (sensitive to small changes in data)' as a disadvantage of Decision Trees without this specific point being explicitly discussed or compared in the preceding detailed steps (3-7). While technically true, its inclusion in the summary without prior premise weakens the 'conclusions follow from premises' aspect for this specific point.",
+        "Step 11 introduces 'complex hyperparameter tuning' as a disadvantage of Neural Networks without this specific point being explicitly discussed or compared in the preceding detailed steps (3-7). While technically true, its inclusion in the summary without prior premise weakens the 'conclusions follow from premises' aspect for this specific point."
+      ],
+      "applied_corrections": [
+        "To maintain strict logical consistency, Step 9 could either remove the point about 'instability' or a new comparative step could be added between Steps 6 and 7 (or integrated into an existing step) to discuss the stability/robustness of both models.",
+        "To maintain strict logical consistency, Step 11 could either remove the point about 'complex hyperparameter tuning' or a new comparative step could be added between Steps 6 and 7 (or integrated into an existing step) to discuss the ease/difficulty of hyperparameter tuning for both models."
+      ],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "step_confidence_stats": {
+        "min": 0.95,
+        "max": 1.0,
+        "avg": 0.9754545454545455,
+        "std": 0.016949121725703897
+      },
+      "query": "What are the advantages and disadvantages of decision trees vs neural networks?",
+      "processing_time": 55.37326502799988,
+      "success": true,
+      "timestamp": "2025-09-24T13:03:40.177215"
+    },
+    {
+      "test_case": {
+        "query": "Why is it impossible to solve the halting problem?",
+        "expected_failures": [
+          "overconfident_conclusion",
+          "incomplete_reasoning"
+        ],
+        "complexity": "high",
+        "domain": "computer_science"
+      },
+      "response_quality": 0.8,
+      "complexity_detected": "low",
+      "num_reasoning_steps": 0,
+      "validation_passed": true,
+      "confidence_score": 0.8,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "query": "Why is it impossible to solve the halting problem?",
+      "processing_time": 2.3816230297088623,
+      "success": true,
+      "timestamp": "2025-09-24T13:03:42.560440"
+    },
+    {
+      "test_case": {
+        "query": "If a machine learning model has 90% accuracy on training data but 60% on test data, what might be wrong and how would you fix it?",
+        "expected_failures": [
+          "incomplete_reasoning",
+          "logical_inconsistency"
+        ],
+        "complexity": "high",
+        "domain": "machine_learning"
+      },
+      "response_quality": 1.0,
+      "complexity_detected": "medium",
+      "num_reasoning_steps": 5,
+      "validation_passed": true,
+      "confidence_score": 1.0,
+      "correction_attempts": 0,
+      "detected_issues": [],
+      "applied_corrections": [],
+      "expected_failures_detected": 0,
+      "unexpected_behavior": true,
+      "step_confidence_stats": {
+        "min": 0.95,
+        "max": 1.0,
+        "avg": 0.9800000000000001,
+        "std": 0.02738612787525833
+      },
+      "query": "If a machine learning model has 90% accuracy on training data but 60% on test data, what might be wrong and how would you fix it?",
+      "processing_time": 58.09066104888916,
+      "success": true,
+      "timestamp": "2025-09-24T13:04:40.651439"
+    }
+  ]
+}
