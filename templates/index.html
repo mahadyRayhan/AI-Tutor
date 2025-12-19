@@ -56,6 +56,31 @@
         .message.user { align-self: flex-end; background-color: var(--user-msg-bg); color: white; border-bottom-right-radius: 2px; }
         .message.user pre { background: rgba(0,0,0,0.2); padding: 5px; border-radius: 4px; overflow-x: auto; }
         .message.bot { align-self: flex-start; background-color: var(--bot-msg-bg); color: #2c3e50; border-bottom-left-radius: 2px; }
+        .message.bot h2 { font-size: 1.1rem; margin: 10px 0 5px; color: #2c3e50; }
+        .message.bot ul { margin: 5px 0; padding-left: 20px; }
+        .message.bot p { margin: 5px 0; }
+        
+        /* Inline Code (e.g. `int`) */
+        .message.bot :not(pre) > code { 
+            background: rgba(0,0,0,0.1); 
+            padding: 2px 4px; 
+            border-radius: 4px; 
+            font-family: monospace; 
+            color: #c7254e; /* Reddish text for visibility */
+        }
+
+        /* Block Code (Prism) */
+        pre[class*="language-"] {
+            background: #2d2d2d !important; /* Force Dark Background */
+            color: #f8f8f2 !important;      /* Force Light Text */
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        
+        code[class*="language-"] {
+            text-shadow: none !important;
+        }
         .input-area { padding: 20px; border-top: 1px solid #eee; display: flex; gap: 10px; background: #f9f9f9; align-items: flex-end; }
         textarea { flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; outline: none; font-family: 'Consolas', monospace; min-height: 45px; max-height: 150px; resize: none; }
         button#sendBtn { padding: 0 24px; height: 48px; background-color: var(--accent-color); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
@@ -71,6 +96,32 @@
         /* Logout Button */
         .logout-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; margin-left: 10px; }
         .logout-btn:hover { background: rgba(255,255,255,0.3); }
+        .progress-step-container {
+            min-width: 200px;
+            padding: 5px;
+        }
+        .progress-step-text {
+            font-size: 0.85rem;
+            color: #7f8c8d;
+            margin-bottom: 6px;
+            font-weight: 500;
+            display: flex;
+            justify-content: space-between;
+        }
+        .progress-step-track {
+            width: 100%;
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .progress-step-fill {
+            height: 100%;
+            background: #3498db;
+            width: 5%;
+            transition: width 0.5s ease-in-out;
+            border-radius: 2px;
+        }
     </style>
 </head>
 <body>
@@ -219,13 +270,131 @@
         }
     }
 
+    // async function sendMessage(overrideText = null) {
+    //     const rawText = overrideText || input.value.trim();
+    //     if (!rawText) return;
+
+    //     // Ensure user is logged in
+    //     if (!currentUser) return logout();
+
+    //     let displayHtml = rawText.replace(/\n/g, '<br>');
+    //     if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
+    //          displayHtml = `<pre>${rawText}</pre>`;
+    //     }
+        
+    //     const userDiv = document.createElement('div');
+    //     userDiv.className = 'message user';
+    //     userDiv.innerHTML = displayHtml;
+    //     messagesDiv.appendChild(userDiv);
+    //     scrollToBottom();
+
+    //     input.value = '';
+    //     input.style.height = 'auto';
+    //     input.disabled = true;
+    //     sendBtn.disabled = true;
+
+    //     let textToSend = rawText;
+    //     if (activeChallenge) {
+    //         textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
+    //         activeChallenge = null; 
+    //     }
+
+    //     const botMsgDiv = document.createElement('div');
+    //     botMsgDiv.className = 'message bot';
+    //     botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
+    //     messagesDiv.appendChild(botMsgDiv);
+    //     scrollToBottom();
+
+    //     try {
+    //         const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
+    //             method: 'POST',
+    //             headers: { 'Content-Type': 'application/json' },
+    //             body: JSON.stringify({ 
+    //                 message: textToSend, 
+    //                 user_role: currentUser.role,
+    //                 username: currentUser.username // <--- THIS MUST BE HERE
+    //             })
+    //         });
+
+    //         const reader = response.body.getReader();
+    //         const decoder = new TextDecoder();
+    //         let fullAnswer = "";
+
+    //         while (true) {
+    //             const { done, value } = await reader.read();
+    //             if (done) break;
+                
+    //             const chunk = decoder.decode(value, { stream: true });
+    //             // Fix: Handle chunk fragmentation
+    //             const lines = chunk.split('\n');
+                
+    //             for (const line of lines) {
+    //                 if (line.trim() === '') continue; // Skip empty lines
+                    
+    //                 if (line.startsWith('data: ')) {
+    //                     try {
+    //                         const jsonStr = line.slice(6);
+    //                         const data = JSON.parse(jsonStr);
+                            
+    //                         if (data.type === 'status' && data.stage === 'intent') {
+    //                             if(intentBadge) { // Safety Check!
+    //                                 intentBadge.innerText = data.message;
+    //                                 if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
+    //                                 else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
+    //                                 else intentBadge.style.background = "#3498db";
+    //                             }
+    //                         }
+    //                         else if (data.type === 'answer') {
+    //                             fullAnswer = data.text;
+    //                             botMsgDiv.innerHTML = marked.parse(fullAnswer);
+    //                             scrollToBottom();
+    //                         }
+    //                         else if (data.type === 'complete') {
+    //                             displaySources(data.data.sources);
+    //                             if (data.data.suggestions && data.data.suggestions.length > 0) {
+    //                                 displaySuggestions(data.data.suggestions, botMsgDiv);
+    //                             }
+    //                         }
+    //                     } catch (e) {
+    //                         console.warn("Stream parsing error for line:", line, e);
+    //                         // Do not throw, just skip this chunk
+    //                     }
+    //                 }
+    //             }
+    //         }
+
+    //         // Render Mermaid
+    //         const graphs = botMsgDiv.querySelectorAll('.language-mermaid');
+    //         for (const graph of graphs) {
+    //             try {
+    //                 const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
+    //                 const { svg } = await window.mermaid.render(id, graph.textContent);
+    //                 const div = document.createElement('div');
+    //                 div.innerHTML = svg;
+    //                 div.style.textAlign = 'center';
+    //                 div.style.margin = '15px 0';
+    //                 graph.parentElement.replaceWith(div);
+    //             } catch (e) {
+    //                 console.error("Mermaid failed to render", e);
+    //             }
+    //         }
+    //         Prism.highlightAllUnder(botMsgDiv);
+
+    //     } catch (error) {
+    //         botMsgDiv.innerHTML = "Connection error.";
+    //         console.error(error);
+    //     } finally {
+    //         input.disabled = false;
+    //         sendBtn.disabled = false;
+    //         input.focus();
+    //     }
+    // }
+
     async function sendMessage(overrideText = null) {
         const rawText = overrideText || input.value.trim();
         if (!rawText) return;
 
-        // Ensure user is logged in
-        if (!currentUser) return logout();
-
+        // UI: User Message
         let displayHtml = rawText.replace(/\n/g, '<br>');
         if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
              displayHtml = `<pre>${rawText}</pre>`;
@@ -242,15 +411,29 @@
         input.disabled = true;
         sendBtn.disabled = true;
 
+        // Context Logic
         let textToSend = rawText;
         if (activeChallenge) {
             textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
             activeChallenge = null; 
         }
 
+        // UI: Bot Placeholder
         const botMsgDiv = document.createElement('div');
         botMsgDiv.className = 'message bot';
-        botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
+        // --- NEW: INITIAL HTML IS A PROGRESS BAR ---
+        botMsgDiv.innerHTML = `
+            <div class="progress-step-container" id="bot-progress-${Date.now()}">
+                <div class="progress-step-text">
+                    <span id="prog-text">Initializing...</span>
+                    <span id="prog-pct">0%</span>
+                </div>
+                <div class="progress-step-track">
+                    <div class="progress-step-fill" style="width: 5%"></div>
+                </div>
+            </div>
+        `;
+        // -------------------------------------------
         messagesDiv.appendChild(botMsgDiv);
         scrollToBottom();
 
@@ -261,73 +444,104 @@
                 body: JSON.stringify({ 
                     message: textToSend, 
                     user_role: currentUser.role,
-                    username: currentUser.username // <--- THIS MUST BE HERE
+                    username: currentUser.username
                 })
             });
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
-            let fullAnswer = "";
+            
+            // Buffer for the full markdown text
+            let currentMarkdown = "";
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 
                 const chunk = decoder.decode(value, { stream: true });
-                // Fix: Handle chunk fragmentation
                 const lines = chunk.split('\n');
                 
                 for (const line of lines) {
-                    if (line.trim() === '') continue; // Skip empty lines
-                    
+                    if (line.trim() === '') continue;
                     if (line.startsWith('data: ')) {
                         try {
-                            const jsonStr = line.slice(6);
-                            const data = JSON.parse(jsonStr);
+                            const data = JSON.parse(line.slice(6));
                             
-                            if (data.type === 'status' && data.stage === 'intent') {
-                                if(intentBadge) { // Safety Check!
-                                    intentBadge.innerText = data.message;
-                                    if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
-                                    else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
-                                    else intentBadge.style.background = "#3498db";
+                            if (data.type === 'status') {
+                                // Update Intent Badge (Existing)
+                                if(intentBadge) intentBadge.innerText = data.message;
+                                
+                                // --- NEW: UPDATE PROGRESS BAR ---
+                                const fill = botMsgDiv.querySelector('.progress-step-fill');
+                                const text = botMsgDiv.querySelector('#prog-text');
+                                const pct = botMsgDiv.querySelector('#prog-pct');
+                                
+                                if (fill && data.percent) {
+                                    fill.style.width = data.percent + "%";
+                                    text.innerText = data.message;
+                                    pct.innerText = data.percent + "%";
                                 }
+                                // -------------------------------
                             }
-                            else if (data.type === 'answer') {
-                                fullAnswer = data.text;
-                                botMsgDiv.innerHTML = marked.parse(fullAnswer);
+                            else if (data.type === 'token') {
+                                // --- STREAMING TEXT ---
+                                currentMarkdown += data.text;
+                                botMsgDiv.innerHTML = marked.parse(currentMarkdown);
                                 scrollToBottom();
                             }
+                            else if (data.type === 'answer') {
+                                // Fallback for non-streaming blocks (like "Hold On")
+                                currentMarkdown = data.text;
+                                botMsgDiv.innerHTML = marked.parse(currentMarkdown);
+                            }
                             else if (data.type === 'complete') {
+                                // --- FINAL POLISH PHASE ---
+                                // 1. Render Final Markdown (Clean)
+                                botMsgDiv.innerHTML = marked.parse(data.data.answer);
+                                
+                                // 2. Display Metadata
                                 displaySources(data.data.sources);
                                 if (data.data.suggestions && data.data.suggestions.length > 0) {
                                     displaySuggestions(data.data.suggestions, botMsgDiv);
                                 }
+
+                                // 3. Render Diagrams (Robust Selector)
+                                // Look for code blocks that contain 'graph TD' content
+                                const codeBlocks = botMsgDiv.querySelectorAll('code');
+                                for (const block of codeBlocks) {
+                                    const text = block.textContent.trim();
+                                    if (text.startsWith('graph TD') || text.startsWith('graph LR')) {
+                                        try {
+                                            const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
+                                            const { svg } = await window.mermaid.render(id, text);
+                                            const div = document.createElement('div');
+                                            div.innerHTML = svg;
+                                            div.style.textAlign = 'center';
+                                            div.style.margin = '15px 0';
+                                            
+                                            // Replace the parent <pre> tag
+                                            const pre = block.parentElement;
+                                            if (pre.tagName === 'PRE') {
+                                                pre.replaceWith(div);
+                                            } else {
+                                                block.replaceWith(div);
+                                            }
+                                        } catch (e) {
+                                            console.error("Mermaid Render Error", e);
+                                        }
+                                    }
+                                }
+
+                                // 4. Highlight Code (Prism) - Run AFTER Mermaid replacement
+                                Prism.highlightAllUnder(botMsgDiv);
+                                scrollToBottom();
                             }
                         } catch (e) {
-                            console.warn("Stream parsing error for line:", line, e);
-                            // Do not throw, just skip this chunk
+                            console.warn("JSON Parse Error", e);
                         }
                     }
                 }
             }
-
-            // Render Mermaid
-            const graphs = botMsgDiv.querySelectorAll('.language-mermaid');
-            for (const graph of graphs) {
-                try {
-                    const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
-                    const { svg } = await window.mermaid.render(id, graph.textContent);
-                    const div = document.createElement('div');
-                    div.innerHTML = svg;
-                    div.style.textAlign = 'center';
-                    div.style.margin = '15px 0';
-                    graph.parentElement.replaceWith(div);
-                } catch (e) {
-                    console.error("Mermaid failed to render", e);
-                }
-            }
-            Prism.highlightAllUnder(botMsgDiv);
 
         } catch (error) {
             botMsgDiv.innerHTML = "Connection error.";

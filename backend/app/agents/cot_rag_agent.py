@@ -2,6 +2,7 @@
 
 import logging
 import json
+import asyncio 
 import re
 from typing import Dict, List, Any
 from dataclasses import dataclass
@@ -104,16 +105,15 @@ class ChainOfThoughtRAGAgent:
 
         # NOTE: If the prompt works, we don't even need to touch the content.
         # Let's try relying PURELY on the prompt first, as regexing graph syntax is risky.
-        return text
+        # return text
+        return text.replace("(", " ").replace(")", " ")
 
     def _expand_query_using_graph(self, query: str, initial_entities: List[str]) -> List[str]:
         expanded_terms = []
         for entity in initial_entities:
             cypher = """
-            MATCH (req)-[:IS_PREREQUISITE_FOR]->(target {name: $name})
-            RETURN req.name as name
-            UNION
-            MATCH (target {name: $name})-[:REQUIRES_UNDERSTANDING_OF]->(req)
+            MATCH (target) WHERE toLower(target.name) CONTAINS toLower($name) 
+            MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req)
             RETURN req.name as name
             """
             results = self.graph_db.execute_query(cypher, {"name": entity})
@@ -122,89 +122,53 @@ class ChainOfThoughtRAGAgent:
         return list(set(expanded_terms))
 
     def _execute_retrieval(self, query: str, intent: str, user_role: str = 'student') -> List[Dict[str, Any]]:
-        """
-        Retrieves documents with Graph expansion, Vector search, and Strict Filtering (Gatekeeper).
-        """
-        # 1. Extract keywords
-        extract_prompt = f"Extract the main C programming terms from: '{query}'. Return as comma-separated list."
+        extract_prompt = f"Extract C terms: '{query}'. Return CSV."
         entities_str = self.llm_interface.generate_response(extract_prompt)
         entities = [e.strip() for e in entities_str.split(',') if e.strip()]
         
-        self.logger.info(f"Extracted Entities: {entities}")
-
-        # 2. Graph Expansion
+        # Graph Expansion
         related_terms = self._expand_query_using_graph(query, entities)
-        self.logger.info(f"Graph suggested related terms: {related_terms}")
-
-        # 3. Vector Search
-        query_embedding = self.llm_interface.get_embedding(query)
-        # We fetch more candidates (top_k=8) because the Gatekeeper might filter some out
-        raw_chunks = self.vector_store.query(query_embedding, top_k=8)
-
-        # 4. Graph Related Search (Optional expansion)
-        if related_terms:
-            expanded_query = " ".join(related_terms)
-            expanded_embedding = self.llm_interface.get_embedding(expanded_query)
-            related_chunks = self.vector_store.query(expanded_embedding, top_k=3)
-            raw_chunks.extend(related_chunks)
-
-        # --- GATEKEEPER LOGIC (Filtering) ---
-        valid_chunks = []
-        # Load the current visibility settings from the dashboard manager
-        topic_settings = settings_manager.get_settings()
         
-        # Strictness level for vector match (0.0 to 1.0)
-        # Higher = stricter (fewer hallucinations), Lower = more lenient
-        SCORE_THRESHOLD = 0.28 
+        # Vector Search
+        query_embedding = self.llm_interface.get_embedding(query)
+        raw_chunks = self.vector_store.query(query_embedding, top_k=8)
+        
+        if related_terms:
+            exp_emb = self.llm_interface.get_embedding(" ".join(related_terms))
+            raw_chunks.extend(self.vector_store.query(exp_emb, top_k=3))
 
+        # Gatekeeper
+        from app.core.settings_manager import settings_manager
+        topic_settings = settings_manager.get_settings()
+        SCORE_THRESHOLD = 0.22 
+        valid_chunks = []
         seen_ids = set()
 
         for chunk in raw_chunks:
-            # Deduplicate based on chunk ID
-            chunk_id = chunk.get('metadata', {}).get('chunk_id')
-            if chunk_id in seen_ids:
-                continue
-            seen_ids.add(chunk_id)
-
+            cid = chunk.get('metadata', {}).get('chunk_id')
+            if cid in seen_ids: continue
+            seen_ids.add(cid)
+            
             meta = chunk.get('metadata', {})
+            if chunk.get('score', 0) <= SCORE_THRESHOLD: continue
             
-            # CHECK A: Relevance Score
-            # If the vector database says this match is weak, ignore it.
-            if chunk.get('score', 0) <= SCORE_THRESHOLD:
-                continue
-
-            # CHECK B: Access Level (Teacher vs Student)
-            # If the user is a 'student', they cannot see documents marked 'teacher'
-            chunk_access = meta.get('access_level', 'student')
-            if user_role == 'student' and chunk_access == 'teacher':
-                self.logger.info(f"⛔ Access Denied: Student tried to access '{meta.get('document_name')}'")
-                continue
-
-            # CHECK C: Topic Visibility (Dashboard Toggle)
-            # If the teacher turned off this topic in the dashboard, hide it.
+            # RBAC
+            if user_role == 'student' and meta.get('access_level') == 'teacher': continue
+            
+            # ABAC
             topic = meta.get('topic', 'General')
-            # If topic is not in settings, default to True (Visible)
-            is_visible = topic_settings.get(topic, True)
+            if not topic_settings.get(topic, True): continue
             
-            if not is_visible:
-                self.logger.info(f"🙈 Hidden Content: Topic '{topic}' is currently disabled.")
-                continue
-
-            # If it passes all checks, add it
             valid_chunks.append(chunk)
-        
-        if not valid_chunks:
-            self.logger.warning(f"No relevant documents found after filtering (Role: {user_role}).")
-            return []
             
         return valid_chunks
 
-    def _generate_suggestions(self, query: str, answer: str, context: str) -> List[str]:
+    def _generate_suggestions(self, query: str, context: str) -> List[str]:
         prompt = f"""
-        Based on the student's query and your answer, generate 3 short follow-up options.
+        Based on the student's query and the Reference Material below, generate 3 short follow-up options.
         
         Query: "{query}"
-        Answer: "{answer}"
+        # Answer: (Removed to allow parallel generation)
         Reference Material: "{context}"
         
         **RULES:**
@@ -217,11 +181,9 @@ class ChainOfThoughtRAGAgent:
         """
         response = self.llm_interface.generate_response(prompt)
         try:
-            cleaned = response.replace("```json", "").replace("```", "").strip()
-            import json
-            return json.loads(cleaned)
+            return json.loads(response.replace("```json", "").replace("```", "").strip())
         except:
-            return ["Tell me more", "Show an example", "Challenge: Try writing the code"]
+            return ["Tell me more", "Example code", "Challenge: Write it"]
 
     def _generate_code_review(self, query: str, context: str, user_goal: str = None) -> str:
         
@@ -249,7 +211,8 @@ class ChainOfThoughtRAGAgent:
         **⚠️ What needs work:** ...
         **💡 Hint:** ...
         """
-        return self.llm_interface.generate_response(prompt)
+        # return self.llm_interface.generate_response(prompt)
+        return self.llm_interface.generate_response(f"Review C code: {query} using context: {context}")
 
     def _generate_socratic_plan(self, query: str, context: str, user_goal: str = None) -> str:
         
@@ -301,7 +264,8 @@ class ChainOfThoughtRAGAgent:
         ## Guiding Question
         [Your question here]
         """
-        return self.llm_interface.generate_response(prompt)
+        # return self.llm_interface.generate_response(prompt)
+        return self.llm_interface.generate_response(f"Socratic plan for {query} using {context}")
     
     def _generate_concept_explanation(self, query: str, context: str, user_goal: str = None) -> str:
         print(f"DEBUG: Generating concept for goal: '{user_goal}'") # <--- ADD THIS
@@ -356,111 +320,203 @@ class ChainOfThoughtRAGAgent:
         ## Example from Class
         [Reference specific code from text]
         """
-        return self.llm_interface.generate_response(prompt)
+        # return self.llm_interface.generate_response(prompt)
+        return self.llm_interface.generate_response(f"Explain {query} using {context}. Include Mermaid diagram.")
+
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+        goal_section = ""
+        if user_goal:
+            goal_section = f"""
+            ## Connection to Your Goal
+            Explain explicitly how this concept helps achieve the goal: "{user_goal}".
+            """
+
+        return f"""
+        You are an expert C Programming Tutor.
+        
+        Student Query: "{query}"
+        User's Goal: "{user_goal if user_goal else 'None'}"
+        Reference Material: {context}
+
+        **MANDATORY RULES:**
+        1. **STRICT LIMITATION:** Check the Reference Material. If concept is missing, say "I don't have information..."
+        2. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences).
+        3. **VISUALIZATION (MANDATORY):** You MUST synthesize a Mermaid.js diagram (`graph TD`) to visualize the concept (e.g. data flow, memory layout, or logic), even if the text doesn't explicitly describe a diagram.
+           - **SANITIZATION:** No `()`, `[]`, or `"` in node labels. Use single quotes if needed.
+        4. **SOURCE GROUNDING:** Quote specific examples from text.
+        5. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
+
+        **STRICT RESPONSE FORMAT:**
+        
+        ## Explanation
+        [Detailed text explanation...]
+        {goal_section}
+        ## Visual Model
+        ```mermaid
+        graph TD
+           ...
+        ```
+        
+        ## Example from Class
+        [Reference specific code from text]
+        """
+
+    def _build_socratic_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+        goal_instruction = ""
+        if user_goal:
+            goal_instruction = f"6. **GOAL ALIGNMENT:** The student's goal is: '{user_goal}'. Mention if this helps them."
+
+        return f"""
+        You are an encouraging C Programming Tutor for junior students.
+        
+        Student Query: "{query}"
+        Reference Material: {context}
+
+        **CRITICAL RULES:**
+        1. **CONCEPT LIMITATION:** You may ONLY teach concepts present in the Reference Material.
+        2. **SOURCE GROUNDING:** Mention specific variable names/examples from the text.
+        3. **TEXT FIRST:** Text explanation MUST come before any diagrams.
+        4. **VISUALIZATION:** If appropriate, include a Mermaid diagram.
+           - **SANITIZATION:** No `()`, `[]`, or `"` in node labels.
+        5. **TONE INSTRUCTIONS:** Speak DIRECTLY to the student. Use "You" and "We".
+        {goal_instruction}
+
+        Format your response like this:
+        
+        ## Strategy
+        [Text Explanation]
+
+        ## Visual Logic
+        ```mermaid
+        graph TD
+           A[Start] --> B[End]
+        ```
+        
+        ## Implementation Plan
+        1. **[Step Name]**: ...
+           ```c
+           // Generic Syntax
+           code...
+           ```
+        
+        ## Guiding Question
+        ...
+        """
+
+    def _build_review_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+        return f"""
+        You are a supportive C Code Reviewer.
+        
+        Student's Input: {query}
+        Reference Material: {context}
+
+        **RULES:**
+        1. **CHECK CONTEXT:** Look for a "[CONTEXT: ...]" tag.
+        2. **SANDWICH METHOD:** Positive -> Improvement -> Hint.
+        3. **SOURCE GROUNDING:** Use variable names from Reference Material.
+        4. **NO SOLUTIONS:** Do not rewrite code.
+        
+        Format:
+        ## Code Review
+        **✅ What looks good:** ...
+        **⚠️ What needs work:** ...
+        **💡 Hint:** ...
+        """
 
     def run(self, query: str, user_role: str = 'student', **kwargs) -> Dict[str, Any]:
+        import time
         
-        # 1. Initialize Causal Flags (Treatments)
-        causal_flags = {
-            "treatment_diagram": False,       # Did we show a visualization?
-            "treatment_prereq_check": False,  # Did we stop them for prerequisites?
-            "treatment_code_review": False,   # Did we review their code?
-            "treatment_topic_block": False,   # Did we block a topic?
-            "context_mastery_score": 0,       # Student's current mastery (Context)
-            "context_has_goal": False         # Did they have a goal? (Context)
-        }
+        # --- TIMER START ---
+        t_start = time.time()
+        profiler = {}
         
         self.logger.info(f"Processing Query: {query}")
         username = kwargs.get('username', 'anonymous')
+        user_goal = kwargs.get('user_goal')
         
-        # 1. Intent & Entities
+        # Initialize Causal Flags
+        causal_flags = {
+            "treatment_diagram": False,
+            "treatment_prereq_check": False,
+            "treatment_code_review": False,
+            "treatment_topic_block": False,
+            "context_mastery_score": 0,
+            "context_has_goal": bool(user_goal)
+        }
+        
+        # 1. Intent Classification
+        # --- UPDATE STATUS ---
+        yield {"type": "status", "message": "Analyzing intent...", "percent": 10}
+        t0 = time.time()
         intent = self._classify_intent(query)
+        profiler["1_Intent_Class"] = time.time() - t0
+        self.logger.info(f"Intent Classified: {intent}")
+        
+        # 2. Entity Extraction
+        t0 = time.time()
         extract_prompt = f"Extract the main C programming terms from: '{query}'. Return as comma-separated list."
         entities_str = self.llm_interface.generate_response(extract_prompt)
         entities = [e.strip() for e in entities_str.split(',') if e.strip()]
+        profiler["2_Entity_Extract"] = time.time() - t0
 
-        # ---------------------------------------------------------
-        # CHECK 1: TOPIC VISIBILITY (The Gatekeeper)
-        # ---------------------------------------------------------
+        # --- GATEKEEPER CHECK (Logic only) ---
         from app.core.settings_manager import settings_manager
         topic_settings = settings_manager.get_settings()
         
         blocked = False
         blocked_topic_name = ""
-        
         for entity in entities:
-            # Fuzzy match entity to settings keys
+            entity_lower = entity.lower()
             for setting_topic, is_enabled in topic_settings.items():
-                # e.g. If setting is "Functions" and entity is "function"
-                if (entity.lower() in setting_topic.lower() or setting_topic.lower() in entity.lower()):
-                    if not is_enabled:
-                        blocked = True
-                        blocked_topic_name = setting_topic
-                        break
+                t_lower = setting_topic.lower()
+                if (entity_lower in t_lower or t_lower in entity_lower) and not is_enabled:
+                    blocked = True
+                    blocked_topic_name = setting_topic
+                    break
             if blocked: break
         
         if blocked:
-            causal_flags["treatment_topic_block"] = True # <--- FLAG
-            return {
-                "answer": f"🔒 **Topic Locked**\n\nThe topic **{blocked_topic_name}** is currently not available. Please check with your instructor to unlock it.",
+             causal_flags["treatment_topic_block"] = True
+             return {
+                "answer": f"🔒 **Topic Locked**\n\nThe topic **{blocked_topic_name}** is currently not available.",
                 "sources": [],
                 "intent": intent,
-                "suggestions": ["Ask about a different topic", "Check my Dashboard"],
+                "suggestions": ["Ask about a different topic"],
                 "cot_analysis": None,
-                "reasoning_quality": 0.0 
+                "reasoning_quality": 0.0,
+                "causal_flags": causal_flags
             }
 
-        # ---------------------------------------------------------
-        # CHECK 2: LEARNING FROM INPUT
-        # ---------------------------------------------------------
+        # --- LEARNING UPDATE (Logic only) ---
         if "i know" in query.lower():
             # If the user says "I know them" or "I know variables", 
             # we need to credit them for the PREREQUISITES of the current topic.
-            
-            # 1. Find what the topic requires
-            # (We re-run the check to see what was likely missing)
             reqs = self._check_prerequisites(query, entities)
-            
             for req in reqs:
                 knowledge_manager.mark_concept_as_known(username, req)
                 self.logger.info(f"🧠 Learned that {username} knows prerequisite: {req}")
             
-            # Also mark the explicit entity if they said "I know Variables" specifically
-            # But NOT if they said "Teach me Function anyway" (they don't know Function yet)
             if "teach me" not in query.lower():
                  for entity in entities:
                     knowledge_manager.mark_concept_as_known(username, entity)
 
-        # ---------------------------------------------------------
-        # CHECK 3: PREREQUISITES (The Conversation)
-        # ---------------------------------------------------------
-        # Skip logic: if user explicitly says "skip", "anyway", or "i know"
+        # 3. Prerequisite Check (Graph DB)
+        t0 = time.time()
         should_check_prereqs = "anyway" not in query.lower() and "skip" not in query.lower() and "know" not in query.lower()
 
         if (intent == "CONCEPT" or intent == "PROBLEM") and should_check_prereqs:
             all_prereqs = self._check_prerequisites(query, entities)
-            
             unknown_prereqs = []
             for p in all_prereqs:
-                # Ignore self-loops (e.g. Array requires Array)
                 if p.lower() in [e.lower() for e in entities]: continue
-                # Check User Knowledge DB
                 if not knowledge_manager.has_mastered(username, p):
                     unknown_prereqs.append(p)
 
             if unknown_prereqs:
-                causal_flags["treatment_prereq_check"] = True # <--- FLAG
-                # Create a nice list string: "Variables, Control Flow"
+                causal_flags["treatment_prereq_check"] = True
                 prereq_str = "**" + "**, **".join(unknown_prereqs) + "**"
-                
-                # --- FIX: GENERATE BUTTONS FOR ALL MISSING ITEMS ---
-                suggestion_buttons = []
-                for p in unknown_prereqs:
-                    suggestion_buttons.append(f"Explain {p} first")
-                
-                # Add the "Skip" button at the end
+                suggestion_buttons = [f"Explain {p} first" for p in unknown_prereqs]
                 suggestion_buttons.append(f"I know them, teach me {entities[0]} anyway")
-                # ---------------------------------------------------
 
                 return {
                     "answer": f"## 🛑 Hold on!\n\nTo understand **{entities[0]}**, you really need to know: {prereq_str} first.\n\nSince I don't have a record of you learning them yet, I recommend we start there.",
@@ -469,30 +525,31 @@ class ChainOfThoughtRAGAgent:
                     "suggestions": suggestion_buttons, 
                     "cot_analysis": None,
                     "reasoning_quality": 1.0,
-                    "causal_flags": causal_flags # <--- RETURN TO MAIN
+                    "causal_flags": causal_flags
                 }
+        profiler["3_Graph_Check"] = time.time() - t0
 
-        # ---------------------------------------------------------
-        # 4. STANDARD RETRIEVAL & GENERATION
-        # ---------------------------------------------------------
+        # 4. Retrieval (Vector DB + Logic)
+        t0 = time.time()
         search_query = query
         if len(query.split()) > 5 and entities:
-            # "I know them, teach me function anyway" -> "function"
-            search_query = " ".join(entities)
+            search_query = f"{' '.join(entities)} in C programming"
             
         retrieved_chunks = self._execute_retrieval(search_query, intent, user_role)
-                
+        profiler["4_Retrieval"] = time.time() - t0
+        
         if not retrieved_chunks:
              return {
-                "answer": f"I'm sorry, but I don't have any information about **{entities[0] if entities else query}** in my current reference library.",
+                "answer": f"I'm sorry, but I don't have any information about **{entities[0] if entities else query}**.",
                 "sources": [],
                 "intent": intent,
-                "suggestions": ["Ask about Arrays", "Ask about Loops", "Ask about Variables"],
+                "suggestions": ["Ask about Arrays", "Ask about Loops"],
                 "cot_analysis": None,
                 "reasoning_quality": 0.0 
             }
 
-        # Context Injection (Personalization)
+        # Context Building
+        yield {"type": "status", "message": "Reading documents...", "percent": 75}
         known_concepts = knowledge_manager.get_known_concepts(username)
         user_context_str = ""
         if known_concepts:
@@ -504,26 +561,29 @@ class ChainOfThoughtRAGAgent:
             text = c.get('text', '')
             context_text += f"--- Source: {source} ---\n{text}\n\n"
         
-        # Generation Logic
-        user_goal = kwargs.get('user_goal')
-        print("DEBUG: User Goal in run():", user_goal)  # <--- ADD THIS
+        # 5. Answer Generation (LLM)
+        yield {"type": "status", "message": "Drafting response...", "percent": 90}
+        t0 = time.time()
         
         if intent == "REVIEW":
-            causal_flags["treatment_code_review"] = True # <--- FLAG
+            causal_flags["treatment_code_review"] = True
             final_answer = self._generate_code_review(query, context_text, user_goal)
         elif intent == "PROBLEM" or intent == "DEBUG":
-            # Check if answer contains Mermaid
             final_answer = self._generate_socratic_plan(query, context_text, user_goal)
         else:
             final_answer = self._generate_concept_explanation(query, context_text, user_goal)
-            
-        # Detect Diagram Treatment
-        if "```mermaid" in final_answer:
-            causal_flags["treatment_diagram"] = True # <--- FLAG
-
-        suggestions = self._generate_suggestions(query, final_answer, context_text)
         
-        # Final Sanitization
+        if "```mermaid" in final_answer:
+            causal_flags["treatment_diagram"] = True
+            
+        profiler["5_Answer_Gen"] = time.time() - t0
+
+        # 6. Suggestion Generation (LLM)
+        t0 = time.time()
+        suggestions = self._generate_suggestions(query, final_answer, context_text)
+        profiler["6_Suggest_Gen"] = time.time() - t0
+        
+        # Cleanup
         final_answer = self._sanitize_mermaid(final_answer)
 
         formatted_sources = []
@@ -532,12 +592,177 @@ class ChainOfThoughtRAGAgent:
             source_data['chunk_text'] = c.get('text') or c.get('chunk_text') or 'Text missing'
             formatted_sources.append(source_data)
 
+        # --- TIMER END & LOGGING ---
+        total_time = time.time() - t_start
+        
+        print("\n" + "="*40)
+        print(f"⏱️  LATENCY PROFILE ({total_time:.2f}s total)")
+        print("-" * 40)
+        for step, duration in profiler.items():
+            pct = (duration / total_time) * 100
+            bar = "█" * int(pct / 5)
+            print(f"{step:<20} : {duration:.2f}s ({pct:.0f}%) {bar}")
+        print("="*40 + "\n")
+        # ---------------------------
+
         return {
             "answer": final_answer,
             "sources": formatted_sources,
             "intent": intent,
             "suggestions": suggestions,
-            "causal_flags": causal_flags, # <--- RETURN TO MAIN
+            "causal_flags": causal_flags,
             "cot_analysis": None,
             "reasoning_quality": 1.0 
+        }
+
+    # --- ASYNC STREAMING METHOD ---
+    async def run_stream(self, query: str, user_role: str = 'student', **kwargs):
+        import time
+        t_start = time.time()
+        profiler = {}
+        
+        username = kwargs.get('username', 'anonymous')
+        user_goal = kwargs.get('user_goal')
+        
+        # =========================================================
+        # 1 & 2. PARALLEL ANALYSIS (Intent + Entity)
+        # =========================================================
+        yield {"type": "status", "message": "Analyzing query...", "percent": 10}
+        t0 = time.time()
+
+        # FIX: Define as regular functions (synchronous wrappers)
+        def get_intent():
+            # This calls the synchronous method self._classify_intent
+            return self._classify_intent(query)
+
+        def get_entities():
+            # This calls the synchronous method self.llm_interface.generate_response
+            prompt = f"Extract the main C programming terms from: '{query}'. Return as comma-separated list."
+            return self.llm_interface.generate_response(prompt)
+
+        # Launch both tasks simultaneously in threads
+        task_intent = asyncio.create_task(asyncio.to_thread(get_intent))
+        task_entities = asyncio.create_task(asyncio.to_thread(get_entities))
+
+        # Wait for both
+        intent, entities_str = await asyncio.gather(task_intent, task_entities)
+        
+        # Process results
+        entities = [e.strip() for e in entities_str.split(',') if e.strip()]
+        
+        profiler["1+2_Analysis"] = time.time() - t0 # Combined time
+        self.logger.info(f"Intent: {intent}, Entities: {entities}")
+
+        # =========================================================
+        # GATEKEEPER CHECK (Topic Visibility)
+        # =========================================================
+        from app.core.settings_manager import settings_manager
+        topic_settings = settings_manager.get_settings()
+        for entity in entities:
+            for t, on in topic_settings.items():
+                if (entity.lower() in t.lower()) and not on:
+                    msg = f"🔒 Topic **{t}** is locked."
+                    yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": [], "intent": intent}}
+                    return
+
+        # =========================================================
+        # 3. PREREQUISITE CHECK
+        # =========================================================
+        yield {"type": "status", "message": "Checking prerequisites...", "percent": 40}
+        
+        # Learning Update
+        if "i know" in query.lower():
+            for entity in entities: knowledge_manager.mark_concept_as_known(username, entity)
+
+        # Graph Logic
+        should_check = "anyway" not in query.lower() and "skip" not in query.lower()
+        if (intent == "CONCEPT" or intent == "PROBLEM") and should_check:
+            t0 = time.time()
+            prereqs = self._check_prerequisites(query, entities)
+            unknown = [p for p in prereqs if not knowledge_manager.has_mastered(username, p)]
+            profiler["3_Graph"] = time.time() - t0
+            
+            if unknown:
+                msg = f"## 🛑 Hold on!\nYou need: {', '.join(unknown)} first."
+                btns = [f"Explain {p}" for p in unknown] + [f"Teach me {entities[0]} anyway"]
+                yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": btns, "intent": "GUIDANCE"}}
+                return
+
+        # =========================================================
+        # 4. RETRIEVAL
+        # =========================================================
+        yield {"type": "status", "message": "Searching knowledge base...", "percent": 60}
+        t0 = time.time()
+        
+        q_search = f"{' '.join(entities)} in C" if len(query.split()) > 5 else query
+        chunks = self._execute_retrieval(q_search, intent, user_role)
+        profiler["4_Retrieval"] = time.time() - t0
+        
+        if not chunks:
+             msg = "I don't have info on that."
+             yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": [], "intent": intent}}
+             return
+
+        # Context Building
+        known_concepts = knowledge_manager.get_known_concepts(username)
+        user_context_str = f"USER CONTEXT: The student already knows: {', '.join(known_concepts)}." if known_concepts else ""
+        context_text = f"{user_context_str}\n\n"
+        for c in chunks:
+            context_text += f"--- Source: {c.get('metadata', {}).get('document_name')} ---\n{c.get('text')}\n\n"
+
+        # =========================================================
+        # 5 & 6. PARALLEL GENERATION (Answer + Suggestions)
+        # =========================================================
+        yield {"type": "status", "message": "Drafting response...", "percent": 80}
+        t0 = time.time()
+
+        # Task A: Start Suggestions in Background (Non-blocking)
+        suggest_task = asyncio.create_task(
+            asyncio.to_thread(self._generate_suggestions, query, context_text)
+        )
+
+        # Task B: Prepare Prompt
+        prompt = ""
+        if intent == "REVIEW": prompt = self._build_review_prompt(query, context_text, user_goal)
+        elif intent == "PROBLEM": prompt = self._build_socratic_prompt(query, context_text, user_goal)
+        else: prompt = self._build_concept_prompt(query, context_text, user_goal)
+
+        # Task C: Stream Answer
+        yield {"type": "status", "message": "Generating...", "percent": 100}
+        full_answer = ""
+        async for token in self.llm_interface.stream_response(prompt):
+            full_answer += token
+            yield {"type": "token", "text": token}
+
+        # Wait for Suggestions to finish
+        suggestions = await suggest_task
+        profiler["5_Parallel_Gen"] = time.time() - t0
+        
+        # Cleanup
+        full_answer = self._sanitize_mermaid(full_answer)
+        
+        formatted_sources = []
+        for c in chunks:
+            formatted_sources.append({'document_name': c['metadata']['document_name'], 'chunk_text': c['text']})
+
+        # --- LATENCY LOGGING ---
+        total_time = time.time() - t_start
+        print("\n" + "="*40)
+        print(f"⏱️  PARALLEL STREAM LATENCY ({total_time:.2f}s total)")
+        print("-" * 40)
+        for step, duration in profiler.items():
+            pct = (duration / total_time) * 100
+            bar = "█" * int(pct / 5)
+            print(f"{step:<20} : {duration:.2f}s ({pct:.0f}%) {bar}")
+        print("="*40 + "\n")
+        # -----------------------
+
+        yield {
+            "type": "complete",
+            "data": {
+                "answer": full_answer,
+                "sources": formatted_sources,
+                "suggestions": suggestions,
+                "intent": intent
+            }
         }

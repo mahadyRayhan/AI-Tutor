@@ -211,87 +211,49 @@ async def health():
 
 @app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest):
+    """
+    Stream the response from the C Tutor Agent.
+    """
     async def generate_stream():
         if not cot_rag_agent:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
             return
 
         try:
-            # 1. SETUP: Get User ID immediately
+            # Get User Info
             user_id = request.username if request.username else "anonymous"
-            print("DEBUG: User ID is:", user_id) # <--- ADD THIS
             user_goal = knowledge_manager.get_goal(user_id)
-            print("DEBUG: User Goal is:", user_goal) # <--- ADD THIS
 
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing...', 'stage': 'init'})}\n\n"
-            
-            start_time = time.time()
-            
-            # 2. RUN AGENT: Pass the user_id correctly
-            user_goal = knowledge_manager.get_goal(user_id)
-            result = cot_rag_agent.run(
-                query=request.message, 
-                user_role=request.user_role, 
+            # --- CALL THE NEW STREAMING METHOD ---
+            async for event in cot_rag_agent.run_stream(
+                request.message, 
+                request.user_role, 
                 username=user_id,
-                user_goal=user_goal 
-            )
-            
-            # Capture Flags
-            causal_flags = result.get('causal_flags', {})
-            
-            duration = time.time() - start_time
-            
-            # 3. LOGGING
-            try:
-                intent = result.get('intent', 'UNKNOWN')
+                user_goal=user_goal
+            ):
+                # Send Event to Frontend
+                yield f"data: {json.dumps(event)}\n\n"
                 
-                # Detect Topic from sources
-                sources = result.get('sources', [])
-                detected_topic = "General"
-                
-                if intent == "GUIDANCE":
-                    detected_topic = "Prerequisite Check"
-                elif sources:
-                    detected_topic = sources[0].get('topic', 'General')
-                
-                # Add Computed Context (Mastery Score)
-                # We calculate this ON THE FLY so we know their state AT THAT MOMENT
-                current_history = history_manager.get_student_history(user_id)
-                current_mastery_map = _calculate_mastery(current_history)
-                
-                # Average mastery of the specific topic discussed
-                topic_mastery = current_mastery_map.get(detected_topic, 0)
-                causal_flags["context_mastery_score"] = topic_mastery
-                
-                # Log interaction
-                history_manager.log_interaction(
-                    user_id, 
-                    request.message, 
-                    intent, 
-                    result['answer'], 
-                    detected_topic,
-                    metadata=causal_flags # <--- SAVE IT
-                )
-            except Exception as log_err:
-                logger.error(f"Logging failed: {log_err}")
+                # --- LOGGING ---
+                # We only log when the "complete" event arrives because that has the full answer
+                if event["type"] == "complete":
+                    try:
+                        final_data = event["data"]
+                        # Detect Topic
+                        sources = final_data.get('sources', [])
+                        detected_topic = sources[0].get('topic', 'General') if sources else "General"
+                        if final_data['intent'] == "GUIDANCE": detected_topic = "Prerequisite Check"
 
-            # 4. Stream Response
-            yield f"data: {json.dumps({'type': 'status', 'message': f'Identified as {intent}', 'stage': 'intent'})}\n\n"
-            yield f"data: {json.dumps({'type': 'answer', 'text': result['answer'], 'time': duration})}\n\n"
-
-            # 5. Final Payload
-            final_payload = {
-                "type": "complete",
-                "data": {
-                    "answer": result['answer'],
-                    "sources": result.get('sources', []),
-                    "suggestions": result.get('suggestions', []),
-                    "query_domain": "C Programming",
-                    "cot_analysis": None,
-                    "timings": {"total": round(duration, 2)}
-                }
-            }
-            yield f"data: {json.dumps(final_payload)}\n\n"
+                        # Log
+                        history_manager.log_interaction(
+                            user_id, 
+                            request.message, 
+                            final_data['intent'], 
+                            final_data['answer'], 
+                            detected_topic
+                        )
+                    except Exception as log_err:
+                        logger.error(f"Logging failed: {log_err}")
 
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
@@ -306,6 +268,103 @@ async def chat_stream(request: ChatRequest):
             "X-Accel-Buffering": "no"
         }
     )
+# async def chat_stream(request: ChatRequest):
+#     async def generate_stream():
+#         if not cot_rag_agent:
+#             yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
+#             return
+
+#         try:
+#             # 1. SETUP: Get User ID immediately
+#             user_id = request.username if request.username else "anonymous"
+#             print("DEBUG: User ID is:", user_id) # <--- ADD THIS
+#             user_goal = knowledge_manager.get_goal(user_id)
+#             print("DEBUG: User Goal is:", user_goal) # <--- ADD THIS
+
+#             yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing...', 'stage': 'init'})}\n\n"
+            
+#             start_time = time.time()
+            
+#             # 2. RUN AGENT: Pass the user_id correctly
+#             user_goal = knowledge_manager.get_goal(user_id)
+#             result = cot_rag_agent.run(
+#                 query=request.message, 
+#                 user_role=request.user_role, 
+#                 username=user_id,
+#                 user_goal=user_goal 
+#             )
+            
+#             # Capture Flags
+#             causal_flags = result.get('causal_flags', {})
+            
+#             duration = time.time() - start_time
+            
+#             # 3. LOGGING
+#             try:
+#                 intent = result.get('intent', 'UNKNOWN')
+                
+#                 # Detect Topic from sources
+#                 sources = result.get('sources', [])
+#                 detected_topic = "General"
+                
+#                 if intent == "GUIDANCE":
+#                     detected_topic = "Prerequisite Check"
+#                 elif sources:
+#                     detected_topic = sources[0].get('topic', 'General')
+                
+#                 # Add Computed Context (Mastery Score)
+#                 # We calculate this ON THE FLY so we know their state AT THAT MOMENT
+#                 current_history = history_manager.get_student_history(user_id)
+#                 current_mastery_map = _calculate_mastery(current_history)
+                
+#                 # Average mastery of the specific topic discussed
+#                 topic_mastery = current_mastery_map.get(detected_topic, 0)
+#                 causal_flags["context_mastery_score"] = topic_mastery
+                
+#                 # Log interaction
+#                 history_manager.log_interaction(
+#                     user_id, 
+#                     request.message, 
+#                     intent, 
+#                     result['answer'], 
+#                     detected_topic,
+#                     metadata=causal_flags # <--- SAVE IT
+#                 )
+#             except Exception as log_err:
+#                 logger.error(f"Logging failed: {log_err}")
+
+#             # 4. Stream Response
+#             yield f"data: {json.dumps({'type': 'status', 'message': f'Identified as {intent}', 'stage': 'intent'})}\n\n"
+#             yield f"data: {json.dumps({'type': 'answer', 'text': result['answer'], 'time': duration})}\n\n"
+
+#             # 5. Final Payload
+#             final_payload = {
+#                 "type": "complete",
+#                 "data": {
+#                     "answer": result['answer'],
+#                     "sources": result.get('sources', []),
+#                     "suggestions": result.get('suggestions', []),
+#                     "query_domain": "C Programming",
+#                     "cot_analysis": None,
+#                     "timings": {"total": round(duration, 2)}
+#                 }
+#             }
+#             yield f"data: {json.dumps(final_payload)}\n\n"
+
+#         except Exception as e:
+#             logger.error(f"Streaming error: {e}", exc_info=True)
+#             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+#     return StreamingResponse(
+#         generate_stream(),
+#         media_type="text/event-stream",
+#         headers={
+#             "Cache-Control": "no-cache",
+#             "Connection": "keep-alive",
+#             "X-Accel-Buffering": "no"
+#         }
+#     )
+
 
 @app.get("/api/v1/config/topics")
 async def get_topics():

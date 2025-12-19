@@ -249,6 +249,26 @@ class LLMInterface:
             "llm_cache_hits": self.llm_cache_hits
         }
     
+    async def stream_response(self, prompt: str):
+        """
+        Yields text chunks as they are generated.
+        """
+        try:
+            if self.llm_provider == "google":
+                # Gemini Streaming
+                response = await self.google_generative_model.generate_content_async(prompt, stream=True)
+                async for chunk in response:
+                    if chunk.text:
+                        yield chunk.text
+            elif self.llm_provider == "openai":
+                # OpenAI Streaming (LangChain)
+                async for chunk in self.openai_chat_llm.astream(prompt):
+                    if chunk.content:
+                        yield chunk.content
+        except Exception as e:
+            self.logger.error(f"Streaming failed: {e}")
+            yield f"[Error generating response: {str(e)}]"
+    
     def get_image_summary(self, image_bytes: bytes, prompt: str) -> str:
         """
         Uses a multi-modal LLM to generate a description of an image.
