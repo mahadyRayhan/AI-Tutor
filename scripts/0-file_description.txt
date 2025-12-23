@@ -1,0 +1,23 @@
+Here is a one-line description for every script in your repository, mapped to its specific role in your IEEE paper workflow.
+
+### 🛠️ System Setup & Ingestion
+*   **`ingest_data.py`**: Automatically chunks `.c` code and `.md` concepts, generating embeddings for ChromaDB and entity nodes for Neo4j.
+*   **`ingest_manual_graph.py`**: Loads the curated curriculum logic (prerequisites and relationships) from JSON into the Knowledge Graph.
+*   **`debug_retrieval.py`**: A diagnostic tool to verify that the Vector Database is populated and returning results for specific queries.
+
+### 📊 Comparative Evaluation (System vs. Baselines)
+*   **`benchmark_base_comp_datagen.py`**: Generates responses for 60 standardized questions from Your System, GPT-4o, and Gemini 1.5 Pro for side-by-side comparison.
+*   **`evaluate_benchmark_data.py`**: Uses GPT-4o as a judge to calculate "Win Rates" and "Code Density" by comparing the baselines against your system.
+
+### 🛡️ Security & Robustness Evaluation
+*   **`security_audit.py`**: Executes the 36-point Red Team attack matrix (Injection, RBAC, Poisoning, XSS) and logs Pass/Fail verdicts.
+*   **`plot_security_results.py`**: visualizes the security audit results into a stacked bar chart (Figure 4 in your paper).
+
+### ⚡ Performance & Quality Benchmarking
+*   **`benchmark_engineering_performance.py`**: Measures the precise latency (in ms) of the Security Gatekeeper, Retrieval, and Generation layers to prove efficiency.
+*   **`benchmark_latency.py`**: A more detailed latency logger that captures intermediate timings for different query types (used for optimization analysis).
+*   **`benchmark_llm_judge_quality.py`**: Runs the system against test cases and uses an LLM to score Groundedness, Pedagogy, and Safety.
+*   **`benchmark_recalibrate_llm_judge.py`**: Post-processes the quality scores to distinguish between "Failure to Answer" and "Correct Security Block" (Precision/Recall calculation).
+
+### 📈 Causal Research
+*   **`export_research_data.py`**: Converts raw chat logs into a structured CSV dataset (Treatment/Outcome) for Causal Inference analysis.

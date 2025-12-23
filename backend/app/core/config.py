@@ -16,7 +16,7 @@ load_dotenv(dotenv_path=dotenv_path)
 
 # --- API Configuration ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-OPENAI_API_KEY = os.getenv("GPT_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not GOOGLE_API_KEY:
     print("Warning: GOOGLE_API_KEY environment variable not set.")
@@ -200,6 +200,16 @@ VISUALIZATION_TRIGGERS = [
 # Cache directories (optional)
 MULTIMEDIA_CACHE_DIR = PROJECT_ROOT / "cache" / "multimedia"
 MULTIMEDIA_TEMP_DIR = PROJECT_ROOT / "temp" / "multimedia"
+
+# Classifier Toggle
+fast = "Local"
+LLM = "Gemini"
+INTENT_CLASSIFIER_MODE = os.getenv("INTENT_CLASSIFIER_MODE", "fast")
+
+# Path to store downloaded models
+MODELS_CACHE_DIR = PROJECT_ROOT / "models"
+if not MODELS_CACHE_DIR.exists():
+    MODELS_CACHE_DIR.mkdir(parents=True)
 
 # Utility function to check if query should trigger multimedia
 def should_generate_multimedia(query: str, user_role: str, query_domain: str) -> bool:

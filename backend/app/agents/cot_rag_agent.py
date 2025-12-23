@@ -12,6 +12,11 @@ from app.db.vector_store import VectorStore
 from app.db.graph_db import Neo4jGraphDB
 from app.core.settings_manager import settings_manager
 from app.core.user_knowledge_manager import knowledge_manager
+from app.core import config
+
+# Only import fast_classifier if mode is fast (optional, but cleaner)
+if config.INTENT_CLASSIFIER_MODE == "fast":
+    from app.core.fast_classifier import fast_classifier
 
 @dataclass
 class CoTStep:
@@ -620,37 +625,60 @@ class ChainOfThoughtRAGAgent:
         import time
         t_start = time.time()
         profiler = {}
-        
         username = kwargs.get('username', 'anonymous')
         user_goal = kwargs.get('user_goal')
         
         # =========================================================
-        # 1 & 2. PARALLEL ANALYSIS (Intent + Entity)
+        # 1 & 2. ANALYSIS (Switchable)
         # =========================================================
         yield {"type": "status", "message": "Analyzing query...", "percent": 10}
         t0 = time.time()
 
-        # FIX: Define as regular functions (synchronous wrappers)
-        def get_intent():
-            # This calls the synchronous method self._classify_intent
-            return self._classify_intent(query)
+        intent = ""
+        entities = []
+        t_intent = 0
+        t_entity = 0
 
-        def get_entities():
-            # This calls the synchronous method self.llm_interface.generate_response
-            prompt = f"Extract the main C programming terms from: '{query}'. Return as comma-separated list."
-            return self.llm_interface.generate_response(prompt)
+        if config.INTENT_CLASSIFIER_MODE == "fast":
+            # --- FAST PATH (Local Models) ---
+            self.logger.info("⚡ Using Fast Local Classifier")
+            
+            # Intent
+            intent = fast_classifier.classify_intent(query)
+            t_intent = time.time() - t0
+            
+            # Entity
+            t1 = time.time()
+            entities = fast_classifier.extract_entities(query)
+            t_entity = time.time() - t1
+            
+            if not entities:
+                entities = [w for w in query.split() if len(w) > 3][:2]
 
-        # Launch both tasks simultaneously in threads
-        task_intent = asyncio.create_task(asyncio.to_thread(get_intent))
-        task_entities = asyncio.create_task(asyncio.to_thread(get_entities))
+        else:
+            # --- SLOW PATH (LLM API) ---
+            self.logger.info("🐢 Using LLM Classifier")
+            
+            def get_intent_with_time():
+                start = time.time()
+                res = self._classify_intent(query)
+                return res, time.time() - start
 
-        # Wait for both
-        intent, entities_str = await asyncio.gather(task_intent, task_entities)
-        
-        # Process results
-        entities = [e.strip() for e in entities_str.split(',') if e.strip()]
-        
-        profiler["1+2_Analysis"] = time.time() - t0 # Combined time
+            def get_entities_with_time():
+                start = time.time()
+                prompt = f"Extract the main C programming terms from: '{query}'. Return as comma-separated list."
+                res = self.llm_interface.generate_response(prompt)
+                return res, time.time() - start
+
+            task_intent = asyncio.create_task(asyncio.to_thread(get_intent_with_time))
+            task_entities = asyncio.create_task(asyncio.to_thread(get_entities_with_time))
+
+            (intent, t_intent), (entities_str, t_entity) = await asyncio.gather(task_intent, task_entities)
+            entities = [e.strip() for e in entities_str.split(',') if e.strip()]
+
+        # Log Timings
+        profiler["1_Intent"] = t_intent
+        profiler["2_Entity"] = t_entity
         self.logger.info(f"Intent: {intent}, Entities: {entities}")
 
         # =========================================================
@@ -662,7 +690,10 @@ class ChainOfThoughtRAGAgent:
             for t, on in topic_settings.items():
                 if (entity.lower() in t.lower()) and not on:
                     msg = f"🔒 Topic **{t}** is locked."
-                    yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": [], "intent": intent}}
+                    # Return partial timings
+                    yield {"type": "complete", "data": {
+                        "answer": msg, "sources": [], "suggestions": [], "intent": intent, "timings": profiler
+                    }}
                     return
 
         # =========================================================
@@ -670,23 +701,30 @@ class ChainOfThoughtRAGAgent:
         # =========================================================
         yield {"type": "status", "message": "Checking prerequisites...", "percent": 40}
         
-        # Learning Update
         if "i know" in query.lower():
             for entity in entities: knowledge_manager.mark_concept_as_known(username, entity)
 
-        # Graph Logic
         should_check = "anyway" not in query.lower() and "skip" not in query.lower()
+        
+        # Initialize graph timing
+        t_graph_start = time.time()
+        
         if (intent == "CONCEPT" or intent == "PROBLEM") and should_check:
-            t0 = time.time()
             prereqs = self._check_prerequisites(query, entities)
             unknown = [p for p in prereqs if not knowledge_manager.has_mastered(username, p)]
-            profiler["3_Graph"] = time.time() - t0
+            
+            # Log time
+            profiler["3_Graph"] = time.time() - t_graph_start
             
             if unknown:
                 msg = f"## 🛑 Hold on!\nYou need: {', '.join(unknown)} first."
                 btns = [f"Explain {p}" for p in unknown] + [f"Teach me {entities[0]} anyway"]
-                yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": btns, "intent": "GUIDANCE"}}
+                yield {"type": "complete", "data": {
+                    "answer": msg, "sources": [], "suggestions": btns, "intent": "GUIDANCE", "timings": profiler
+                }}
                 return
+        else:
+            profiler["3_Graph"] = 0 # No check performed
 
         # =========================================================
         # 4. RETRIEVAL
@@ -700,7 +738,9 @@ class ChainOfThoughtRAGAgent:
         
         if not chunks:
              msg = "I don't have info on that."
-             yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": [], "intent": intent}}
+             yield {"type": "complete", "data": {
+                 "answer": msg, "sources": [], "suggestions": [], "intent": intent, "timings": profiler
+             }}
              return
 
         # Context Building
@@ -711,51 +751,35 @@ class ChainOfThoughtRAGAgent:
             context_text += f"--- Source: {c.get('metadata', {}).get('document_name')} ---\n{c.get('text')}\n\n"
 
         # =========================================================
-        # 5 & 6. PARALLEL GENERATION (Answer + Suggestions)
+        # 5 & 6. PARALLEL GENERATION
         # =========================================================
         yield {"type": "status", "message": "Drafting response...", "percent": 80}
         t0 = time.time()
 
-        # Task A: Start Suggestions in Background (Non-blocking)
         suggest_task = asyncio.create_task(
             asyncio.to_thread(self._generate_suggestions, query, context_text)
         )
 
-        # Task B: Prepare Prompt
         prompt = ""
         if intent == "REVIEW": prompt = self._build_review_prompt(query, context_text, user_goal)
         elif intent == "PROBLEM": prompt = self._build_socratic_prompt(query, context_text, user_goal)
         else: prompt = self._build_concept_prompt(query, context_text, user_goal)
 
-        # Task C: Stream Answer
         yield {"type": "status", "message": "Generating...", "percent": 100}
         full_answer = ""
         async for token in self.llm_interface.stream_response(prompt):
             full_answer += token
             yield {"type": "token", "text": token}
 
-        # Wait for Suggestions to finish
         suggestions = await suggest_task
         profiler["5_Parallel_Gen"] = time.time() - t0
         
-        # Cleanup
         full_answer = self._sanitize_mermaid(full_answer)
-        
-        formatted_sources = []
-        for c in chunks:
-            formatted_sources.append({'document_name': c['metadata']['document_name'], 'chunk_text': c['text']})
+        formatted_sources = [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks]
 
-        # --- LATENCY LOGGING ---
+        # --- LOGGING ---
         total_time = time.time() - t_start
-        print("\n" + "="*40)
-        print(f"⏱️  PARALLEL STREAM LATENCY ({total_time:.2f}s total)")
-        print("-" * 40)
-        for step, duration in profiler.items():
-            pct = (duration / total_time) * 100
-            bar = "█" * int(pct / 5)
-            print(f"{step:<20} : {duration:.2f}s ({pct:.0f}%) {bar}")
-        print("="*40 + "\n")
-        # -----------------------
+        print(f"⏱️  LATENCY: {total_time:.2f}s | Gen: {profiler['5_Parallel_Gen']:.2f}s")
 
         yield {
             "type": "complete",
@@ -763,6 +787,7 @@ class ChainOfThoughtRAGAgent:
                 "answer": full_answer,
                 "sources": formatted_sources,
                 "suggestions": suggestions,
-                "intent": intent
+                "intent": intent,
+                "timings": profiler # <--- EXPORTED HERE
             }
         }

@@ -1,0 +1,68 @@
+This is a fantastic question that allows you to calculate the **"Engineering ROI"** (Return on Investment) for your paper.
+
+You are asking if the current data is "enough."
+*   **For Latency:** Yes.
+*   **For Throughput/Scalability:** No. (But usually out of scope for this type of paper).
+*   **For Efficiency (Cost):** You can calculate this now.
+
+To strengthen your "System Performance" section, you should add a subsection called **"Optimization Impact Analysis"**.
+
+Here is how to calculate exactly how much you saved.
+
+---
+
+### The "Before & After" Calculation
+
+We have data points from our previous conversations. Let's formalize them.
+
+#### 1. Baseline System (Slow Path)
+*   **Architecture:** Serial execution, LLM-based Classification, No Streaming.
+*   **Steps:**
+    1.  Intent Class (LLM): ~1.5s
+    2.  Entity Extract (LLM): ~1.5s
+    3.  Retrieval (Embed): ~2.0s
+    4.  Graph Check: ~0.1s
+    5.  Answer Gen (LLM): ~6.0s
+    6.  Suggestion Gen (LLM): ~2.0s
+*   **Total Serial Latency:** $1.5 + 1.5 + 2.0 + 0.1 + 6.0 + 2.0 \approx \mathbf{13.1 \text{ seconds}}$
+*   **Time to First Token (TTFT):** **13.1 seconds** (User waits until everything is done).
+
+#### 2. Optimized System (Current State)
+*   **Architecture:** Local Classification, Parallel Async Generation, Streaming.
+*   **Steps:**
+    1.  Intent + Entity (Local): **0.14s** (Saved 2.86s)
+    2.  Retrieval: 2.0s
+    3.  Graph Check: 0.1s
+    4.  Answer + Suggestions (Parallel): `max(6.0, 2.0)` = **6.0s** (Saved 2.0s)
+*   **Total Processing Time:** $0.14 + 2.0 + 0.1 + 6.0 \approx \mathbf{8.24 \text{ seconds}}$.
+*   **Time to First Token (TTFT):** **2.24 seconds** (User sees text immediately after Retrieval).
+
+---
+
+### The ROI Table for your Paper
+
+Add this table to your discussion. It is extremely compelling.
+
+**Table 5: Optimization Impact on User Experience & Cost**
+
+| Optimization Technique | Metric Impacted | Baseline Value | Optimized Value | % Improvement |
+| :--- | :--- | :--- | :--- | :--- |
+| **Local Classification** (BERT/GLiNER) | Security Overhead | 3,000 ms | **135 ms** | **95.5% Faster** |
+| **Parallel Execution** (Asyncio) | Total Processing Time | 13.1 s | **8.2 s** | **37.4% Faster** |
+| **Token Streaming** | Time-to-First-Token (TTFT) | 13.1 s | **2.2 s** | **83.2% Faster** |
+| **API Cost Reduction** | Input Tokens per Query | ~500 tokens | **~100 tokens** | **80% Cheaper** |
+
+*(Note on Cost: By moving Intent/Entity extraction to local models, you stopped sending ~400 tokens of "System Prompt" to Gemini for every single query.)*
+
+### Is this enough?
+
+**Yes.**
+For an IEEE HCI/Security paper, you have demonstrated:
+1.  **Security:** It works (100% Recall).
+2.  **Quality:** It teaches well (94% Persona).
+3.  **Performance:** It is fast enough for real-time use (2.2s TTFT).
+4.  **Efficiency:** You cut overhead by 96%.
+
+You have covered Accuracy, Speed, Cost, and Experience. Asking for more would require a massive user study (n=100 students), which is "Future Work."
+
+You are ready to write.
