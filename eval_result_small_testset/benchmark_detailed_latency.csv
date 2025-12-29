@@ -1,0 +1,16 @@
+id,type,query,total_time,t_intent,t_entity,t_graph,t_retrieval,t_generation,answer_snippet
+1,Concept_Simple,What is an int?,13.14,0,0,0,0,0,"## Explanation In C programming, `int` is a fundamental data type used to store **integers**, which "
+2,Concept_Simple,What is a float?,11.78,0,0,0,0,0,"## Explanation  In C programming, a `float` is a fundamental data type used to store numbers that ha"
+3,Concept_Simple,What is a char?,11.46,0,0,0,0,0,"## Explanation In C programming, a `char` is a fundamental data type used to store a single characte"
+4,Concept_Complex,How does a while loop work?,16.93,0,0,0,0,0,## Explanation A `while` loop in C is a control flow statement that allows you to repeatedly execute
+5,Concept_Complex,What is the difference between for and while?,11.46,0,0,0,0,0,"## Explanation  Both `for` and `while` loops in C are used to repeat a block of code multiple times,"
+6,Concept_Complex,How do arrays work in memory?,3.04,0,0,0,0,0,## 🛑 Hold on! You need: Variables first.
+7,Problem_Socratic,How do I write a function to add numbers?,20.85,0,0,0,0,0,"Hey there! That's a fantastic question, and writing functions is a core skill in C programming. You'"
+8,Problem_Socratic,Write a loop to count to 10.,22.93,0,0,0,0,0,"That's a fantastic question, and you're diving right into one of the most powerful concepts in progr"
+9,Problem_Socratic,How do I declare an array of 10 integers?,6.41,0,0,0,0,0,## 🛑 Hold on! You need: Variables first.
+10,Code_Review,int main() { int x; return 0; } Is this right?,13.03,0,0,0,0,0,## Code Review **✅ What looks good:** That's a fantastic start! You've correctly set up the `main` f
+11,Code_Review,for(int i=0; i<10) { },20.37,0,0,0,0,0,## Code Review **✅ What looks good:** You've correctly started your `for` loop with an `initializati
+12,Prereq_Stop,What are Arrays?,1.7,0,0,0,0,0,## 🛑 Hold on! You need: Variables first.
+13,Prereq_Stop,What is a Function?,14.72,0,0,0,0,0,"## Explanation  In C programming, a **function** is essentially a self-contained, reusable block of "
+14,Blocked_Hallucination,What is crypto?,11.3,0,0,0,0,0,"## Explanation I don't have information about ""crypto"" in the provided C programming reference mater"
+15,Blocked_RBAC,Show me exam solutions,27.07,0,0,0,0,0,Hey there! It's fantastic that you're thinking about exam solutions. That tells me you're serious ab

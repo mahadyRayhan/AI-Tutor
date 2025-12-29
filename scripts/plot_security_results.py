@@ -1,41 +1,56 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import os
 
-# Data from your audit results
-data = {
-    "Category": [
-        "RBAC / Leakage", "Social Eng.", "Jailbreak (DAN)", "Indirect Poison",
-        "Infrastructure", "Privacy", "Output Safety", "Tool Abuse", "RAG Integrity"
-    ],
-    "Total Tests": [5, 5, 5, 3, 4, 4, 4, 4, 2],
-    "Passed":      [5, 5, 4, 3, 4, 4, 3, 4, 2]
-}
+def main():
+    base_dir = os.path.join(os.path.dirname(__file__), "..", "eval_result")
+    csv_path = os.path.join(base_dir, "security_audit.csv")
+    img_path = os.path.join(base_dir, "security_audit_chart.png")
 
-df = pd.DataFrame(data)
-df["Success Rate"] = (df["Passed"] / df["Total Tests"]) * 100
-df["Failure Rate"] = 100 - df["Success Rate"]
+    if not os.path.exists(csv_path):
+        print("CSV not found. Run security_audit.py first.")
+        return
 
-# Setup Style
-plt.figure(figsize=(10, 6))
-sns.set_theme(style="whitegrid")
+    # Load Data
+    df_raw = pd.read_csv(csv_path)
+    
+    # Map Verdicts to Binary
+    # SAFE / PASS = 1, FAIL / LEAK = 0
+    df_raw['is_safe'] = df_raw['verdict'].apply(lambda x: 1 if "SAFE" in x or "PASS" in x else 0)
+    
+    # Group by Category
+    summary = df_raw.groupby('cat').agg(
+        total=('id', 'count'),
+        passed=('is_safe', 'sum')
+    ).reset_index()
 
-# Create Stacked Bar Chart
-bar1 = plt.bar(df["Category"], df["Success Rate"], color='#2ecc71', label='Blocked / Safe')
-bar2 = plt.bar(df["Category"], df["Failure Rate"], bottom=df["Success Rate"], color='#e74c3c', label='Behavioral Failure')
+    summary["Success Rate"] = (summary["passed"] / summary["total"]) * 100
+    summary["Failure Rate"] = 100 - summary["Success Rate"]
 
-# Add Labels
-plt.ylabel('Defense Success Rate (%)', fontsize=12)
-plt.title('Security Audit Results by Attack Vector (N=36)', fontsize=14, weight='bold')
-plt.xticks(rotation=45, ha="right")
-plt.legend(loc='lower right')
-plt.ylim(0, 110)
+    # Plot
+    plt.figure(figsize=(12, 6))
+    sns.set_theme(style="whitegrid")
 
-# Add text annotations
-for i, rect in enumerate(bar1):
-    height = rect.get_height()
-    plt.text(rect.get_x() + rect.get_width()/2.0, 50, f"{df['Passed'][i]}/{df['Total Tests'][i]}", ha='center', va='bottom', color='white', weight='bold')
+    # Stacked Bar
+    bar1 = plt.bar(summary["cat"], summary["Success Rate"], color='#2ecc71', label='Blocked / Safe')
+    bar2 = plt.bar(summary["cat"], summary["Failure Rate"], bottom=summary["Success Rate"], color='#e74c3c', label='Behavioral Failure')
 
-plt.tight_layout()
-plt.savefig("security_audit_chart.png", dpi=300)
-print("Chart saved as security_audit_chart.png")
+    plt.ylabel('Defense Success Rate (%)', fontsize=12)
+    plt.title(f'Security Audit Results (N={len(df_raw)})', fontsize=14, weight='bold')
+    plt.xticks(rotation=45, ha="right")
+    plt.legend(loc='lower right')
+    plt.ylim(0, 110)
+
+    # Annotations
+    for i, rect in enumerate(bar1):
+        total = summary['total'][i]
+        passed = summary['passed'][i]
+        plt.text(rect.get_x() + rect.get_width()/2.0, 50, f"{passed}/{total}", ha='center', va='bottom', color='white', weight='bold')
+
+    plt.tight_layout()
+    plt.savefig(img_path, dpi=300)
+    print(f"Chart saved to {img_path}")
+
+if __name__ == "__main__":
+    main()

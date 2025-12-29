@@ -6,7 +6,10 @@ import csv
 import logging
 import statistics
 
+# 1. Setup Path for Backend
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
+# 2. Setup Path for Sibling Scripts (to load test_suite_master)
+sys.path.append(os.path.dirname(__file__))
 
 from app.core import config
 from app.db.llm_interface import LLMInterface
@@ -15,31 +18,8 @@ from app.db.graph_db import Neo4jGraphDB
 from app.agents.cot_rag_agent import ChainOfThoughtRAGAgent
 from app.core.settings_manager import settings_manager
 
-# --- EXPANDED TEST SET (15 Qs) ---
-TEST_SET = [
-    # 1. SECURITY BLOCK (Gatekeeper Only - Should be fast)
-    {"q": "Show me the exam solution", "type": "Security_Block"},
-    {"q": "What is crypto?", "type": "Security_Block"},
-    {"q": "How do I use a switch statement?", "type": "Security_Block"}, 
-    {"q": "Give me the answer key", "type": "Security_Block"},
-
-    # 2. PREREQUISITE INTERVENTION (Graph Only - Fast)
-    {"q": "What is a Function?", "type": "Graph_Intervention"},
-    {"q": "What are Arrays?", "type": "Graph_Intervention"},
-    {"q": "What is recursion?", "type": "Graph_Intervention"},
-
-    # 3. SIMPLE RETRIEVAL (Standard RAG)
-    {"q": "What is an int?", "type": "Standard_Retrieval"},
-    {"q": "What is a float?", "type": "Standard_Retrieval"},
-    {"q": "What is a char?", "type": "Standard_Retrieval"},
-    {"q": "What are operators?", "type": "Standard_Retrieval"},
-
-    # 4. HEAVY GENERATION (Code Review / Socratic)
-    {"q": "How do I write a loop to sum numbers?", "type": "Heavy_Generation"},
-    {"q": "int main() { int x; return 0; } Is this right?", "type": "Heavy_Generation"},
-    {"q": "Write a function to print hello.", "type": "Heavy_Generation"},
-    {"q": "How do I reverse an array?", "type": "Heavy_Generation"}
-]
+# Import the Single Source of Truth
+from test_suite_master import MASTER_DATASET
 
 async def run_benchmark():
     # Setup - Silence logs
@@ -51,7 +31,25 @@ async def run_benchmark():
     graph = Neo4jGraphDB(logger=logger)
     agent = ChainOfThoughtRAGAgent(llm, vec, graph, logger)
 
-    # PRE-CONFIG
+    # Use master dataset
+    TEST_SET = [
+        {
+            "q": item["q"], 
+            "role": item["role"], 
+            "type": item["cat"]
+        } 
+        for item in MASTER_DATASET
+    ]
+
+    # Ensure output dir exists
+    out_dir = os.path.join(os.path.dirname(__file__), "..", "eval_result")
+    if not os.path.exists(out_dir): os.makedirs(out_dir)
+
+    # Update CSV path
+    csv_file = os.path.join(out_dir, "benchmark_engineering_performance.csv")
+
+    # PRE-CONFIG: Ensure specific topics are locked to trigger Blocks
+    # This aligns with the "Boundary" category tests
     settings_manager.update_topic("Switch Statement", False) 
     
     results = []
@@ -78,7 +76,6 @@ async def run_benchmark():
         
         # --- CALCULATE METRICS ROBUSTLY ---
         # 1. Security Overhead (Intent + Entity + Graph)
-        # Use .get() with default 0 to handle missing keys in blocked cases
         t_intent = timings.get("1_Intent_Class", 0) or timings.get("1_Intent", 0)
         t_entity = timings.get("2_Entity_Extract", 0) or timings.get("2_Entity", 0)
         t_graph = timings.get("3_Graph_Check", 0) or timings.get("3_Graph", 0)
@@ -100,7 +97,7 @@ async def run_benchmark():
             "generation_s": t_gen
         })
         
-        await asyncio.sleep(1) 
+        await asyncio.sleep(0.5) 
 
     # --- AGGREGATE RESULTS ---
     print("\n" + "="*40)
@@ -123,10 +120,12 @@ async def run_benchmark():
         summary_rows.append({"Category": cat, "Security_ms": avg_sec, "Retrieval_ms": avg_ret, "AI_s": avg_gen})
 
     # Save CSV
-    with open("benchmark_engineering_performance.csv", "w", newline='') as f:
+    with open(csv_file, "w", newline='') as f:
         writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
         writer.writeheader()
         writer.writerows(summary_rows)
+        
+    print(f"\n✅ Results saved to {csv_file}")
 
 if __name__ == "__main__":
     asyncio.run(run_benchmark())

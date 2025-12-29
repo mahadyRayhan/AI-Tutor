@@ -72,7 +72,7 @@ def main():
         
         try:
             resp = openai_client.chat.completions.create(
-                model="GPT-5",
+                model="gpt-5",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={ "type": "json_object" }
             )

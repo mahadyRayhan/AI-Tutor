@@ -1,0 +1,153 @@
+AI-Tutor feedback
+
+**student deshboard and chat section:**
+
+I tried a wide range of prompts, including ones where I explicitly communicated feeling stuck, confused, or overwhelmed as a student. One representative example was a prompt along the lines of:
+ 
+“I am so stuck and don’t know how to program a simple banking system using C#”
+(The use of C# here was intentional, as a student mistake rather than a typo.)
+ 
+The system’s response to this was, in many ways, impressive. There was a lot of technically correct information and clear effort to be supportive.
+ 
+Broadly speaking, the response followed this structure:
+A long empathetic paragraph
+Immediate correction of language (C vs. C#)
+A full lesson on control flow
+A “strategy” section
+Visual logic and an implementation plan
+Multiple guiding questions
+ 
+While many of these elements are valuable in isolation, together they create accessibility issues especially for neurodivergent learners. The response was far too much information for any student in that moment, and particularly overwhelming for a student who is already dysregulated or feeling stuck. The content shifted rapidly between topics, and while it was all technically correct, it was difficult to identify a clear action item. Ironically, the attempt to be validating and helpful ended up reinforcing cognitive overload.
+ 
+Instead, responses in these situations should aim to be calmer, shorter, instructionally chunked, and more predictable. Given the stated goal of supporting neurodivergent learners, responses should be especially clear, direct, and grounded in concrete examples. Just as importantly, the system should create space for the student to respond before moving on, rather than delivering a full lesson all at once.
+ 
+For example, an alternative opening could look like this:
+“It sounds like you’re overwhelmed — that happens a lot, and it’s okay.”
+ 
+Then pause and ask a clarifying question:
+“Quick check first: are you required to use C for this class, or are you actually working in C#?”
+ 
+At this point, the system should wait for the user’s response.
+ 
+If the student confirms they are working in C, the next response could be something like:
+“Let’s make this very concrete.
+ 
+A simple bank program does the same three steps every time.
+Step 1: Show options
+The program prints choices like:
+1 = Deposit
+2 = Withdraw
+3 = Check balance
+ 
+Step 2: Read a choice
+The program waits for the user to type a number.
+ 
+Step 3: Do one action
+The program checks the number and runs the matching code.
+ 
+That’s the whole idea.
+
+No UI yet. Just text.
+ 
+What would you like to do next?
+A) See the smallest possible C example
+B) Write just Step 1 together
+C) Tell me what your assignment asks for”
+ 
+ 
+This approach is more accessible because each step is explicitly labeled, there is no hidden logic, only one mental model is introduced at a time, and the student always knows where they are in the process. The choices are concrete and bounded, and there is no assumption that the student already understands loops, control flow, or program structure.
+ 
+I tried many other prompts(some simpler, some more complex) and the feedback was largely consistent.
+ 
+The system tends to default to information-dense responses, even when explicitly asked to simplify. I tried telling it I was disabled, that I needed things broken down more, that the information was too much, and that I was overwhelmed. In most cases, the response pattern remained the same: large blocks of content, repeated overload, and no explicit check-in about the level of detail the user wanted.
+ 
+For example, a more accessible response to a simplification request might look like this:
+“Got it — thanks for telling me.
+
+Let’s slow this way down.
+ 
+Here is the one idea you need right now:
+ 
+A variable is just a named place to store a value.
+ 
+Example:
+int count = 5;
+ 
+That’s it.
+ 
+Would you like:
+One more tiny example
+A short explanation of why this matters
+To try writing one line yourself”
+ 
+This works better because it explicitly acknowledges overload, introduces only one concept, follows a predictable structure, restores a sense of agency through choice, and avoids diagrams or additional references unless requested.
+ 
+My current perspectives is that the current responses feel well-suited for moderately experienced or advanced programmers who are comfortable skimming and synthesizing information. I don’t think the system, in its current form, would be easy to use for beginners or for students with cognitive or learning disabilities without significant frustration.
+ 
+When I checked out my student dashboard it actually told me that my weakness is that I “Appear easily overwhelmed by detailed explanations ('wall of text,' 'too much info') and struggles with information processing, especially when concepts are not chunked or simplified.”  This is putting the onus on the user when the problem is more so with the presentation of the information.
+ 
+ 
+In another example I gave it some broken code. My prompt was
+“i have this and its not working
+#include
+ 
+int main() {
+    int numbers[5] = {10, 20, 30, 40, 50};
+ 
+    for (int i = 1; i <= 5; i++) {
+        printf("%d\n", numbers[i]);
+    }
+ 
+    return 0;
+“
+ 
+The strongest part of the response is that it correctly identifies the real bug (out-of-bounds array access due to indexing) and explains it accurately using concrete values. That is good instructional practice.
+ 
+The problem is again not in the correctness; it is cognitive load and pacing.
+ 
+The first issue is volume and density. I said “i have this and it’s not working” and posted a short program. The tutor responds with a long empathetic paragraph, followed by a “Strategy” section, followed by quoted documentation, followed by enumerated array values, followed by multiple references to demo files, followed by a visual logic section, followed by an implementation plan, followed by multiple guiding questions and a challenge. For a learner who is already stuck, this creates a sense of being buried under explanations rather than helped forward.
+ 
+In particular, the response tries to do too many pedagogical jobs at once: debug the code, teach zero-indexing, reinforce documentation, generalize to other examples, preview future learning goals, and assess understanding. Any one of these would be fine; doing all of them together overwhelms working memory.
+ 
+A second issue is lack of a clear immediate action. The student never gets a single, concrete “do this one thing now” instruction early in the response. The explanation eventually implies the fix, but the student has to mentally synthesize it. For neurodivergent learners, especially those who are dysregulated, the absence of an explicit next step increases friction. Something as simple as “Change the loop to start at 0 and stop at < 5” near the top would anchor the rest of the explanation.
+ 
+Third, the structure is predictable but long. Headings like “Strategy,” “Visual Logic,” “Implementation Plan,” and “Guiding Question” are useful in principle, but when they appear every time and always expand into large sections, they stop reducing cognitive load and start adding to it. For accessibility, these sections should be optional, progressively disclosed, or triggered only when the student asks for more detail.
+ 
+Fourth, the response misses an important opportunity to acknowledge missing errors. The student’s code is also missing #include <stdio.h> and a closing brace }. The tutor ignores both and focuses only on array indexing. While this might be intentional pedagogically, it can confuse beginners when the compiler still errors after they “fix what the tutor said.” For trust and clarity, it would help to explicitly say something like: “There are two small issues here. Let’s fix one at a time. We’ll start with the loop.”
+ 
+Another accessibility concern is the number of questions at the end. The response ends with three separate reflective prompts plus a challenge. That assumes a learner with surplus cognitive capacity. A neurodivergent-friendly approach would offer one choice or one question, not several, and allow the learner to opt into more depth later.
+ 
+Finally, the tone is kind and supportive, but it still leans toward teacher monologue rather than dialogue. The student never gets an early chance to respond or confirm understanding before the tutor continues. For learners who need agency and pacing control, this matters a lot.
+
+**Student user perspective:**
+
+Is there a way to view my past history? It seems to go away when I go to the dashboard and back to the tutor.
+Kind of reiterating prior points. Try to make it more conversational. It feels like im asking a targeted question and getting a wall of text – most of which isn’t useful. If I went to my professor and asked for a yes or no answer and he just told me to read 5 pages from the textbook then I would be frustrated. That is what this feels like.
+Is there a way of embedding the references within the response instead of to the side in reference materials? They feel out of place there
+I think we need to have some students use this system. Students wont ask the technical questions the way we want or expect them to do so. I expect a lot of stuff like “my code isn’t working for chapter 3.” Most students wont respond with enough info and will need to be guided to provide what is needed to provide a real response. Right now it just throws info out that isn’t relevant in many cases.
+The guiding question prompts at the end often don’t feel relevant to what I have asked the tutor.
+Speed of the responses is definitely something that will need to be improved as we move forward.  When I have to reprompt and ask repeated questions to get an answer the delay gets annoying.
+The current approach is more wall of text but no prompting and dialog.  If I say something like “my loop never stops running, is there a way to see what value the variable has each time” it should ask me to provide the loop and code so it can examine what is wrong. Or it should ask me something like “Have you made sure that you have set up your counter variable. This looks like xxxxx” No matter how it responds, it should be more engaging and conversational.
+For a stuck novice, this can feel like being assigned more reading rather than being helped. If you want this to function as an embedded tutor inside a course workflow, it will likely work better if the system defaults to “diagnose first, teach second.” In practice that means the tutor should quickly ask for the minimum information needed to diagnose (error message, compiler output, what input they used, what they expected vs what happened, and the code snippet around the problem), then give a short next action that produces immediate evidence (a single targeted printf, or compiling with -Wall -Wextra, or checking array bounds), and only then expand into explanation if the student asks.
+The interaction design around assessment is a big opportunity. Your tutor includes questions like “When using printf to trace a while loop, what’s a common mistake…?” and “Why can’t the compiler detect array out-of-bounds errors…?” Those are good formative checks, but they’re stacked on top of each other and mixed with help-seeking contexts. If the student is stuck, the tutor should not quiz them unless it’s clearly in service of diagnosing the issue or reinforcing a just-resolved misconception. A cleaner model is to keep one diagnostic question at a time, then optionally offer a quick “check your understanding” question after the immediate problem is resolved.
+I tested the AI tutor using some screen reader software and it was mostly okay but had issues with the visual logic areas and could not properly describe the flow of the arrows and logic
+ 
+ 
+Here are some questions I have asked it today
+  “why does my C code compile but then crash when I run it?? I didn’t even use pointers yet so idk what’s wrong”
+  “what’s the diff between = and == again, my if statement never works and I’m confused”
+  “do I really need semicolons after every line?? I keep forgetting and it breaks everything”
+  “can you explain arrays in C like super simple, I don’t get why they start at 0”
+  “why does scanf not read my input right, it just skips it or gives weird numbers”
+  “what does & mean in front of a variable, my prof talked about addresses but I’m lost”
+  “how do I print stuff nicely, like on the same line or formatted, printf is weird”
+  “what’s a pointer actually used for, everyone says it’s important but I don’t see why yet”
+  “my loop never stops running, is there a way to see what value the variable has each time”
+  “is there an easier way to debug C code, gdb is scary and idk what I’m looking at”
+
+**Teacher Dashboard:**
+For the upload resources it has 3 options .c, .md, and .json. It might be beneficial to provide other options such as pdf, csv, .doc, etc.
+I tried uploading a pdf to see what would happen and it said it was successful but I don’t know if it was. It might be missing error handling or if it did accept the pdf it is hard to say.  I updated an executable file and it said “✅ Success! Database is updating in background (Give it ~10 seconds).”
+The class analytics currently feel shallow. It isn’t giving me much insight and as a teacher the analytics should inform action or next steps. The information and how it is currently presented doesn’t provide me with much. If you want I can get more in depth suggestions on analytics that could be useful.
+When we have more students and users it would be useful to have analytics that are more in depth and specific to individual actions as well
+The topic visibility control seems like it could be useful but it feels too broad. I think it should be more focused on a class structure than topics. I.e. blocking module 8 materials versus programming concepts.
