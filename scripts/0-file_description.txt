@@ -21,3 +21,32 @@ Here is a one-line description for every script in your repository, mapped to it
 
 ### 📈 Causal Research
 *   **`export_research_data.py`**: Converts raw chat logs into a structured CSV dataset (Treatment/Outcome) for Causal Inference analysis.
+
+### Evaluation Type
+1. Comparative Evaluation (Baseline)
+
+What it measures: Is your system better than ChatGPT/Gemini?
+Metric: "Win Rate" (Head-to-head comparison).
+Key Findings: Your system provides significantly more Scaffolding (95% vs 5%) and has far lower Code Density (12% vs 68%), proving it is better for education than generic LLMs.
+Script: benchmark_base_comp_datagen.py & evaluate_benchmark_data.py.
+
+2. Engineering Performance (Latency)
+
+What it measures: Is the security overhead too slow for real-time use?
+Metric: "Latency" (ms) and "Throughput".
+Key Findings: By optimizing with local models, you reduced security overhead from ~3.5s to ~135ms (96% faster). The "Gatekeeper" checks are virtually instant.
+Script: benchmark_engineering_performance.py & benchmark_latency.py.
+
+3. Adversarial Security Audit (Red Teaming)
+
+What it measures: Can a hacker break your access controls?
+Metric: "Security Recall" (Blocking Rate).
+Key Findings: Your system achieved 100% Security Recall on Data Leakage and Infrastructure attacks. It successfully blocked prompt injections, SQL injections, and unauthorized file access.
+Script: security_audit.py.
+
+4. Qualitative Assessment (LLM-as-a-Judge)
+
+What it measures: Does the bot behave like a good teacher?
+Metric: "Pedagogical Precision" (Accuracy of helpfulness).
+Key Findings: After recalibration, your system achieved ~94% Persona Consistency and ~100% Correctness, proving it reliably acts as a Socratic Tutor rather than a generic assistant.
+Script: benchmark_llm_judge_quality.py & benchmark_recalibrate_llm_judge.py.

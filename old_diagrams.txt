@@ -1,0 +1,34 @@
+---
+config:
+  layout: elk
+---
+flowchart TD
+ subgraph UserInteraction["User Interaction"]
+        D["UI (Query & Answer)"]
+        J["Formatted Response"]
+  end
+ subgraph ReasoningEngine["Reasoning Engine"]
+        E["Orchestrator"]
+        F["Hybrid Retrieval"]
+        G["Chain of Thought Reasoning"]
+        H["Self-Validation"]
+        I["Synthesize Final Answer"]
+  end
+ subgraph KnowledgeBase["Knowledge Base"]
+        C["Vector Store & Knowledge Graph"]
+  end
+ subgraph OfflineIngestion["Offline Data Ingestion"]
+        A["Raw Documents"]
+        B["Build Knowledge Base"]
+  end
+    A --> B
+    B --> C
+    D --> E
+    J --> D
+    E --> F
+    F --> C & G
+    G --> H
+    H -- Logic Flawed --> G
+    H -- Logic Valid --> I
+    I --> J
+    style D stroke:#00C853,fill:#00C853,color:#2962FF
