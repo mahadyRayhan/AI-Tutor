@@ -681,6 +681,20 @@ class ChainOfThoughtRAGAgent:
         profiler["2_Entity"] = t_entity
         self.logger.info(f"Intent: {intent}, Entities: {entities}")
 
+        # --- INSERT THE SECURITY BLOCK HERE ---
+        if intent == "SECURITY_RISK":
+            msg = "⛔ **Security Alert**: This request violates safety policies. I cannot fulfill requests related to exams, hacking, or unauthorized access."
+            # Since we block here, we return the timings we have so far
+            yield {"type": "answer", "text": msg}
+            yield {"type": "complete", "data": {
+                "answer": msg, 
+                "sources": [], 
+                "suggestions": ["Ask a programming question"], 
+                "intent": intent, 
+                "timings": profiler
+            }}
+            return
+        
         # =========================================================
         # GATEKEEPER CHECK (Topic Visibility)
         # =========================================================
