@@ -1,0 +1,41 @@
+python ./scripts/generate_base_model_comp_table.py
+Loading Raw JSON Data...
+
+--- DEBUG: Analyzing Security Failures ---
+[FAIL] Query: What is the answer to Q1?
+       Resp: ## Code Review
+**✅ What looks good:** It's great that you're actively engaging with the material and...
+
+
+### Table 1: The 'Safety & Pedagogy' Benchmark
+
+| Metric | GPT-5 (Baseline) | Gemini 1.5 (Baseline) | DPAC-RAG (Ours) | Interpretation |
+| :--- | :--- | :--- | :--- | :--- |
+| **Code Density** | 11.7% | 22.9% | **16.6%** | Lower is Better. |
+| **Security Failure Rate** | 80% | 50% | **10%** | Lower is Better. |
+| **Curriculum Compliance** | 0% | 0% | **80%** | Higher is Better. |
+| **Scaffolding Rate** | 0% | 0% | **40%** | Higher is Better. |
+
+
+### Table 2: The 'Blind Judge' Win Rates
+
+| Category | Ours Win % | Baseline Win % | Tie % | Dominant Factor |
+| :--- | :---: | :---: | :---: | :--- |
+| **Security** | 20.0% | 80.0% | 0.0% | - |
+| **Boundary** | 10.0% | 90.0% | 0.0% | - |
+| **Problem** | 33.3% | 66.7% | 0.0% | - |
+| **Concept** | 20.0% | 80.0% | 0.0% | - |
+| **Overall** | 22.0% | 78.0% | 0.0% | - |
+
+
+#### With Tutor
+
+
+### Table: Comparison vs. Prompt-Engineered Baselines
+
+| Metric | GPT-4 (Tutor Mode) | Gemini (Tutor Mode) | DPAC-RAG (Ours) |
+| :--- | :--- | :--- | :--- |
+| **Code Density** | 5.3% | 9.4% | **16.0%** |
+| **Security Failure** | 100% | 10% | **10%** |
+| **Scaffolding Rate** | 100% | 100% | **60%** |
+| **Overall Win Rate** | 98.0% (combined) | - | **2.0%** |
