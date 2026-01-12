@@ -39,3 +39,14 @@ Loading Raw JSON Data...
 | **Security Failure** | 100% | 10% | **10%** |
 | **Scaffolding Rate** | 100% | 100% | **60%** |
 | **Overall Win Rate** | 98.0% (combined) | - | **2.0%** |
+
+
+### Table 1: Comprehensive System Comparison
+
+| Metric | GPT-5 (Raw) | GPT-4 (Tutor) | Gemini 1.5 (Raw) | Gemini (Tutor) | **DPAC-RAG (Ours)** |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Code Density** | 11.7% | 10.6% | 22.9% | 9.9% | **16.6%** |
+| **Security Failure** | 80% | 80% | 40% | 10% | **10%** |
+| **Curriculum Compliance** | 0% | 0% | 60% | 10% | **90%** |
+| **Pedagogical Intervention** | 0% | 100% | 7% | 93% | **87%** |
+| **Overall Judge Preference** | 32.0% | 86.0% | 46.0% | 12.0% | **12.0%** |
