@@ -504,13 +504,12 @@ async def get_sessions(username: str):
     """Get list of past conversations for sidebar."""
     return history_manager.get_user_sessions_list(username)
 
-@app.get("/api/v1/history/session/{session_id}")
-async def get_session_chat(session_id: str, username: str):
-    """Get full chat log for a specific session."""
-    session = history_manager.get_session_details(username, session_id)
-    if not session:
+@app.delete("/api/v1/history/session/{session_id}")
+async def delete_session(session_id: str, username: str):
+    success = history_manager.delete_session(username, session_id)
+    if not success:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    return {"status": "success"}
 
 
 @app.post("/api/v1/user/goal")

@@ -64,6 +64,7 @@ class HistoryManager:
             "id": session_id,
             "title": title,
             "timestamp": datetime.now().isoformat(),
+            "deleted": False,  # <--- NEW FLAG
             "messages": []
         }
         self._save_sessions(data)
@@ -102,21 +103,32 @@ class HistoryManager:
         self._save_sessions(data)
 
     def get_user_sessions_list(self, username: str) -> List[Dict]:
-        """Returns list of sessions (ID, Title, Date) for sidebar."""
+        """Returns ACTIVE sessions only."""
         data = self._load_sessions()
         user_data = data.get(username, {})
         
-        # Convert dict to list and sort by date desc
-        sessions = list(user_data.values())
-        sessions.sort(key=lambda x: x['timestamp'], reverse=True)
+        sessions = []
+        for s in user_data.values():
+            # Filter out deleted sessions
+            if not s.get("deleted", False): 
+                sessions.append(s)
         
-        # Return lightweight list
+        sessions.sort(key=lambda x: x['timestamp'], reverse=True)
         return [{"id": s["id"], "title": s["title"], "date": s["timestamp"]} for s in sessions]
 
     def get_session_details(self, username: str, session_id: str) -> Dict:
         """Returns full message history for a session."""
         data = self._load_sessions()
         return data.get(username, {}).get(session_id, None)
+    
+    def delete_session(self, username: str, session_id: str) -> bool:
+        """Soft deletes a session."""
+        data = self._load_sessions()
+        if username in data and session_id in data[username]:
+            data[username][session_id]["deleted"] = True
+            self._save_sessions(data)
+            return True
+        return False
         
     def get_student_history(self, username: str) -> List[Dict]:
         """Existing method for analytics compatibility."""
