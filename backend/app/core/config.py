@@ -55,6 +55,16 @@ DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_TOP_K = 5
 DEFAULT_MAX_HOPS = 2
 
+# --- FILE SECURITY SETTINGS ---
+ALLOWED_EXTENSIONS = {
+    "code": {".c"},
+    "concept": {".md", ".pdf", ".docx", ".pptx"},
+    "metadata": {".json"} # Keeping this for graph logic if needed
+}
+
+# Max file size (e.g., 10MB)
+MAX_FILE_SIZE_MB = 10
+
 # --- Multi-Domain Processing Settings ---
 # Domain-specific chunk sizes (can override defaults based on content type)
 STEM_CHUNK_SIZE = int(os.getenv("STEM_CHUNK_SIZE", str(DEFAULT_CHUNK_SIZE + 200)))  # Larger chunks for technical content

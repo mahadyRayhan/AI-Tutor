@@ -2,7 +2,7 @@
 
 import shutil
 import subprocess
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
@@ -11,6 +11,7 @@ import time
 import json
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from pathlib import Path
 
 # Import components
 from app.core import config
@@ -160,70 +161,6 @@ class ChatRequest(BaseModel):
 async def health():
     return {"status": "healthy", "agent_ready": cot_rag_agent is not None}
 
-# @app.get("/api/v1/graph/context")
-# async def get_graph_context(query: str):
-#     """
-#     Returns nodes and edges related to the query from Neo4j.
-#     """
-#     if not graph_db:
-#         return {"nodes": [], "edges": []}
-    
-#     # Simplified Cypher to ensure we get specific properties, not complex objects
-#     # We return the Relationship TYPE as a string (type(r)) to avoid object parsing issues
-#     cypher = """
-#     MATCH (n:Concept)
-#     WHERE toLower(n.name) CONTAINS toLower($query)
-#     MATCH (n)-[r]-(m)
-#     RETURN n.name as source, type(r) as rel_type, m.name as target, labels(m) as target_labels
-#     LIMIT 20
-#     """
-    
-#     # Basic keyword extraction logic
-#     search_term = query.split()[-1].replace("?", "")
-#     if "array" in query.lower(): search_term = "Arrays"
-#     elif "variable" in query.lower(): search_term = "Variables"
-#     elif "function" in query.lower(): search_term = "Functions"
-#     elif "loop" in query.lower(): search_term = "For Loop"
-
-#     try:
-#         results = graph_db.execute_query(cypher, {"query": search_term})
-#     except Exception as e:
-#         logger.error(f"Graph query failed: {e}")
-#         return {"nodes": [], "edges": []}
-
-#     nodes = []
-#     edges = []
-#     seen_nodes = set()
-
-#     for record in results:
-#         # In the updated Cypher, record is a dictionary with simple keys
-#         s_id = record['source']
-#         rel_type = record['rel_type']
-#         t_id = record['target']
-#         t_labels = record['target_labels']
-        
-#         # Process Source Node (Group: Focus)
-#         if s_id not in seen_nodes:
-#             nodes.append({"id": s_id, "label": s_id, "group": "focus"})
-#             seen_nodes.add(s_id)
-
-#         # Process Target Node
-#         # t_labels is a list, grab the first one (e.g. 'Concept')
-#         t_group = t_labels[0] if t_labels else 'Node'
-        
-#         if t_id not in seen_nodes:
-#             nodes.append({"id": t_id, "label": t_id, "group": t_group})
-#             seen_nodes.add(t_id)
-
-#         # Process Edge
-#         edges.append({
-#             "from": s_id,
-#             "to": t_id,
-#             "label": rel_type.replace("_", " ").lower(),
-#             "arrows": "to"
-#         })
-
-#     return {"nodes": nodes, "edges": edges}
 
 @app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest):
@@ -284,103 +221,6 @@ async def chat_stream(request: ChatRequest):
             "X-Accel-Buffering": "no"
         }
     )
-# async def chat_stream(request: ChatRequest):
-#     async def generate_stream():
-#         if not cot_rag_agent:
-#             yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
-#             return
-
-#         try:
-#             # 1. SETUP: Get User ID immediately
-#             user_id = request.username if request.username else "anonymous"
-#             print("DEBUG: User ID is:", user_id) # <--- ADD THIS
-#             user_goal = knowledge_manager.get_goal(user_id)
-#             print("DEBUG: User Goal is:", user_goal) # <--- ADD THIS
-
-#             yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing...', 'stage': 'init'})}\n\n"
-            
-#             start_time = time.time()
-            
-#             # 2. RUN AGENT: Pass the user_id correctly
-#             user_goal = knowledge_manager.get_goal(user_id)
-#             result = cot_rag_agent.run(
-#                 query=request.message, 
-#                 user_role=request.user_role, 
-#                 username=user_id,
-#                 user_goal=user_goal 
-#             )
-            
-#             # Capture Flags
-#             causal_flags = result.get('causal_flags', {})
-            
-#             duration = time.time() - start_time
-            
-#             # 3. LOGGING
-#             try:
-#                 intent = result.get('intent', 'UNKNOWN')
-                
-#                 # Detect Topic from sources
-#                 sources = result.get('sources', [])
-#                 detected_topic = "General"
-                
-#                 if intent == "GUIDANCE":
-#                     detected_topic = "Prerequisite Check"
-#                 elif sources:
-#                     detected_topic = sources[0].get('topic', 'General')
-                
-#                 # Add Computed Context (Mastery Score)
-#                 # We calculate this ON THE FLY so we know their state AT THAT MOMENT
-#                 current_history = history_manager.get_student_history(user_id)
-#                 current_mastery_map = _calculate_mastery(current_history)
-                
-#                 # Average mastery of the specific topic discussed
-#                 topic_mastery = current_mastery_map.get(detected_topic, 0)
-#                 causal_flags["context_mastery_score"] = topic_mastery
-                
-#                 # Log interaction
-#                 history_manager.log_interaction(
-#                     user_id, 
-#                     request.message, 
-#                     intent, 
-#                     result['answer'], 
-#                     detected_topic,
-#                     metadata=causal_flags # <--- SAVE IT
-#                 )
-#             except Exception as log_err:
-#                 logger.error(f"Logging failed: {log_err}")
-
-#             # 4. Stream Response
-#             yield f"data: {json.dumps({'type': 'status', 'message': f'Identified as {intent}', 'stage': 'intent'})}\n\n"
-#             yield f"data: {json.dumps({'type': 'answer', 'text': result['answer'], 'time': duration})}\n\n"
-
-#             # 5. Final Payload
-#             final_payload = {
-#                 "type": "complete",
-#                 "data": {
-#                     "answer": result['answer'],
-#                     "sources": result.get('sources', []),
-#                     "suggestions": result.get('suggestions', []),
-#                     "query_domain": "C Programming",
-#                     "cot_analysis": None,
-#                     "timings": {"total": round(duration, 2)}
-#                 }
-#             }
-#             yield f"data: {json.dumps(final_payload)}\n\n"
-
-#         except Exception as e:
-#             logger.error(f"Streaming error: {e}", exc_info=True)
-#             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
-#     return StreamingResponse(
-#         generate_stream(),
-#         media_type="text/event-stream",
-#         headers={
-#             "Cache-Control": "no-cache",
-#             "Connection": "keep-alive",
-#             "X-Accel-Buffering": "no"
-#         }
-#     )
-
 
 @app.get("/api/v1/config/topics")
 async def get_topics():
@@ -501,49 +341,72 @@ async def get_student_analytics(username: str):
 @app.post("/api/v1/resources/upload")
 async def upload_resource(
     files: List[UploadFile] = File(...), 
-    resource_type: str = "code" # 'code', 'concept', 'metadata'
+    resource_type: str = Form(...) # Changed to Form to parse correctly
 ):
     """
-    Uploads files to the specific resource folder and triggers ingestion.
+    Securely uploads files. Enforces extension checks based on resource_type.
     """
     saved_files = []
-    
-    # 1. Determine Target Directory
+    rejected_files = []
+
+    # 1. Validate Resource Type
+    if resource_type not in config.ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Invalid resource category.")
+
+    # 2. Determine Target Directory
     if resource_type == "code":
         target_dir = config.PROJECT_ROOT / "resources" / "code"
     elif resource_type == "concept":
         target_dir = config.PROJECT_ROOT / "resources" / "concepts"
-    elif resource_type == "metadata":
-        target_dir = config.PROJECT_ROOT / "resources" / "metadata"
     else:
-        raise HTTPException(status_code=400, detail="Invalid resource type")
+        target_dir = config.PROJECT_ROOT / "resources" / "metadata"
 
-    # 2. Save Files
+    # Ensure directory exists
+    os.makedirs(target_dir, exist_ok=True)
+
+    # 3. Process Files
+    allowed_exts = config.ALLOWED_EXTENSIONS[resource_type]
+
     for file in files:
-        file_path = target_dir / file.filename
+        filename = file.filename
+        # Get extension (lowercase)
+        ext = Path(filename).suffix.lower()
+
+        # SECURITY CHECK: Extension
+        if ext not in allowed_exts:
+            rejected_files.append(filename)
+            continue
+        
+        # SECURITY CHECK: Path Traversal (Basic)
+        safe_filename = os.path.basename(filename)
+        file_path = target_dir / safe_filename
+
         try:
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-            saved_files.append(file.filename)
+            saved_files.append(safe_filename)
         except Exception as e:
-            logger.error(f"Failed to save {file.filename}: {e}")
+            logger.error(f"Failed to save {filename}: {e}")
+            rejected_files.append(filename)
 
-    # 3. Trigger Re-Ingestion (Run scripts in background)
-    # We use subprocess to run the scripts exactly as if you typed them in terminal
-    try:
-        script_name = "ingest_manual_graph.py" if resource_type == "metadata" else "ingest_data.py"
-        script_path = config.PROJECT_ROOT / "scripts" / script_name
-        
-        # Run the script
-        subprocess.Popen(["python", str(script_path)])
-        
-        return {
-            "status": "success", 
-            "message": f"Uploaded {len(saved_files)} files. Database update started in background.",
-            "files": saved_files
-        }
-    except Exception as e:
-        return {"status": "warning", "message": f"Files saved, but ingestion failed to start: {e}"}
+    # 4. Trigger Ingestion (Only if files were saved)
+    if saved_files:
+        try:
+            script_name = "ingest_manual_graph.py" if resource_type == "metadata" else "ingest_data.py"
+            script_path = config.PROJECT_ROOT / "scripts" / script_name
+            subprocess.Popen(["python", str(script_path)])
+        except Exception as e:
+            logger.error(f"Ingestion trigger failed: {e}")
+
+    # 5. Return Response
+    if not saved_files and rejected_files:
+        raise HTTPException(status_code=400, detail=f"Rejected invalid files: {', '.join(rejected_files)}")
+    
+    return {
+        "status": "success", 
+        "message": f"Saved {len(saved_files)} files.",
+        "rejected": rejected_files
+    }
 
 @app.get("/api/v1/analytics/teacher/overview")
 async def get_teacher_analytics():

@@ -91,6 +91,64 @@
         .topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; }
         .topic-item { border: 1px solid #eee; padding: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; background: #fff; }
 
+        /* --- TOOLTIPS --- */
+        .info-icon {
+            display: inline-block;
+            background: #bdc3c7;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 20px;
+            font-size: 14px;
+            cursor: help;
+            margin-left: 8px;
+            position: relative;
+            font-family: monospace;
+        }
+
+        /* Tooltip Text (Hidden by default) */
+        .info-icon .tooltip-text {
+            visibility: hidden;
+            width: 250px;
+            background-color: #333;
+            color: #fff;
+            text-align: left;
+            border-radius: 6px;
+            padding: 10px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%; /* Position above the icon */
+            left: 50%;
+            margin-left: -125px; /* Center it */
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 0.85rem;
+            font-weight: normal;
+            line-height: 1.4;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        /* Little triangle arrow at the bottom of the tooltip */
+        .info-icon .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+
+        /* Show on Hover */
+        .info-icon:hover { background: #8e44ad; }
+        .info-icon:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
         /* --- RESPONSIVE --- */
         @media (max-width: 900px) {
             .grid-container { grid-template-columns: 1fr; }
@@ -136,18 +194,32 @@
         <div class="card">
             <h2>📤 Resource Manager</h2>
             <div class="upload-area">
-                <p style="margin:0; color:#666;">Add new C files, Markdown concepts, or JSON Logic.</p>
                 <div class="upload-row">
-                    <select id="resourceType">
-                        <option value="code">C Code (.c)</option>
-                        <option value="concept">Concept (.md)</option>
-                        <option value="metadata">Graph Logic (.json)</option>
-                    </select>
-                    <input type="file" id="fileInput" multiple>
+                    <div style="text-align:left; width:100%;">
+                        <label style="font-weight:bold; color:#2c3e50;">1. Select Category:</label>
+                        <select id="resourceType" class="role-select" style="width:100%; margin-top:5px;" onchange="updateUploadRules()">
+                            <option value="code">Source Code (C Programming)</option>
+                            <option value="concept">Study Materials (Concepts)</option>
+                            <option value="metadata">Graph Logic (Advanced)</option>
+                        </select>
+                    </div>
                 </div>
-                <br>
-                <button class="btn-upload" onclick="uploadFiles()">Upload & Re-Ingest</button>
-                <div id="uploadStatus" style="margin-top:10px; font-weight:bold;"></div>
+
+                <div class="upload-row">
+                    <div style="text-align:left; width:100%;">
+                        <label style="font-weight:bold; color:#2c3e50;">2. Select Files:</label>
+                        <input type="file" id="fileInput" multiple style="width:100%; margin-top:5px; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                        <small id="fileHint" style="color:#7f8c8d; display:block; margin-top:5px;">
+                            Allowed: .c files only
+                        </small>
+                    </div>
+                </div>
+
+                <button class="btn-upload" onclick="uploadFiles()" style="width:100%; margin-top:15px;">
+                    🔒 Secure Upload & Ingest
+                </button>
+                
+                <div id="uploadStatus" style="margin-top:10px; font-weight:bold; font-size:0.9rem;"></div>
             </div>
         </div>
 
@@ -159,14 +231,31 @@
         </div>
     </div>
 
-    <!-- 3. ANALYTICS -->
+    <!-- 3. Global Analytics -->
     <div class="grid-container">
         <div class="card">
-            <h2>🔥 Topic Popularity</h2>
+            <h2>
+                🔥 Topic Popularity
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        <strong>Measures Engagement Volume.</strong><br>
+                        Shows the total number of questions students are asking per topic. High bars indicate topics students are most curious about or spending the most time on.
+                    </span>
+                </div>
+            </h2>
             <div style="flex:1; min-height:200px;"><canvas id="topicChart"></canvas></div>
         </div>
+        
         <div class="card">
-            <h2>⚠️ Class Struggle Areas</h2>
+            <h2>
+                ⚠️ Class Struggle Areas
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        <strong>Measures Active Friction.</strong><br>
+                        Counts interactions where students encountered <em>Errors (Debug)</em> or asked for <em>Code Reviews</em>. High bars indicate topics where students are writing broken code or are unsure of their logic.
+                    </span>
+                </div>
+            </h2>
             <div style="flex:1; min-height:200px;"><canvas id="struggleChart"></canvas></div>
         </div>
     </div>
@@ -196,6 +285,20 @@
 <script>
     const API_URL = "http://127.0.0.1:8000";
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
+    const FILE_RULES = {
+        'code': { 
+            exts: ['.c'], 
+            label: 'Allowed: .c files only' 
+        },
+        'concept': { 
+            exts: ['.md', '.pdf', '.docx', '.pptx'], 
+            label: 'Allowed: .md, .pdf, .docx, .pptx' 
+        },
+        'metadata': { 
+            exts: ['.json'], 
+            label: 'Allowed: .json only' 
+        }
+    };
 
     // --- AUTH CHECK ---
     if (!currentUser || currentUser.role !== 'teacher') {
@@ -311,30 +414,92 @@
         });
     }
 
+    function updateUploadRules() {
+        const type = document.getElementById('resourceType').value;
+        const input = document.getElementById('fileInput');
+        const hint = document.getElementById('fileHint');
+        const rule = FILE_RULES[type];
+
+        // 1. Update system dialog filter
+        input.accept = rule.exts.join(',');
+        
+        // 2. Update visual hint
+        hint.innerText = rule.label;
+        
+        // 3. Clear previous selection to avoid confusion
+        input.value = ''; 
+        document.getElementById('uploadStatus').innerText = '';
+    }
+
     async function uploadFiles() {
         const fileInput = document.getElementById('fileInput');
         const typeSelect = document.getElementById('resourceType');
         const statusDiv = document.getElementById('uploadStatus');
+        const type = typeSelect.value;
         
-        if (fileInput.files.length === 0) return;
+        if (fileInput.files.length === 0) {
+            statusDiv.innerText = "⚠️ Please select files first.";
+            statusDiv.style.color = "#f39c12";
+            return;
+        }
 
         const formData = new FormData();
-        formData.append('resource_type', typeSelect.value);
-        for (let i = 0; i < fileInput.files.length; i++) formData.append('files', fileInput.files[i]);
+        formData.append('resource_type', type);
+        
+        // Client-Side Validation
+        const allowedExts = FILE_RULES[type].exts;
+        let validCount = 0;
+        let invalidFiles = [];
 
-        statusDiv.innerText = "Uploading...";
-        statusDiv.style.color = "blue";
+        for (let i = 0; i < fileInput.files.length; i++) {
+            const file = fileInput.files[i];
+            const fileName = file.name.toLowerCase();
+            const isValid = allowedExts.some(ext => fileName.endsWith(ext));
+
+            if (isValid) {
+                formData.append('files', file);
+                validCount++;
+            } else {
+                invalidFiles.push(file.name);
+            }
+        }
+
+        if (validCount === 0) {
+            statusDiv.innerText = `❌ Invalid file type. ${FILE_RULES[type].label}`;
+            statusDiv.style.color = "#e74c3c";
+            return;
+        }
+
+        if (invalidFiles.length > 0) {
+            if(!confirm(`Skipping ${invalidFiles.length} invalid files:\n${invalidFiles.join('\n')}\n\nContinue with valid files?`)) {
+                return;
+            }
+        }
+
+        statusDiv.innerHTML = "⏳ Uploading & Processing... <br><small>Do not close this tab.</small>";
+        statusDiv.style.color = "#3498db";
 
         try {
-            const res = await fetch(`${API_URL}/api/v1/resources/upload`, { method: 'POST', body: formData });
+            const res = await fetch(`${API_URL}/api/v1/resources/upload`, { 
+                method: 'POST', 
+                body: formData 
+            });
+            
+            const result = await res.json();
+
             if (res.ok) {
-                statusDiv.innerText = "✅ Success! Updating DB...";
-                statusDiv.style.color = "green";
+                statusDiv.innerText = `✅ Success! Uploaded ${validCount} files. Database updating in background.`;
+                statusDiv.style.color = "#27ae60";
+                fileInput.value = ''; // Clear input
             } else {
-                statusDiv.innerText = "❌ Failed";
-                statusDiv.style.color = "red";
+                statusDiv.innerText = `❌ Server Error: ${result.detail}`;
+                statusDiv.style.color = "#e74c3c";
             }
-        } catch (e) { statusDiv.innerText = "❌ Error"; }
+        } catch (e) {
+            console.error(e);
+            statusDiv.innerText = "❌ Network Error";
+            statusDiv.style.color = "#e74c3c";
+        }
     }
 
     function renderRiskTable(students) {
@@ -384,8 +549,11 @@
         });
     }
 
-    // Init
-    loadData();
+    // Initialize rules on page load
+    window.onload = function() {
+        loadData(); // Your existing load function
+        updateUploadRules(); // Initialize file input
+    };
 </script>
 </body>
 </html>
