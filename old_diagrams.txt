@@ -1,34 +1,94 @@
----
-config:
-  layout: elk
----
-flowchart TD
- subgraph UserInteraction["User Interaction"]
-        D["UI (Query & Answer)"]
-        J["Formatted Response"]
-  end
- subgraph ReasoningEngine["Reasoning Engine"]
-        E["Orchestrator"]
-        F["Hybrid Retrieval"]
-        G["Chain of Thought Reasoning"]
-        H["Self-Validation"]
-        I["Synthesize Final Answer"]
-  end
- subgraph KnowledgeBase["Knowledge Base"]
-        C["Vector Store & Knowledge Graph"]
-  end
- subgraph OfflineIngestion["Offline Data Ingestion"]
-        A["Raw Documents"]
-        B["Build Knowledge Base"]
-  end
-    A --> B
-    B --> C
-    D --> E
-    J --> D
-    E --> F
-    F --> C & G
-    G --> H
-    H -- Logic Flawed --> G
-    H -- Logic Valid --> I
-    I --> J
-    style D stroke:#00C853,fill:#00C853,color:#2962FF
+def _generate_concept_explanation(self, query: str, context: str, user_goal: str = None) -> str:
+        print(f"DEBUG: Generating concept for goal: '{user_goal}'") 
+        
+        # Dynamic Goal Instruction
+        goal_section = ""
+        if user_goal:
+            goal_section = f"""
+            6. **GOAL CONNECTION (CRITICAL):** The student's goal is: "{user_goal}". 
+               - You MUST explicitly explain how the current concept helps them achieve "{user_goal}".
+               - Example: If goal is "Master Games" and topic is "Structs", say: "Structs are essential for Games because they let you define Player stats like health and score."
+            """
+            
+        prompt = f"""
+        You are an expert C Programming Tutor.
+        
+        Student Query: "{query}"
+        User's Goal: "{user_goal if user_goal else 'None'}"
+        Reference Material: {context}
+
+        **MANDATORY RULES:**
+        1. **STRICT LIMITATION:** Check the Reference Material. If the concept (e.g., 'switch', 'crypto') is NOT present, you MUST say:
+           "I don't have information about [Concept] in my current reference library."
+        2. **PERSONALIZATION (NEW):** Check the "USER CONTEXT" at the top of the Reference Material.
+           - If it lists concepts the user knows, **acknowledge them** in your first sentence.
+           - Example: "Since you already mastered [Known Concept], understanding [New Concept] will be easier because..."
+        3. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences). Use analogies. **Explicitly explain Use Cases.**
+        4. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`) if the concept involves flow/structure.
+           - **CRITICAL SANITIZATION:** 
+             - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
+             - ABSOLUTELY NO BRACKETS `[]` inside node labels (except the outer ones defining the node).
+             - ABSOLUTELY NO QUOTES `"` inside node labels. Use single quotes `'` if needed.
+             - **BAD:** `A[Function(int x)]` or `B{{x[0] > 5}}` or `C[Print "Hello"]`
+             - **GOOD:** `A[Function int x]` or `B{{x at 0 is greater than 5}}` or `C[Print 'Hello']`
+        5. **SOURCE GROUNDING:** Quote specific examples from text.
+        6. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
+        
+        **STRICT RESPONSE FORMAT:**
+        
+        ## Explanation
+        [Start by bridging from known concepts if applicable. Then explain the new concept using text and analogies.]
+        
+        ## Use Cases
+        [Explain WHEN and WHY this concept is used in real programming. If the user asked "What is its use case?", focus heavily here.]
+
+        {goal_section}
+
+        ## Visual Model
+        ```mermaid
+        graph TD
+           A[Start] --> B{{Condition?}}
+           B -- Yes --> C[Action]
+           B -- No --> D[End]
+        ```
+        
+        ## Example from Class
+        [Reference specific code from text]
+        """
+        
+        # FIX: We now pass the 'prompt' variable containing all rules, 
+        # instead of the simple f-string that was ignoring them.
+        return self.llm_interface.generate_response(prompt)
+        # return self.llm_interface.generate_response(f"Explain {query} using {context}. Include Mermaid diagram.")
+
+
+def _sanitize_mermaid(self, text: str) -> str:
+        """
+        Simple, aggressive cleanup. 
+        Replaces specific 'dangerous' characters globally, but ONLY inside mermaid blocks.
+        """
+        pattern = r"(```mermaid\s*)([\s\S]*?)(```)"
+        
+        def clean_block(match):
+            header = match.group(1)
+            content = match.group(2)
+            footer = match.group(3)
+            
+            # Simple replace: Turn bad chars into spaces
+            # This is safer than complex logic
+            clean_content = content.replace("(", " ").replace(")", " ")
+            clean_content = clean_content.replace("[", " ").replace("]", " ")
+            clean_content = clean_content.replace('"', "'")
+            
+            # Restore the structural brackets for the graph definition
+            # This is a bit hacky but works for 99% of LLM output:
+            # We assume lines starting with a letter usually define a node like A[...]
+            # The regex below looks for the start of a node definition and restores the outer brackets
+            # But honestly, relying on the PROMPT (steps 1 & 2) is 10x better.
+            
+            return f"{header}{content}{footer}"
+
+        # NOTE: If the prompt works, we don't even need to touch the content.
+        # Let's try relying PURELY on the prompt first, as regexing graph syntax is risky.
+        # return text
+        return text.replace("(", " ").replace(")", " ")

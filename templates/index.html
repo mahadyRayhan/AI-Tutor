@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({ startOnLoad: false, theme: 'dark' }); // Switched to dark theme for mermaid
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
         window.mermaid = mermaid;
     </script>
 
@@ -21,13 +21,13 @@
             /* Gemini-inspired Dark Palette */
             --bg-color: #131314;
             --sidebar-bg: #1e1f20;
+            --sidebar-hover: #2c2d2e;
             --input-bg: #282a2c;
             --text-primary: #e3e3e3;
             --text-secondary: #a8c7fa;
-            --accent-color: #a8c7fa; /* Light Blue */
+            --accent-color: #a8c7fa; 
             --user-msg-bg: #282a2c;
             --bot-msg-bg: transparent;
-            --card-bg: #1e1f20;
             --border-color: #444746;
         }
 
@@ -41,11 +41,46 @@
             overflow: hidden;
         }
 
-        /* --- AUTH SCREEN (Dark Mode) --- */
+        /* --- SIDEBAR --- */
+        .sidebar {
+            width: 260px;
+            background: var(--sidebar-bg);
+            display: flex; flex-direction: column;
+            border-right: 1px solid var(--border-color);
+            transition: width 0.3s ease;
+            flex-shrink: 0;
+        }
+        .sidebar.collapsed { width: 0; overflow: hidden; border: none; }
+        
+        .new-chat-btn {
+            margin: 15px; padding: 12px;
+            background: #282a2c; color: var(--text-secondary);
+            border: 1px solid var(--border-color); border-radius: 20px;
+            cursor: pointer; text-align: left; font-size: 0.9rem;
+            display: flex; align-items: center; gap: 10px;
+            transition: background 0.2s;
+        }
+        .new-chat-btn:hover { background: var(--sidebar-hover); }
+        .new-chat-btn svg { width: 18px; fill: currentColor; }
+
+        .history-list {
+            flex: 1; overflow-y: auto; padding: 10px;
+        }
+        .history-item {
+            padding: 10px 15px; margin-bottom: 5px;
+            cursor: pointer; border-radius: 18px;
+            color: #ccc; font-size: 0.9rem;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            transition: background 0.1s;
+        }
+        .history-item:hover { background: var(--sidebar-hover); }
+        .history-item.active { background: #004a77; color: white; }
+
+        /* --- AUTH SCREEN --- */
         #auth-screen {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: var(--bg-color);
-            display: flex; justify-content: center; align-items: center; z-index: 1000;
+            display: flex; justify-content: center; align-items: center; z-index: 2000;
         }
         .auth-card {
             background: var(--sidebar-bg); padding: 40px; border-radius: 24px;
@@ -57,173 +92,148 @@
             background: var(--bg-color); border: 1px solid var(--border-color);
             color: var(--text-primary); border-radius: 8px; box-sizing: border-box; font-size: 1rem;
         }
-        .auth-input:focus { outline: 2px solid var(--accent-color); border-color: transparent; }
         .auth-btn {
             width: 100%; padding: 14px; background: var(--accent-color); color: #000;
             border: none; border-radius: 24px; cursor: pointer; font-weight: 600; margin-top: 15px; font-size: 1rem;
         }
-        .auth-btn:hover { opacity: 0.9; }
         .toggle-link { color: var(--accent-color); cursor: pointer; margin-top: 20px; display: block; font-size: 0.9rem; }
         .error-msg { color: #ff897d; font-size: 0.9rem; margin-top: 10px; display: none; }
-        .success-msg { color: #9cd68d; font-size: 0.9rem; margin-top: 10px; display: none; }
         .hidden { display: none; }
 
         /* --- APP LAYOUT --- */
         #app-screen { display: none; width: 100%; height: 100%; }
         .main-container { 
-            display: flex; width: 100%; height: 100%; 
-            max-width: 1600px; margin: 0 auto;
+            display: flex; width: 100%; height: 100%; overflow: hidden;
         }
 
-        /* LEFT SIDE: CHAT AREA */
+        /* --- CHAT SECTION --- */
         .chat-section { 
-            flex: 3; display: flex; flex-direction: column; 
+            flex: 1; display: flex; flex-direction: column; 
             position: relative; height: 100%;
         }
 
-        /* Header (Minimalist) */
+        /* Top Bar */
         .top-bar {
-            padding: 20px; display: flex; justify-content: space-between; align-items: center;
-            position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+            padding: 15px 20px; display: flex; justify-content: space-between; align-items: center;
+            z-index: 10;
         }
-        .role-badge { 
-            font-size: 0.75rem; background: #333; color: #aaa; 
-            padding: 4px 10px; border-radius: 12px; letter-spacing: 1px;
-        }
-        .nav-btn {
-            background: transparent; color: var(--text-secondary); border: none;
-            cursor: pointer; font-size: 0.9rem; margin-left: 15px;
-        }
-        .nav-btn:hover { text-decoration: underline; }
+        .menu-btn { background: none; border: none; cursor: pointer; color: var(--text-primary); font-size: 1.2rem; margin-right: 10px; }
+        .role-badge { font-size: 0.75rem; background: #333; color: #aaa; padding: 4px 10px; border-radius: 12px; }
+        .nav-btn { background: transparent; color: var(--text-secondary); border: none; cursor: pointer; font-size: 0.9rem; margin-left: 15px; }
 
-        /* WELCOME STATE (Gemini Style) */
+        /* Welcome View */
         #welcome-view {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            z-index: 5; pointer-events: none; /* Let clicks pass through if needed */
+            z-index: 5; pointer-events: none;
         }
         .welcome-text {
             font-size: 3.5rem; font-weight: 500; margin: 0;
             background: linear-gradient(90deg, #4285F4, #9B72CB, #F889A7);
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            text-align: center;
         }
-        .sub-welcome {
-            font-size: 2rem; color: #555; margin-top: 10px; font-weight: 400;
-        }
+        .sub-welcome { font-size: 1.5rem; color: #555; margin-top: 10px; font-weight: 400; }
 
-        /* MESSAGES LIST */
+        /* Messages */
         .messages-container { 
-            flex: 1; padding: 20px 10%; 
+            flex: 1; padding: 20px 15%; 
             overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
-            padding-bottom: 120px; /* Space for input bar */
-            padding-top: 80px;
-            z-index: 6; /* Above welcome screen when active */
+            padding-bottom: 120px; z-index: 6;
         }
-
-        /* BUBBLES */
         .message { 
-            max-width: 80%; padding: 10px 20px; border-radius: 18px; 
+            max-width: 90%; padding: 10px 20px; border-radius: 18px; 
             line-height: 1.6; font-size: 1rem; color: var(--text-primary);
         }
-        .message.user { 
-            align-self: flex-end; 
-            background-color: #282a2c; 
-            border-bottom-right-radius: 4px;
-        }
-        .message.bot { 
-            align-self: flex-start; 
-            background-color: transparent; /* Clean look */
-            padding-left: 0;
-        }
+        .message.user { align-self: flex-end; background-color: #282a2c; border-bottom-right-radius: 4px; }
+        .message.bot { align-self: flex-start; background-color: transparent; padding-left: 0; }
         
-        /* Markdown Styles within Chat */
-        .message.bot h2, .message.bot h3 { color: var(--text-secondary); margin-top: 20px; font-weight: 500; }
-        .message.bot strong { color: #fff; }
-        .message.bot code { background: #333; padding: 2px 6px; border-radius: 4px; font-family: 'Consolas', monospace; color: #ffab91; }
-        pre[class*="language-"] {
-            background: #1e1f20 !important; border: 1px solid #333;
-            border-radius: 12px; margin: 15px 0;
-        }
+        /* Markdown Code Styles */
+        pre[class*="language-"] { background: #1e1f20 !important; border: 1px solid #333; border-radius: 12px; margin: 15px 0; }
+        code { font-family: 'Consolas', monospace; }
 
-        /* INPUT AREA (Floating Pill) */
+        /* Input Area */
         .input-wrapper {
-            position: absolute; bottom: 30px; left: 10%; right: 10%;
+            position: absolute; bottom: 30px; left: 15%; right: 15%;
             background: var(--input-bg); border-radius: 30px;
             padding: 10px 20px; display: flex; align-items: flex-end; gap: 10px;
-            z-index: 20; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-            border: 1px solid #444;
+            z-index: 20; box-shadow: 0 4px 10px rgba(0,0,0,0.3); border: 1px solid #444;
         }
         textarea { 
             flex: 1; background: transparent; border: none; color: white; 
             font-size: 1rem; padding: 12px 0; resize: none; max-height: 150px; outline: none; font-family: inherit;
         }
-        .send-icon-btn {
-            background: transparent; border: none; cursor: pointer; padding: 10px;
-            color: var(--text-secondary); transition: color 0.3s;
-        }
-        .send-icon-btn:hover { color: white; }
+        .send-icon-btn { background: transparent; border: none; cursor: pointer; padding: 10px; color: var(--text-secondary); }
         .send-icon-btn svg { width: 24px; height: 24px; fill: currentColor; }
 
-        /* RIGHT SIDE: REFERENCES */
-        .resources-section { 
-            flex: 1; background: var(--sidebar-bg); 
-            border-left: 1px solid var(--border-color);
-            display: flex; flex-direction: column; 
-            height: 100%; max-width: 400px;
-        }
-        .res-header {
-            padding: 20px; font-weight: 600; color: var(--text-secondary);
-            border-bottom: 1px solid var(--border-color); letter-spacing: 0.5px;
-        }
-        .sources-list { padding: 15px; overflow-y: auto; height: 100%; }
-        .source-card {
-            background: #2a2b2d; border-radius: 12px; padding: 15px; margin-bottom: 15px;
-            transition: background 0.2s; border: 1px solid transparent;
-        }
-        .source-card:hover { background: #333; border-color: #555; }
-        .source-title { font-size: 0.85rem; color: #aaa; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
-        .source-content { font-size: 0.85rem; color: #ddd; line-height: 1.5; }
-
-        /* Suggestion Chips */
+        /* Suggestions */
         .suggestions-area {
-            position: absolute; 
-            bottom: 150px; /* Moved up to clear the input bar */
-            left: 0; 
-            right: 0;
-            display: flex; 
-            justify-content: center; 
-            gap: 12px; 
-            z-index: 15; /* High enough to be clickable */
-            flex-wrap: wrap; /* Prevents overflow on small screens */
-            padding: 0 20px;
+            position: absolute; bottom: 150px; left: 0; right: 0;
+            display: flex; justify-content: center; gap: 12px; z-index: 15; flex-wrap: wrap; padding: 0 20px;
         }
-        
         .suggestion-chip {
-            background: #2a2b2d; 
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary); 
-            padding: 12px 24px; 
-            border-radius: 24px;
-            cursor: pointer; 
-            font-size: 0.95rem; 
-            transition: all 0.2s ease;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            background: #2a2b2d; border: 1px solid var(--border-color); color: var(--text-secondary); 
+            padding: 12px 24px; border-radius: 24px; cursor: pointer; transition: all 0.2s;
         }
+        .suggestion-chip:hover { background: #333; border-color: var(--text-primary); color: var(--text-primary); }
 
-        .suggestion-chip:hover { 
-            background: #333; 
-            border-color: var(--text-primary); 
-            color: var(--text-primary);
-            transform: translateY(-2px);
+        /* Resources Side (Collapsible) */
+        .resources-section { 
+            width: 350px; background: var(--sidebar-bg); border-left: 1px solid var(--border-color);
+            display: flex; flex-direction: column; height: 100%;
         }
+        .res-header { padding: 20px; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border-color); }
+        .sources-list { padding: 15px; overflow-y: auto; flex: 1; }
+        .source-card { background: #2a2b2d; border-radius: 12px; padding: 15px; margin-bottom: 15px; border: 1px solid transparent; }
+        .source-card:hover { border-color: #555; }
+        .source-title { font-size: 0.85rem; color: #aaa; margin-bottom: 8px; }
+        .source-content { font-size: 0.85rem; color: #ddd; }
 
         /* Progress Bar */
         .progress-step-container { background: #333; border-radius: 8px; padding: 10px; width: 250px; }
-        .progress-step-text { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 5px; color: #aaa; }
-        .progress-step-track { height: 4px; background: #555; border-radius: 2px; }
+        .progress-step-text { display: flex; justify-content: space-between; font-size: 0.8rem; color: #aaa; }
+        .progress-step-track { height: 4px; background: #555; border-radius: 2px; margin-top: 5px; }
         .progress-step-fill { height: 100%; background: var(--accent-color); border-radius: 2px; width: 0%; transition: width 0.3s; }
 
+        /* BOT SUGGESTION CHIPS (New) */
+        .bot-suggestions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        .suggestion-btn {
+            background: #2a2b2d;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .suggestion-btn:hover {
+            background: #333;
+            border-color: var(--accent-color);
+            color: var(--text-primary);
+        }
+        .suggestion-btn.challenge {
+            border-color: #e67e22;
+            color: #e67e22;
+        }
+        .suggestion-btn.challenge:hover {
+            background: rgba(230, 126, 34, 0.1);
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .resources-section { display: none; }
+            .sidebar { position: absolute; z-index: 100; height: 100%; }
+            .input-wrapper { left: 5%; right: 5%; }
+            .messages-container { padding: 20px 5%; }
+        }
     </style>
 </head>
 <body>
@@ -239,19 +249,13 @@
         <div class="toggle-link" onclick="toggleAuth('signup')">Create an account</div>
         <div class="error-msg" id="loginError"></div>
     </div>
-
-    <!-- Signup Form -->
+    <!-- Signup Form (Same as before) -->
     <div class="auth-card hidden" id="signupForm">
         <h2>🚀 Create Account</h2>
         <input type="text" id="signName" class="auth-input" placeholder="Full Name">
         <input type="email" id="signEmail" class="auth-input" placeholder="Email">
         <input type="text" id="signUser" class="auth-input" placeholder="Username">
         <input type="password" id="signPass" class="auth-input" placeholder="Password">
-        
-        <input type="text" id="signUni" class="auth-input" placeholder="University (Optional)">
-        <input type="text" id="signDept" class="auth-input" placeholder="Department (Optional)">
-        <input type="text" id="signInterest" class="auth-input" placeholder="Topic of Interest (Optional)">
-
         <button class="auth-btn" onclick="performSignup()">Sign Up</button>
         <div class="toggle-link" onclick="toggleAuth('login')">Back to Login</div>
         <div class="error-msg" id="signupError"></div>
@@ -259,57 +263,63 @@
     </div>
 </div>
 
-<!-- MAIN APP SCREEN -->
+<!-- MAIN APP -->
 <div id="app-screen">
     <div class="main-container">
         
-        <!-- CENTER CHAT SECTION -->
+        <!-- SIDEBAR -->
+        <div class="sidebar" id="sidebar">
+            <button class="new-chat-btn" onclick="startNewChat()">
+                <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                New Chat
+            </button>
+            <div class="history-list" id="historyList">
+                <!-- History Items go here -->
+            </div>
+        </div>
+
+        <!-- CHAT AREA -->
         <div class="chat-section">
-            <!-- Top Nav -->
             <div class="top-bar">
-                <span id="roleBadge" class="role-badge">STUDENT</span>
+                <div style="display:flex; align-items:center">
+                    <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+                    <span id="roleBadge" class="role-badge">STUDENT</span>
+                </div>
                 <div>
                     <button class="nav-btn" onclick="openDashboard()">Dashboard</button>
                     <button class="nav-btn" onclick="logout()">Logout</button>
                 </div>
             </div>
 
-            <!-- Initial Welcome View -->
+            <!-- Welcome View -->
             <div id="welcome-view">
                 <h1 class="welcome-text">Hi, <span id="welcomeName">User</span></h1>
                 <h2 class="sub-welcome">What should we discuss today?</h2>
             </div>
 
             <!-- Chat History -->
-            <div class="messages-container" id="messages">
-                <!-- Messages will be injected here -->
-            </div>
+            <div class="messages-container" id="messages"></div>
 
-            <!-- Suggestion Chips (Initially Visible) -->
+            <!-- Suggestions -->
             <div class="suggestions-area" id="initialSuggestions">
                 <div class="suggestion-chip" onclick="startTopic('Explain Pointers')">Explain Pointers</div>
                 <div class="suggestion-chip" onclick="startTopic('How to write a Loop')">Write a Loop</div>
                 <div class="suggestion-chip" onclick="startTopic('Debug my code')">Debug Code</div>
             </div>
 
-            <!-- Floating Input -->
+            <!-- Input -->
             <div class="input-wrapper">
-                <textarea id="userInput" placeholder="Ask a question about C..." rows="1" oninput="autoResize(this)" onkeypress="handleKeyPress(event)"></textarea>
-                <button class="send-icon-btn" onclick="sendMessage()" id="sendBtn">
-                    <!-- Send Icon SVG -->
+                <textarea id="userInput" placeholder="Ask a question..." rows="1" oninput="autoResize(this)" onkeypress="handleKeyPress(event)"></textarea>
+                <button class="send-icon-btn" onclick="sendMessage()">
                     <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>
                 </button>
             </div>
         </div>
 
-        <!-- RIGHT SIDE: RESOURCES -->
+        <!-- RESOURCES -->
         <div class="resources-section">
             <div class="res-header">SOURCES & CONTEXT</div>
-            <div class="sources-list" id="sourcesList">
-                <div style="color: #666; font-style: italic; text-align: center; margin-top: 40px; font-size:0.9rem;">
-                    Relevant materials will appear here as we chat.
-                </div>
-            </div>
+            <div class="sources-list" id="sourcesList"></div>
         </div>
 
     </div>
@@ -318,161 +328,53 @@
 <script>
     const API_URL = "http://127.0.0.1:8000";
     let currentUser = null;
-    let isFirstMessage = true;
+    let currentSessionId = null;
     let activeChallenge = null;
 
-    // --- UI HELPERS ---
-    function autoResize(textarea) {
-        textarea.style.height = 'auto';
-        textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
-    }
-
-    function toggleAuth(view) {
-        document.getElementById('loginError').style.display = 'none';
-        document.getElementById('signupError').style.display = 'none';
-        document.getElementById('signupSuccess').style.display = 'none';
-        
-        if (view === 'signup') {
-            document.getElementById('loginForm').classList.add('hidden');
-            document.getElementById('signupForm').classList.remove('hidden');
-        } else {
-            document.getElementById('signupForm').classList.add('hidden');
-            document.getElementById('loginForm').classList.remove('hidden');
-        }
-    }
-
-    // --- AUTH LOGIC ---
-    async function performLogin() {
-        const u = document.getElementById('loginUser').value;
-        const p = document.getElementById('loginPass').value;
-        
-        try {
-            const res = await fetch(`${API_URL}/api/v1/auth/login`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({username: u, password: p})
-            });
-            const result = await res.json();
-
-            if (res.ok) {
-                currentUser = result.user;
-                localStorage.setItem('c_tutor_user', JSON.stringify(currentUser));
-                routeUser();
-            } else {
-                showError('loginError', result.detail || "Invalid credentials");
-            }
-        } catch (e) { showError('loginError', "Connection failed"); }
-    }
-
-    async function performSignup() {
-        // ... (Same logic as before, just ensuring IDs match) ...
-        const data = {
-            name: document.getElementById('signName').value,
-            email: document.getElementById('signEmail').value,
-            username: document.getElementById('signUser').value,
-            password: document.getElementById('signPass').value,
-            university: document.getElementById('signUni').value,
-            department: document.getElementById('signDept').value,
-            interest: document.getElementById('signInterest').value
-        };
-
-        try {
-            const res = await fetch(`${API_URL}/api/v1/auth/signup`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
-            });
-            if (res.ok) {
-                document.getElementById('signupSuccess').innerText = "Success! Please login.";
-                document.getElementById('signupSuccess').style.display = 'block';
-                setTimeout(() => toggleAuth('login'), 1500);
-            } else {
-                const err = await res.json();
-                showError('signupError', err.detail);
-            }
-        } catch (e) { showError('signupError', "Connection failed"); }
-    }
-
-    function showError(elemId, msg) {
-        const el = document.getElementById(elemId);
-        el.innerText = msg;
-        el.style.display = 'block';
-    }
-
-    function routeUser() {
-        if(currentUser.role === 'teacher') window.location.href = 'teacher_dashboard.html';
-        else initializeApp();
-    }
-
-    function initializeApp() {
-        document.getElementById('auth-screen').style.display = 'none';
-        document.getElementById('app-screen').style.display = 'block';
-        document.getElementById('welcomeName').innerText = currentUser.name || currentUser.username;
-        document.getElementById('roleBadge').innerText = currentUser.role.toUpperCase();
-        isFirstMessage = true;
-    }
-
-    function logout() {
-        localStorage.removeItem('c_tutor_user');
-        location.reload();
-    }
-
-    function openDashboard() {
-        window.location.href = currentUser.role === 'teacher' ? 'teacher_dashboard.html' : 'student_dashboard.html';
-    }
-
-    // --- CHAT LOGIC ---
-    function startTopic(text) {
+    // --- 1. GLOBAL FUNCTIONS (So buttons can find them) ---
+    window.startTopic = function(text) {
         document.getElementById('userInput').value = text;
         sendMessage();
-    }
+    };
 
-    function handleKeyPress(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    }
-
-    function hideWelcomeScreen() {
-        if(isFirstMessage) {
-            document.getElementById('welcome-view').style.opacity = '0';
-            document.getElementById('initialSuggestions').style.display = 'none';
-            setTimeout(() => {
-                document.getElementById('welcome-view').style.display = 'none';
-            }, 500);
-            isFirstMessage = false;
-        }
-    }
-
-    async function sendMessage(overrideText = null) {
+    window.sendMessage = async function(overrideText = null) {
         const input = document.getElementById('userInput');
         const rawText = overrideText || input.value.trim();
+        
+        console.log("Sending:", rawText); // DEBUG LOG
+
         if (!rawText) return;
 
-        hideWelcomeScreen();
+        // Hide Welcome Screen if visible
+        const welcome = document.getElementById('welcome-view');
+        if (welcome) welcome.style.display = 'none';
+        const initialSug = document.getElementById('initialSuggestions');
+        if (initialSug) initialSug.style.display = 'none';
 
-        // Display User Message
-        let displayHtml = rawText.replace(/\n/g, '<br>');
-        if (rawText.includes('{') || rawText.includes(';')) displayHtml = `<pre><code class="language-c">${rawText.replace(/</g, '&lt;')}</code></pre>`;
-        
+        // 1. Add User Message
         const userDiv = document.createElement('div');
         userDiv.className = 'message user';
-        userDiv.innerHTML = displayHtml;
+        let displayText = rawText.replace(/\n/g, '<br>');
+        if (rawText.includes('{') || rawText.includes(';')) {
+            displayText = `<pre><code class="language-c">${rawText.replace(/</g, '&lt;')}</code></pre>`;
+        }
+        userDiv.innerHTML = displayText;
         document.getElementById('messages').appendChild(userDiv);
-        
-        // Highlight user code immediately
         Prism.highlightAllUnder(userDiv);
 
+        // Clear Input
         input.value = '';
         input.style.height = 'auto';
         scrollToBottom();
 
-        // Bot Placeholder with Progress
+        // 2. Add Bot Placeholder
         const botDiv = document.createElement('div');
         botDiv.className = 'message bot';
         const progId = `prog-${Date.now()}`;
         botDiv.innerHTML = `
             <div class="progress-step-container">
                 <div class="progress-step-text">
-                    <span id="txt-${progId}">Thinking...</span> <span id="pct-${progId}">0%</span>
+                    <span>Thinking...</span> <span id="pct-${progId}">0%</span>
                 </div>
                 <div class="progress-step-track">
                     <div id="bar-${progId}" class="progress-step-fill" style="width:5%"></div>
@@ -480,7 +382,7 @@
             </div>`;
         document.getElementById('messages').appendChild(botDiv);
 
-        // Context Logic
+        // 3. Prepare Payload
         let textToSend = rawText;
         if (activeChallenge) {
             textToSend = `[CONTEXT: Challenge "${activeChallenge}"]\n\n${rawText}`;
@@ -488,10 +390,17 @@
         }
 
         try {
+            const payload = { 
+                message: textToSend, 
+                user_role: currentUser.role, 
+                username: currentUser.username,
+                session_id: currentSessionId
+            };
+
             const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: textToSend, user_role: currentUser.role, username: currentUser.username })
+                body: JSON.stringify(payload)
             });
 
             const reader = response.body.getReader();
@@ -508,95 +417,261 @@
                         try {
                             const data = JSON.parse(line.slice(6));
                             
-                            // Update Progress
                             if (data.type === 'status') {
-                                document.getElementById(`txt-${progId}`).innerText = data.message;
-                                document.getElementById(`pct-${progId}`).innerText = data.percent + "%";
-                                document.getElementById(`bar-${progId}`).style.width = data.percent + "%";
+                                const pctEl = document.getElementById(`pct-${progId}`);
+                                const barEl = document.getElementById(`bar-${progId}`);
+                                if(pctEl && barEl) {
+                                    pctEl.innerText = data.percent + "%";
+                                    barEl.style.width = data.percent + "%";
+                                }
                             }
-                            // Stream Text
                             else if (data.type === 'token' || data.type === 'answer') {
                                 currentMarkdown += data.text;
                                 botDiv.innerHTML = marked.parse(currentMarkdown);
                                 scrollToBottom();
                             }
-                            // Finalize
                             else if (data.type === 'complete') {
+                                if (data.data.session_id) currentSessionId = data.data.session_id;
+                                
                                 botDiv.innerHTML = marked.parse(data.data.answer);
                                 displaySources(data.data.sources);
                                 renderDiagrams(botDiv);
                                 Prism.highlightAllUnder(botDiv);
                                 
-                                // Show suggestions if available (re-using the bottom area if needed or inline)
-                                // Ideally inline for chat flow
+                                // RENDER SUGGESTIONS (The Fix)
+                                displaySuggestions(data.data.suggestions, botDiv);
+                                loadChatHistory(); 
                             }
-                        } catch(e) {}
+                        } catch(e) { console.warn(e); }
                     }
                 }
             }
         } catch (e) {
-            botDiv.innerHTML = "<span style='color:#ff897d'>Error connecting to server.</span>";
+            console.error(e);
+            botDiv.innerHTML = "<span style='color:#ff897d'>Connection failed.</span>";
         }
+    };
+
+    // --- 2. SUGGESTION RENDERER (Crucial) ---
+    function displaySuggestions(suggestions, container) {
+        if (!suggestions || suggestions.length === 0) return;
+
+        const suggestionsDiv = document.createElement('div');
+        suggestionsDiv.className = 'bot-suggestions';
+
+        suggestions.forEach(text => {
+            const btn = document.createElement('button');
+            btn.className = 'suggestion-btn';
+
+            if (text.toLowerCase().startsWith('challenge')) {
+                btn.classList.add('challenge');
+                btn.innerText = "💪 " + text.replace('Challenge:', '').trim();
+                btn.onclick = function() { 
+                    activeChallenge = text.replace('Challenge:', '').trim();
+                    window.sendMessage(`I accept the challenge: ${activeChallenge}`); 
+                };
+            } else {
+                btn.innerText = text;
+                // Explicitly bind the click
+                btn.addEventListener('click', function() {
+                    console.log("Suggestion clicked:", text);
+                    window.sendMessage(text);
+                });
+            }
+            suggestionsDiv.appendChild(btn);
+        });
+
+        container.appendChild(suggestionsDiv);
     }
 
+    // --- 3. OTHER UI FUNCTIONS ---
     function displaySources(sources) {
         const list = document.getElementById('sourcesList');
-        list.innerHTML = ''; 
-        if(!sources || sources.length === 0) {
-            list.innerHTML = '<div style="color:#666; text-align:center; padding-top:20px;">No specific references used.</div>';
-            return;
-        }
-
+        list.innerHTML = '';
+        if(!sources || sources.length === 0) return;
+        
         const unique = new Map();
         sources.forEach(s => unique.set(s.document_name, s));
-
         unique.forEach(s => {
-            const isCode = s.document_name.endsWith('.c');
-            let content = s.chunk_text || "";
-            if(isCode) content = `<pre><code class="language-c">${content.replace(/</g, '&lt;')}</code></pre>`;
-            else content = marked.parse(content);
-
             const div = document.createElement('div');
             div.className = 'source-card';
-            div.innerHTML = `
-                <div class="source-title">
-                    <span>📄 ${s.document_name}</span>
-                </div>
-                <div class="source-content">${content}</div>
-            `;
+            div.innerHTML = `<div class="source-title">📄 ${s.document_name}</div><div class="source-content">${marked.parse(s.chunk_text || "")}</div>`;
             list.appendChild(div);
         });
         Prism.highlightAllUnder(list);
     }
 
     async function renderDiagrams(container) {
-        const codeBlocks = container.querySelectorAll('code');
-        for (const block of codeBlocks) {
-            const text = block.textContent.trim();
-            if (text.startsWith('graph TD') || text.startsWith('graph LR')) {
+        const blocks = container.querySelectorAll('code');
+        for (const block of blocks) {
+            if (block.textContent.trim().startsWith('graph ')) {
                 try {
                     const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
-                    const { svg } = await window.mermaid.render(id, text);
+                    const { svg } = await window.mermaid.render(id, block.textContent);
                     const div = document.createElement('div');
-                    div.innerHTML = svg;
-                    div.style.textAlign = 'center';
+                    div.innerHTML = svg; div.style.textAlign='center';
                     block.replaceWith(div);
                 } catch (e) {}
             }
         }
     }
 
-    function scrollToBottom() {
-        const c = document.getElementById('messages');
-        c.scrollTop = c.scrollHeight;
+    function autoResize(textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
     }
 
-    // Load Session
-    const stored = localStorage.getItem('c_tutor_user');
-    if(stored) {
-        currentUser = JSON.parse(stored);
-        routeUser();
+    function toggleAuth(view) {
+        document.getElementById('loginForm').classList.toggle('hidden', view === 'signup');
+        document.getElementById('signupForm').classList.toggle('hidden', view !== 'signup');
     }
+
+    function handleKeyPress(e) { 
+        if (e.key === 'Enter' && !e.shiftKey) { 
+            e.preventDefault(); 
+            window.sendMessage(); 
+        } 
+    }
+
+    function scrollToBottom() { 
+        const c = document.getElementById('messages'); 
+        c.scrollTop = c.scrollHeight; 
+    }
+
+    // --- 4. AUTH & LOAD ---
+    async function performLogin() {
+        const u = document.getElementById('loginUser').value;
+        const p = document.getElementById('loginPass').value;
+        try {
+            const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: u, password: p})
+            });
+            const result = await res.json();
+            if (res.ok) {
+                currentUser = result.user;
+                localStorage.setItem('c_tutor_user', JSON.stringify(currentUser));
+                routeUser();
+            } else {
+                document.getElementById('loginError').innerText = result.detail;
+                document.getElementById('loginError').style.display = 'block';
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    async function performSignup() {
+        // (Keep your existing signup logic)
+        const data = {
+            name: document.getElementById('signName').value,
+            email: document.getElementById('signEmail').value,
+            username: document.getElementById('signUser').value,
+            password: document.getElementById('signPass').value,
+            university: document.getElementById('signUni').value,
+            department: document.getElementById('signDept').value,
+            interest: document.getElementById('signInterest').value
+        };
+        try {
+            const res = await fetch(`${API_URL}/api/v1/auth/signup`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                document.getElementById('signupSuccess').innerText = "Account created!";
+                document.getElementById('signupSuccess').style.display = 'block';
+                setTimeout(() => toggleAuth('login'), 1500);
+            } else {
+                const err = await res.json();
+                document.getElementById('signupError').innerText = err.detail;
+                document.getElementById('signupError').style.display = 'block';
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    function routeUser() {
+        if(currentUser.role === 'teacher') window.location.href = 'teacher_dashboard.html';
+        else initializeApp();
+    }
+
+    function initializeApp() {
+        document.getElementById('auth-screen').style.display = 'none';
+        document.getElementById('app-screen').style.display = 'block';
+        document.getElementById('welcomeName').innerText = currentUser.name || currentUser.username;
+        document.getElementById('roleBadge').innerText = currentUser.role.toUpperCase();
+        loadChatHistory();
+    }
+
+    function logout() { localStorage.removeItem('c_tutor_user'); location.reload(); }
+    function openDashboard() { window.location.href = currentUser.role === 'teacher' ? 'teacher_dashboard.html' : 'student_dashboard.html'; }
+    
+    // --- 5. HISTORY & SIDEBAR ---
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('collapsed');
+    }
+
+    async function loadChatHistory() {
+        if (!currentUser) return;
+        try {
+            const res = await fetch(`${API_URL}/api/v1/history/sessions?username=${currentUser.username}`);
+            const sessions = await res.json();
+            const list = document.getElementById('historyList');
+            list.innerHTML = '';
+
+            sessions.forEach(s => {
+                const item = document.createElement('div');
+                item.className = 'history-item';
+                if(s.id === currentSessionId) item.classList.add('active');
+                item.innerText = s.title || "Chat";
+                item.onclick = () => loadSession(s.id);
+                list.appendChild(item);
+            });
+        } catch (e) { console.error("History load error", e); }
+    }
+
+    async function loadSession(sessionId) {
+        currentSessionId = sessionId;
+        document.getElementById('welcome-view').style.display = 'none';
+        document.getElementById('initialSuggestions').style.display = 'none';
+        
+        const msgDiv = document.getElementById('messages');
+        msgDiv.innerHTML = '<div style="text-align:center; color:#666; margin-top:20px;">Loading...</div>';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/history/session/${sessionId}?username=${currentUser.username}`);
+            const sessionData = await res.json();
+            
+            msgDiv.innerHTML = '';
+            
+            sessionData.messages.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = `message ${msg.role}`;
+                if (msg.role === 'user') {
+                    let text = msg.content.replace(/\n/g, '<br>');
+                    if (text.includes('{') || text.includes(';')) text = `<pre><code class="language-c">${text.replace(/</g, '&lt;')}</code></pre>`;
+                    div.innerHTML = text;
+                } else {
+                    div.innerHTML = marked.parse(msg.content);
+                    renderDiagrams(div);
+                }
+                msgDiv.appendChild(div);
+            });
+            Prism.highlightAllUnder(msgDiv);
+            scrollToBottom();
+            loadChatHistory();
+        } catch (e) { console.error("Session load error", e); }
+    }
+
+    function startNewChat() {
+        currentSessionId = null;
+        document.getElementById('messages').innerHTML = '';
+        document.getElementById('sourcesList').innerHTML = '';
+        document.getElementById('welcome-view').style.display = 'flex';
+        document.getElementById('welcome-view').style.opacity = '1';
+        document.getElementById('initialSuggestions').style.display = 'flex';
+        document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
+    }
+
+    // Init
+    const stored = localStorage.getItem('c_tutor_user');
+    if(stored) { currentUser = JSON.parse(stored); routeUser(); }
 </script>
 </body>
 </html>

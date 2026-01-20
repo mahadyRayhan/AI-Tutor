@@ -149,6 +149,7 @@ class ChatRequest(BaseModel):
     message: str
     user_role: Optional[str] = "student"
     username: Optional[str] = "anonymous"  # <--- CRITICAL
+    session_id: Optional[str] = None 
     
     # Old legacy fields (keep them to prevent validation errors if UI sends them)
     socratic: Optional[bool] = False
@@ -161,66 +162,83 @@ class ChatRequest(BaseModel):
 async def health():
     return {"status": "healthy", "agent_ready": cot_rag_agent is not None}
 
-
 @app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest):
     """
-    Stream the response from the C Tutor Agent.
+    Stream the response AND save to session history.
     """
+    # Create session if new
+    session_id = request.session_id
+    if not session_id:
+        session_id = history_manager.create_session(request.username)
+
+    # --- FETCH CONTEXT ---
+    # Get the last few messages to find the active topic
+    session_data = history_manager.get_session_details(request.username, session_id)
+    last_context = ""
+    
+    if session_data and session_data.get("messages"):
+        # Look backwards for the last BOT message to find what we were talking about
+        for msg in reversed(session_data["messages"]):
+            if msg["role"] == "bot":
+                # We simply use the previous answer as context, or if you saved 'topic' metadata, use that.
+                # For now, let's pass the last 200 chars of the previous bot response as context.
+                last_context = msg["content"][:200]
+                break
+    # --------------------------
+
+    # Save USER message immediately
+    history_manager.add_message(request.username, session_id, "user", request.message)
+
     async def generate_stream():
         if not cot_rag_agent:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
             return
 
-        try:
-            # Get User Info
-            user_id = request.username if request.username else "anonymous"
-            user_goal = knowledge_manager.get_goal(user_id)
+        full_bot_response = ""
+        final_sources = []
 
-            # --- CALL THE NEW STREAMING METHOD ---
+        try:
+            user_goal = knowledge_manager.get_goal(request.username)
+
             async for event in cot_rag_agent.run_stream(
                 request.message, 
                 request.user_role, 
-                username=user_id,
-                user_goal=user_goal
+                username=request.username,
+                user_goal=user_goal,
+                conversation_context=last_context
             ):
-                # Send Event to Frontend
-                yield f"data: {json.dumps(event)}\n\n"
+                # Capture text for history
+                if event["type"] in ["token", "answer"]:
+                    full_bot_response += event.get("text", "")
                 
-                # --- LOGGING ---
-                # We only log when the "complete" event arrives because that has the full answer
+                # Capture sources/metadata for history
                 if event["type"] == "complete":
-                    try:
-                        final_data = event["data"]
-                        # Detect Topic
-                        sources = final_data.get('sources', [])
-                        detected_topic = sources[0].get('topic', 'General') if sources else "General"
-                        if final_data['intent'] == "GUIDANCE": detected_topic = "Prerequisite Check"
+                    final_data = event["data"]
+                    # If stream logic varies, ensure we capture the final answer text here too if needed
+                    if not full_bot_response: 
+                        full_bot_response = final_data.get('answer', '')
+                    final_sources = final_data.get('sources', [])
+                    
+                    # LOG ANALYTICS (Existing)
+                    history_manager.log_interaction(
+                        request.username, request.message, final_data['intent'], 
+                        final_data['answer'], "General"
+                    )
+                    
+                    # Send session_id back to client so they can attach it to next msg
+                    event["data"]["session_id"] = session_id 
 
-                        # Log
-                        history_manager.log_interaction(
-                            user_id, 
-                            request.message, 
-                            final_data['intent'], 
-                            final_data['answer'], 
-                            detected_topic
-                        )
-                    except Exception as log_err:
-                        logger.error(f"Logging failed: {log_err}")
+                yield f"data: {json.dumps(event)}\n\n"
+
+            # SAVE BOT MESSAGE to Session History
+            history_manager.add_message(request.username, session_id, "bot", full_bot_response, final_sources)
 
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
-    return StreamingResponse(
-        generate_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-    )
+    return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
 @app.get("/api/v1/config/topics")
 async def get_topics():
@@ -480,6 +498,20 @@ async def get_teacher_detailed_analytics():
         })
         
     return class_matrix
+
+@app.get("/api/v1/history/sessions")
+async def get_sessions(username: str):
+    """Get list of past conversations for sidebar."""
+    return history_manager.get_user_sessions_list(username)
+
+@app.get("/api/v1/history/session/{session_id}")
+async def get_session_chat(session_id: str, username: str):
+    """Get full chat log for a specific session."""
+    session = history_manager.get_session_details(username, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
 
 @app.post("/api/v1/user/goal")
 async def set_user_goal(req: GoalRequest):
