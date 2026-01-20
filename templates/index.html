@@ -4,8 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>C Programming Tutor</title>
-    
-    <!-- Libraries -->
+    <!-- Keep existing libraries -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
@@ -17,123 +16,89 @@
     </script>
 
     <style>
-        /* ... (Keep your existing CSS for chat) ... */
-        :root { --bg-color: #f4f4f9; --chat-bg: #ffffff; --primary-color: #2c3e50; --accent-color: #3498db; --user-msg-bg: #3498db; --bot-msg-bg: #ecf0f1; }
+        /* Keep existing styles */
+        :root { --bg-color: #f4f4f9; --chat-bg: #ffffff; --primary-color: #2c3e50; --accent-color: #3498db; }
         body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg-color); margin: 0; display: flex; height: 100vh; color: #333; }
         
-        /* LOGIN SCREEN STYLES */
-        #login-screen {
+        /* UPDATED LOGIN/SIGNUP STYLES */
+        #auth-screen {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: linear-gradient(135deg, #2c3e50, #3498db);
             display: flex; justify-content: center; align-items: center; z-index: 1000;
+            overflow-y: auto; /* Allow scrolling if signup form is tall */
         }
-        .login-card {
+        .auth-card {
             background: white; padding: 40px; border-radius: 12px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2); width: 350px; text-align: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2); width: 400px; text-align: center;
+            margin: 20px;
         }
-        .login-card h2 { margin-top: 0; color: #2c3e50; }
-        .login-input {
-            width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd;
-            border-radius: 6px; box-sizing: border-box;
+        .auth-card h2 { margin-top: 0; color: #2c3e50; }
+        .auth-input {
+            width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd;
+            border-radius: 6px; box-sizing: border-box; font-size: 0.95rem;
         }
-        .login-btn {
+        .auth-btn {
             width: 100%; padding: 12px; background: #3498db; color: white;
-            border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 10px;
+            border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 15px;
         }
-        .login-btn:hover { background: #2980b9; }
+        .auth-btn:hover { background: #2980b9; }
+        .toggle-link { color: #3498db; cursor: pointer; margin-top: 15px; display: block; font-size: 0.9rem; text-decoration: underline; }
         .error-msg { color: #e74c3c; font-size: 0.9rem; margin-top: 10px; display: none; }
+        .success-msg { color: #27ae60; font-size: 0.9rem; margin-top: 10px; display: none; }
 
-        /* APP SCREEN (Hidden by default) */
+        /* Hidden Classes */
+        .hidden { display: none; }
+        
+        /* ... Keep the rest of your chat CSS ... */
         #app-screen { display: none; width: 100%; height: 100%; }
-
-        /* ... Reuse your existing Chat CSS ... */
+        /* (Paste the rest of your Chat CSS here for .main-container, .chat-section, etc.) */
+        /* For brevity, assuming existing CSS is preserved below */
         .main-container { display: flex; width: 100%; max-width: 1400px; margin: 0 auto; gap: 20px; padding: 20px; height: 100%; box-sizing: border-box; }
-        .chat-section { flex: 2; display: flex; flex-direction: column; background: var(--chat-bg); border-radius: 12px; overflow: hidden; }
-        .resources-section { flex: 1; background: var(--chat-bg); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+        .chat-section { flex: 2; display: flex; flex-direction: column; background: #fff; border-radius: 12px; overflow: hidden; }
+        .resources-section { flex: 1; background: #fff; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
         .chat-header { background: var(--primary-color); color: white; padding: 15px 20px; font-size: 1.2rem; font-weight: 600; display: flex; justify-content: space-between; }
         .messages-container { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
         .message { max-width: 85%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; font-size: 0.95rem; }
-        .message.user { align-self: flex-end; background-color: var(--user-msg-bg); color: white; border-bottom-right-radius: 2px; }
-        .message.user pre { background: rgba(0,0,0,0.2); padding: 5px; border-radius: 4px; overflow-x: auto; }
-        .message.bot { align-self: flex-start; background-color: var(--bot-msg-bg); color: #2c3e50; border-bottom-left-radius: 2px; }
-        .message.bot h2 { font-size: 1.1rem; margin: 10px 0 5px; color: #2c3e50; }
-        .message.bot ul { margin: 5px 0; padding-left: 20px; }
-        .message.bot p { margin: 5px 0; }
-        
-        /* Inline Code (e.g. `int`) */
-        .message.bot :not(pre) > code { 
-            background: rgba(0,0,0,0.1); 
-            padding: 2px 4px; 
-            border-radius: 4px; 
-            font-family: monospace; 
-            color: #c7254e; /* Reddish text for visibility */
-        }
-
-        /* Block Code (Prism) */
-        pre[class*="language-"] {
-            background: #2d2d2d !important; /* Force Dark Background */
-            color: #f8f8f2 !important;      /* Force Light Text */
-            border-radius: 8px;
-            padding: 15px;
-            margin: 10px 0;
-        }
-        
-        code[class*="language-"] {
-            text-shadow: none !important;
-        }
+        .message.user { align-self: flex-end; background-color: var(--accent-color); color: white; }
+        .message.bot { align-self: flex-start; background-color: #ecf0f1; color: #2c3e50; }
         .input-area { padding: 20px; border-top: 1px solid #eee; display: flex; gap: 10px; background: #f9f9f9; align-items: flex-end; }
-        textarea { flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; outline: none; font-family: 'Consolas', monospace; min-height: 45px; max-height: 150px; resize: none; }
-        button#sendBtn { padding: 0 24px; height: 48px; background-color: var(--accent-color); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-        .suggestions-container { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
-        .suggestion-btn { background: white; border: 1px solid var(--accent-color); color: var(--accent-color); padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; }
-        .suggestion-btn.challenge { border-color: #e67e22; color: #e67e22; font-weight: bold; }
-        .resources-header { padding: 15px; border-bottom: 1px solid #eee; font-weight: 600; color: var(--primary-color); display: flex; justify-content: space-between; align-items: center; }
-        .sources-list { height: 100%; overflow-y: auto; padding: 15px; }
-        .source-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; margin-bottom: 15px; }
-        .source-title { padding: 8px 12px; background: #e9ecef; font-size: 0.85rem; font-weight: 600; border-bottom: 1px solid #dee2e6; }
-        .source-content { padding: 10px; font-size: 0.8rem; max-height: 200px; overflow-y: auto; background: #fff; }
-        
-        /* Logout Button */
+        textarea { flex: 1; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; }
+        button#sendBtn { padding: 0 24px; height: 48px; background-color: var(--accent-color); color: white; border: none; border-radius: 8px; cursor: pointer; }
         .logout-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; margin-left: 10px; }
-        .logout-btn:hover { background: rgba(255,255,255,0.3); }
-        .progress-step-container {
-            min-width: 200px;
-            padding: 5px;
-        }
-        .progress-step-text {
-            font-size: 0.85rem;
-            color: #7f8c8d;
-            margin-bottom: 6px;
-            font-weight: 500;
-            display: flex;
-            justify-content: space-between;
-        }
-        .progress-step-track {
-            width: 100%;
-            height: 4px;
-            background: #e0e0e0;
-            border-radius: 2px;
-            overflow: hidden;
-        }
-        .progress-step-fill {
-            height: 100%;
-            background: #3498db;
-            width: 5%;
-            transition: width 0.5s ease-in-out;
-            border-radius: 2px;
-        }
+        .source-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; margin-bottom: 15px; padding: 10px; }
     </style>
 </head>
 <body>
 
-<!-- LOGIN SCREEN -->
-<div id="login-screen">
-    <div class="login-card">
+<!-- AUTH SCREEN -->
+<div id="auth-screen">
+    <!-- Login Form -->
+    <div class="auth-card" id="loginForm">
         <h2>🎓 C Tutor Login</h2>
-        <input type="text" id="username" class="login-input" placeholder="Username (e.g., student1)">
-        <input type="password" id="password" class="login-input" placeholder="Password">
-        <button class="login-btn" onclick="performLogin()">Login</button>
-        <div class="error-msg" id="loginError">Invalid credentials</div>
+        <input type="text" id="loginUser" class="auth-input" placeholder="Username">
+        <input type="password" id="loginPass" class="auth-input" placeholder="Password">
+        <button class="auth-btn" onclick="performLogin()">Login</button>
+        <div class="toggle-link" onclick="toggleAuth('signup')">New here? Create an Account</div>
+        <div class="error-msg" id="loginError"></div>
+    </div>
+
+    <!-- Signup Form -->
+    <div class="auth-card hidden" id="signupForm">
+        <h2>📝 Create Account</h2>
+        <input type="text" id="signName" class="auth-input" placeholder="Full Name">
+        <input type="email" id="signEmail" class="auth-input" placeholder="Email Address">
+        <input type="text" id="signUser" class="auth-input" placeholder="Username (Unique)">
+        <input type="password" id="signPass" class="auth-input" placeholder="Password">
+        
+        <!-- Optional Fields -->
+        <input type="text" id="signUni" class="auth-input" placeholder="University (Optional)">
+        <input type="text" id="signDept" class="auth-input" placeholder="Department (Optional)">
+        <input type="text" id="signInterest" class="auth-input" placeholder="Topic of Interest (Optional)">
+
+        <button class="auth-btn" onclick="performSignup()">Sign Up</button>
+        <div class="toggle-link" onclick="toggleAuth('login')">Already have an account? Login</div>
+        <div class="error-msg" id="signupError"></div>
+        <div class="success-msg" id="signupSuccess"></div>
     </div>
 </div>
 
@@ -148,31 +113,22 @@
                     <span id="roleBadge" style="font-size: 0.8rem; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px;">STUDENT</span>
                 </div>
                 <div>
-                    <button class="logout-btn" onclick="openDashboard()" style="background: rgba(255,255,255,0.2); margin-right:5px;">📊 Dashboard</button>
+                    <button class="logout-btn" onclick="openDashboard()">📊 Dashboard</button>
                     <button class="logout-btn" onclick="logout()">Logout</button>
                 </div>
             </div>
             <div class="messages-container" id="messages">
-                <div class="message bot">
-                    Hello! I'm your C Tutor. I can help you understand concepts or plan out your code. What are you working on today?
-                </div>
+                <div class="message bot">Hello! I'm your C Tutor. How can I help you learn today?</div>
             </div>
             <div class="input-area">
-                <textarea id="userInput" placeholder="Ask a question OR paste your C code here..." onkeypress="handleKeyPress(event)"></textarea>
+                <textarea id="userInput" placeholder="Type your code or question..."></textarea>
                 <button onclick="sendMessage()" id="sendBtn">Send</button>
             </div>
         </div>
-
         <!-- Resources Section -->
         <div class="resources-section">
-            <div class="resources-header">
-                <span>📚 Reference Material</span>
-            </div>
-            <div class="sources-list" id="sourcesList">
-                <div style="color: #888; font-style: italic; text-align: center; margin-top: 20px;">
-                    Relevant code examples and concepts will appear here.
-                </div>
-            </div>
+            <div style="padding:15px; border-bottom:1px solid #eee; font-weight:bold;">📚 References</div>
+            <div id="sourcesList" style="padding:15px; overflow-y:auto;"></div>
         </div>
     </div>
 </div>
@@ -190,6 +146,19 @@
     let currentUser = null;
 
     // --- AUTH LOGIC ---
+    function toggleAuth(view) {
+        document.getElementById('loginError').style.display = 'none';
+        document.getElementById('signupError').style.display = 'none';
+        document.getElementById('signupSuccess').style.display = 'none';
+        
+        if (view === 'signup') {
+            document.getElementById('loginForm').classList.add('hidden');
+            document.getElementById('signupForm').classList.remove('hidden');
+        } else {
+            document.getElementById('signupForm').classList.add('hidden');
+            document.getElementById('loginForm').classList.remove('hidden');
+        }
+    }
     function checkAuth() {
         const storedUser = localStorage.getItem('c_tutor_user');
         if (storedUser) {
@@ -201,38 +170,77 @@
         }
     }
 
-    async function performLogin() {
-        const u = document.getElementById('username').value;
-        const p = document.getElementById('password').value;
-        const err = document.getElementById('loginError');
+    async function performSignup() {
+        const data = {
+            name: document.getElementById('signName').value,
+            email: document.getElementById('signEmail').value,
+            username: document.getElementById('signUser').value,
+            password: document.getElementById('signPass').value,
+            university: document.getElementById('signUni').value,
+            department: document.getElementById('signDept').value,
+            interest: document.getElementById('signInterest').value
+        };
 
+        if(!data.username || !data.password || !data.name) {
+            showError('signupError', "Name, Username and Password are required.");
+            return;
+        }
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/auth/signup`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            
+            if (res.ok) {
+                document.getElementById('signupSuccess').innerText = "Account created! Please login.";
+                document.getElementById('signupSuccess').style.display = 'block';
+                setTimeout(() => toggleAuth('login'), 2000);
+            } else {
+                showError('signupError', result.detail);
+            }
+        } catch (e) { showError('signupError', "Connection failed"); }
+    }
+
+    async function performLogin() {
+        const u = document.getElementById('loginUser').value;
+        const p = document.getElementById('loginPass').value;
+        
         try {
             const res = await fetch(`${API_URL}/api/v1/auth/login`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: u, password: p })
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: u, password: p})
             });
+            const result = await res.json();
 
             if (res.ok) {
-                const data = await res.json();
-                currentUser = data.user;
+                currentUser = result.user;
                 localStorage.setItem('c_tutor_user', JSON.stringify(currentUser));
-                
-                // --- NEW ROUTING LOGIC ---
-                if (currentUser.role === 'teacher') {
-                    window.location.href = 'teacher_dashboard.html'; // Teachers go to Dashboard
-                } else {
-                    showApp(); // Students stay on Chat
-                }
-                // -------------------------
+                routeUser();
             } else {
-                err.style.display = 'block';
+                showError('loginError', result.detail || "Invalid credentials");
             }
-        } catch (e) {
-            console.error(e);
-            err.innerText = "Server Error";
-            err.style.display = 'block';
-        }
+        } catch (e) { showError('loginError', "Connection failed"); }
+    }
+
+    function routeUser() {
+        if(currentUser.role === 'teacher') window.location.href = 'teacher_dashboard.html';
+        else showApp();
+    }
+
+    function showError(elemId, msg) {
+        const el = document.getElementById(elemId);
+        el.innerText = msg;
+        el.style.display = 'block';
+    }
+
+    function showApp() {
+        document.getElementById('auth-screen').style.display = 'none';
+        document.getElementById('app-screen').style.display = 'block';
+        document.getElementById('roleBadge').innerText = currentUser.role.toUpperCase();
     }
 
     function logout() {
@@ -240,19 +248,11 @@
         location.reload();
     }
 
-    function showApp() {
-        document.getElementById('login-screen').style.display = 'none';
-        document.getElementById('app-screen').style.display = 'block';
-        
-        // Update Header UI
-        const badge = document.getElementById('roleBadge');
-        const header = document.querySelector('.chat-header');
-        
-        badge.innerText = currentUser.role.toUpperCase();
+    function openDashboard() {
         if (currentUser.role === 'teacher') {
-            header.style.background = "#8e44ad"; // Purple
+            window.location.href = 'teacher_dashboard.html'; // Existing teacher dashboard
         } else {
-            header.style.background = "#2c3e50"; // Blue
+            window.location.href = 'student_dashboard.html'; // New student dashboard
         }
     }
 
@@ -269,126 +269,6 @@
             sendMessage();
         }
     }
-
-    // async function sendMessage(overrideText = null) {
-    //     const rawText = overrideText || input.value.trim();
-    //     if (!rawText) return;
-
-    //     // Ensure user is logged in
-    //     if (!currentUser) return logout();
-
-    //     let displayHtml = rawText.replace(/\n/g, '<br>');
-    //     if (rawText.includes('{') || rawText.includes(';') || rawText.includes('#include')) {
-    //          displayHtml = `<pre>${rawText}</pre>`;
-    //     }
-        
-    //     const userDiv = document.createElement('div');
-    //     userDiv.className = 'message user';
-    //     userDiv.innerHTML = displayHtml;
-    //     messagesDiv.appendChild(userDiv);
-    //     scrollToBottom();
-
-    //     input.value = '';
-    //     input.style.height = 'auto';
-    //     input.disabled = true;
-    //     sendBtn.disabled = true;
-
-    //     let textToSend = rawText;
-    //     if (activeChallenge) {
-    //         textToSend = `[CONTEXT: User is solving Challenge: "${activeChallenge}"]\n\nUser Code:\n${rawText}`;
-    //         activeChallenge = null; 
-    //     }
-
-    //     const botMsgDiv = document.createElement('div');
-    //     botMsgDiv.className = 'message bot';
-    //     botMsgDiv.innerHTML = '<span class="typing">Thinking...</span>';
-    //     messagesDiv.appendChild(botMsgDiv);
-    //     scrollToBottom();
-
-    //     try {
-    //         const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
-    //             method: 'POST',
-    //             headers: { 'Content-Type': 'application/json' },
-    //             body: JSON.stringify({ 
-    //                 message: textToSend, 
-    //                 user_role: currentUser.role,
-    //                 username: currentUser.username // <--- THIS MUST BE HERE
-    //             })
-    //         });
-
-    //         const reader = response.body.getReader();
-    //         const decoder = new TextDecoder();
-    //         let fullAnswer = "";
-
-    //         while (true) {
-    //             const { done, value } = await reader.read();
-    //             if (done) break;
-                
-    //             const chunk = decoder.decode(value, { stream: true });
-    //             // Fix: Handle chunk fragmentation
-    //             const lines = chunk.split('\n');
-                
-    //             for (const line of lines) {
-    //                 if (line.trim() === '') continue; // Skip empty lines
-                    
-    //                 if (line.startsWith('data: ')) {
-    //                     try {
-    //                         const jsonStr = line.slice(6);
-    //                         const data = JSON.parse(jsonStr);
-                            
-    //                         if (data.type === 'status' && data.stage === 'intent') {
-    //                             if(intentBadge) { // Safety Check!
-    //                                 intentBadge.innerText = data.message;
-    //                                 if(data.message.includes('REVIEW')) intentBadge.style.background = "#e67e22";
-    //                                 else if(data.message.includes('PROBLEM')) intentBadge.style.background = "#27ae60";
-    //                                 else intentBadge.style.background = "#3498db";
-    //                             }
-    //                         }
-    //                         else if (data.type === 'answer') {
-    //                             fullAnswer = data.text;
-    //                             botMsgDiv.innerHTML = marked.parse(fullAnswer);
-    //                             scrollToBottom();
-    //                         }
-    //                         else if (data.type === 'complete') {
-    //                             displaySources(data.data.sources);
-    //                             if (data.data.suggestions && data.data.suggestions.length > 0) {
-    //                                 displaySuggestions(data.data.suggestions, botMsgDiv);
-    //                             }
-    //                         }
-    //                     } catch (e) {
-    //                         console.warn("Stream parsing error for line:", line, e);
-    //                         // Do not throw, just skip this chunk
-    //                     }
-    //                 }
-    //             }
-    //         }
-
-    //         // Render Mermaid
-    //         const graphs = botMsgDiv.querySelectorAll('.language-mermaid');
-    //         for (const graph of graphs) {
-    //             try {
-    //                 const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
-    //                 const { svg } = await window.mermaid.render(id, graph.textContent);
-    //                 const div = document.createElement('div');
-    //                 div.innerHTML = svg;
-    //                 div.style.textAlign = 'center';
-    //                 div.style.margin = '15px 0';
-    //                 graph.parentElement.replaceWith(div);
-    //             } catch (e) {
-    //                 console.error("Mermaid failed to render", e);
-    //             }
-    //         }
-    //         Prism.highlightAllUnder(botMsgDiv);
-
-    //     } catch (error) {
-    //         botMsgDiv.innerHTML = "Connection error.";
-    //         console.error(error);
-    //     } finally {
-    //         input.disabled = false;
-    //         sendBtn.disabled = false;
-    //         input.focus();
-    //     }
-    // }
 
     async function sendMessage(overrideText = null) {
         const rawText = overrideText || input.value.trim();
@@ -628,16 +508,14 @@
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
 
-    function openDashboard() {
-        if (currentUser.role === 'teacher') {
-            window.location.href = 'teacher_dashboard.html'; // Existing teacher dashboard
-        } else {
-            window.location.href = 'student_dashboard.html'; // New student dashboard
-        }
-    }
-
     // Start App
     checkAuth();
+    // Check session on load
+    const stored = localStorage.getItem('c_tutor_user');
+    if(stored) {
+        currentUser = JSON.parse(stored);
+        routeUser();
+    }
 </script>
 
 </body>

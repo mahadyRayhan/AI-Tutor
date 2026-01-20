@@ -1,0 +1,12 @@
+user dashboard:
+1. polish design
+2. add more user statistics
+3. fix wording
+
+Teacher dashboard:
+1. add more statistics
+2. load distinct users info and pass guidelines
+
+main chat interface:
+1. load history of conversation
+2. fix data visualization issues

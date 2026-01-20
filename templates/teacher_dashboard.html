@@ -2,69 +2,142 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Teacher Command Center</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
-        .container { max-width: 1200px; margin: 0 auto; }
+        :root {
+            --primary: #8e44ad;
+            --secondary: #2c3e50;
+            --success: #27ae60;
+            --danger: #e74c3c;
+            --light: #f4f4f9;
+            --white: #ffffff;
+        }
+
+        body { font-family: 'Segoe UI', sans-serif; background: var(--light); padding: 20px; color: #333; margin: 0; }
+        .container { max-width: 1400px; margin: 0 auto; }
         
-        /* Header */
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-        .header h1 { margin: 0; color: #8e44ad; font-size: 1.5rem; }
-        .nav-btn { padding: 10px 20px; background: #2c3e50; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 0.9rem; }
-        .nav-btn:hover { background: #34495e; }
+        /* --- HEADER --- */
+        .header { 
+            display: flex; justify-content: space-between; align-items: center; 
+            margin-bottom: 25px; background: var(--white); padding: 20px 30px; 
+            border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .header h1 { margin: 0; color: var(--primary); font-size: 1.8rem; display: flex; align-items: center; gap: 10px; }
+        .nav-actions { display: flex; gap: 10px; }
+        .btn { 
+            padding: 10px 20px; border: none; border-radius: 6px; 
+            font-weight: 600; cursor: pointer; text-decoration: none; 
+            font-size: 0.9rem; transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.98); }
+        .btn-chat { background: var(--secondary); color: white; }
+        .btn-logout { background: var(--danger); color: white; }
 
-        /* Card Layout */
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
-        h2 { margin: 0 0 15px 0; color: #2c3e50; font-size: 1.2rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; }
+        /* --- LAYOUT GRID --- */
+        .grid-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr; /* Two columns */
+            gap: 25px;
+            margin-bottom: 25px;
+        }
+        .full-width { grid-column: span 2; }
 
-        /* Upload Section */
-        .upload-area { border: 2px dashed #bdc3c7; padding: 20px; text-align: center; border-radius: 8px; background: #fafafa; display: flex; flex-direction: column; gap: 10px; align-items: center; }
-        .upload-controls { display: flex; gap: 10px; }
-        select, input[type="file"] { padding: 8px; border-radius: 4px; border: 1px solid #ddd; }
-        .upload-btn { background: #8e44ad; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        .upload-btn:hover { background: #9b59b6; }
+        /* --- CARDS --- */
+        .card { 
+            background: var(--white); padding: 25px; 
+            border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); 
+            height: 100%; box-sizing: border-box; display: flex; flex-direction: column;
+        }
+        h2 { margin: 0 0 20px 0; color: var(--secondary); font-size: 1.3rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; }
 
-        /* Toggle Switches (Topic Control) */
-        .control-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
-        .topic-card { border: 1px solid #eee; padding: 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; background: #fff; }
-        .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+        /* --- USER TABLE STYLES (Fixed) --- */
+        .table-responsive { width: 100%; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 600px; }
+        th { background: #f8f9fa; color: #7f8c8d; font-weight: 700; text-transform: uppercase; font-size: 0.85rem; padding: 15px; text-align: left; }
+        td { padding: 15px; border-bottom: 1px solid #eee; font-size: 0.95rem; vertical-align: middle; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover { background: #fcfcfc; }
+
+        /* User Controls */
+        .role-select {
+            padding: 6px 10px; border-radius: 6px; border: 1px solid #ddd;
+            background: white; font-weight: 600; color: var(--secondary);
+            cursor: pointer;
+        }
+        .status-badge {
+            padding: 5px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+        }
+        .status-active { background: rgba(39, 174, 96, 0.15); color: var(--success); }
+        .status-blocked { background: rgba(231, 76, 60, 0.15); color: var(--danger); }
+
+        /* --- TOGGLE SWITCH --- */
+        .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
         .switch input { opacity: 0; width: 0; height: 0; }
         .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
-        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: #2ecc71; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--success); }
         input:checked + .slider:before { transform: translateX(20px); }
+        input:checked + .slider.danger { background-color: var(--danger); } /* Red toggle for blocking */
 
-        /* Student Matrix */
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 12px 15px; border-bottom: 1px solid #eee; text-align: left; font-size: 0.9rem; }
-        th { background: #f8f9fa; color: #7f8c8d; font-weight: 600; text-transform: uppercase; font-size: 0.8rem; }
-        tr:hover { background: #f9f9f9; }
-        .risk-high { color: #e74c3c; font-weight: bold; background: rgba(231, 76, 60, 0.1); padding: 4px 8px; border-radius: 4px; }
-        .risk-med { color: #f39c12; font-weight: bold; }
-        .risk-low { color: #27ae60; font-weight: bold; }
-        .action-btn { background: #3498db; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+        /* --- UPLOAD SECTION --- */
+        .upload-area { border: 2px dashed #bdc3c7; padding: 30px; text-align: center; border-radius: 8px; background: #fafafa; }
+        .upload-row { display: flex; gap: 10px; justify-content: center; margin-top: 15px; }
+        .upload-row select, .upload-row input { padding: 10px; border: 1px solid #ddd; border-radius: 6px; }
+        .btn-upload { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+
+        /* --- TOPIC VISIBILITY GRID --- */
+        .topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; }
+        .topic-item { border: 1px solid #eee; padding: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; background: #fff; }
+
+        /* --- RESPONSIVE --- */
+        @media (max-width: 900px) {
+            .grid-container { grid-template-columns: 1fr; }
+            .full-width { grid-column: span 1; }
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
+    <!-- HEADER -->
     <div class="header">
         <h1>👨‍🏫 Teacher Command Center</h1>
-        <div>
-            <a href="index.html" class="nav-btn">💬 Go to Chatbot</a>
-            <button onclick="logout()" class="nav-btn" style="background:#e74c3c; margin-left:10px;">Logout</button>
+        <div class="nav-actions">
+            <a href="index.html" class="btn btn-chat">💬 Go to Chatbot</a>
+            <button onclick="logout()" class="btn btn-logout">Logout</button>
         </div>
     </div>
 
-    <div class="grid-2">
-        <!-- 1. Resource Management -->
+    <!-- 1. USER MANAGEMENT (New & Improved) -->
+    <div class="grid-container">
+        <div class="card full-width">
+            <h2>🛠️ User Management</h2>
+            <div class="table-responsive">
+                <table id="userTable">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Name</th>
+                            <th>Role</th>
+                            <th>University</th>
+                            <th>Access Status</th>
+                        </tr>
+                    </thead>
+                    <tbody><!-- Loaded via JS --></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. RESOURCE & VISIBILITY -->
+    <div class="grid-container">
         <div class="card">
             <h2>📤 Resource Manager</h2>
             <div class="upload-area">
-                <p style="margin:0; color:#666; font-size:0.9rem;">Add new C files, Markdown concepts, or JSON Logic.</p>
-                <div class="upload-controls">
+                <p style="margin:0; color:#666;">Add new C files, Markdown concepts, or JSON Logic.</p>
+                <div class="upload-row">
                     <select id="resourceType">
                         <option value="code">C Code (.c)</option>
                         <option value="concept">Concept (.md)</option>
@@ -72,102 +145,164 @@
                     </select>
                     <input type="file" id="fileInput" multiple>
                 </div>
-                <button class="upload-btn" onclick="uploadFiles()">Upload & Re-Ingest</button>
-                <div id="uploadStatus" style="font-size:0.8rem; margin-top:5px;"></div>
+                <br>
+                <button class="btn-upload" onclick="uploadFiles()">Upload & Re-Ingest</button>
+                <div id="uploadStatus" style="margin-top:10px; font-weight:bold;"></div>
             </div>
         </div>
 
-        <!-- 2. Visibility Control -->
         <div class="card">
             <h2>👁️ Topic Visibility</h2>
-            <p style="margin:0 0 10px 0; color:#666; font-size:0.9rem;">Toggle to hide topics from students.</p>
-            <div id="topicGrid" class="control-grid">
-                <!-- Toggles loaded here -->
+            <div id="topicGrid" class="topic-grid">
+                <!-- Loaded via JS -->
             </div>
         </div>
     </div>
 
-    <!-- 3. Global Analytics -->
-    <div class="grid-2">
+    <!-- 3. ANALYTICS -->
+    <div class="grid-container">
         <div class="card">
             <h2>🔥 Topic Popularity</h2>
-            <canvas id="topicChart" height="200"></canvas>
+            <div style="flex:1; min-height:200px;"><canvas id="topicChart"></canvas></div>
         </div>
         <div class="card">
             <h2>⚠️ Class Struggle Areas</h2>
-            <canvas id="struggleChart" height="200"></canvas>
+            <div style="flex:1; min-height:200px;"><canvas id="struggleChart"></canvas></div>
         </div>
     </div>
 
-    <!-- 4. Student Performance Matrix -->
-    <div class="card">
-        <h2>🎓 Student Risk Matrix (Anonymized)</h2>
-        <table id="studentTable">
-            <thead>
-                <tr>
-                    <th>Student ID (Hash)</th>
-                    <th>Risk Level</th>
-                    <th>Strongest Topic</th>
-                    <th>Weakest Topic</th>
-                    <th>Last Active</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                <!-- Rows loaded here -->
-            </tbody>
-        </table>
+    <!-- 4. STUDENT PERFORMANCE -->
+    <div class="grid-container">
+        <div class="card full-width">
+            <h2>🎓 Student Risk Matrix</h2>
+            <div class="table-responsive">
+                <table id="riskTable">
+                    <thead>
+                        <tr>
+                            <th>Student ID</th>
+                            <th>Risk Level</th>
+                            <th>Strongest Topic</th>
+                            <th>Weakest Topic</th>
+                            <th>Last Active</th>
+                        </tr>
+                    </thead>
+                    <tbody><!-- Loaded via JS --></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </div>
 
 <script>
     const API_URL = "http://127.0.0.1:8000";
-
-    // --- AUTH ---
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
-    if (!currentUser || currentUser.role !== 'teacher') window.location.href = 'index.html';
+
+    // --- AUTH CHECK ---
+    if (!currentUser || currentUser.role !== 'teacher') {
+        window.location.href = 'index.html';
+    }
 
     function logout() {
         localStorage.removeItem('c_tutor_user');
         window.location.href = 'index.html';
     }
 
-    // --- HELPER: Anonymize ---
-    function anonymize(username) {
-        let hash = 0;
-        for (let i = 0; i < username.length; i++) hash = (hash << 5) - hash + username.charCodeAt(i);
-        return "ID-" + Math.abs(hash).toString(16).substring(0, 4).toUpperCase();
+    // --- 1. USER MANAGEMENT LOGIC ---
+    async function changeUserRole(username, newRole) {
+        if(confirm(`Are you sure you want to change ${username} to ${newRole}?`)) {
+            await fetch(`${API_URL}/api/v1/admin/users/update`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ target_username: username, new_role: newRole })
+            });
+            loadData(); // Refresh UI
+        } else {
+            loadData(); // Revert selection if cancelled
+        }
     }
 
-    // --- 1. UPLOAD LOGIC ---
-    async function uploadFiles() {
-        const fileInput = document.getElementById('fileInput');
-        const typeSelect = document.getElementById('resourceType');
-        const statusDiv = document.getElementById('uploadStatus');
-        
-        if (fileInput.files.length === 0) { statusDiv.innerText = "Select files first."; return; }
+    async function toggleBlockUser(username, isBlocked) {
+        await fetch(`${API_URL}/api/v1/admin/users/update`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ target_username: username, blocked: isBlocked })
+        });
+        loadData(); // Refresh UI
+    }
 
-        const formData = new FormData();
-        formData.append('resource_type', typeSelect.value);
-        for (let i = 0; i < fileInput.files.length; i++) formData.append('files', fileInput.files[i]);
-
-        statusDiv.innerText = "Uploading...";
-        statusDiv.style.color = "#3498db";
-
+    // --- 2. DATA LOADING ---
+    async function loadData() {
         try {
-            const res = await fetch(`${API_URL}/api/v1/resources/upload`, { method: 'POST', body: formData });
-            if (res.ok) {
-                statusDiv.innerText = "✅ Database Updated!";
-                statusDiv.style.color = "#27ae60";
-                setTimeout(loadAllData, 3000); // Refresh data
-            } else {
-                statusDiv.innerText = "❌ Upload Failed";
-                statusDiv.style.color = "#e74c3c";
+            // A. LOAD USERS
+            const resUsers = await fetch(`${API_URL}/api/v1/admin/users`);
+            if (resUsers.ok) {
+                const users = await resUsers.json();
+                const tbody = document.querySelector('#userTable tbody');
+                tbody.innerHTML = '';
+
+                users.forEach(u => {
+                    const isSelf = u.username === currentUser.username;
+                    
+                    // Role Dropdown HTML
+                    const roleSelect = isSelf ? 
+                        `<span style="font-weight:bold; color:purple">Teacher (You)</span>` :
+                        `<select class="role-select" onchange="changeUserRole('${u.username}', this.value)">
+                            <option value="student" ${u.role === 'student' ? 'selected' : ''}>Student</option>
+                            <option value="teacher" ${u.role === 'teacher' ? 'selected' : ''}>Teacher</option>
+                        </select>`;
+
+                    // Block Switch HTML
+                    const blockSwitch = isSelf ? 
+                        `<span class="status-badge status-active">Active</span>` :
+                        `<label class="switch">
+                            <input type="checkbox" ${!u.blocked ? 'checked' : ''} onchange="toggleBlockUser('${u.username}', !this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                        <span style="font-size:0.8rem; margin-left:8px; color:${u.blocked ? 'red' : 'green'}">
+                            ${u.blocked ? 'Blocked' : 'Active'}
+                        </span>`;
+
+                    tbody.innerHTML += `
+                        <tr>
+                            <td style="font-weight:600;">${u.username}</td>
+                            <td>${u.name || '-'}</td>
+                            <td>${roleSelect}</td>
+                            <td>${u.university || '-'}</td>
+                            <td>${blockSwitch}</td>
+                        </tr>
+                    `;
+                });
             }
-        } catch (e) { statusDiv.innerText = "❌ Error"; }
+
+            // B. LOAD TOPICS
+            const resTopics = await fetch(`${API_URL}/api/v1/config/topics`);
+            const topics = await resTopics.json();
+            const tGrid = document.getElementById('topicGrid');
+            tGrid.innerHTML = '';
+            for (const [t, on] of Object.entries(topics)) {
+                tGrid.innerHTML += `
+                    <div class="topic-item">
+                        <span style="font-weight:600;">${t}</span>
+                        <label class="switch">
+                            <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleTopic('${t}', this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </div>`;
+            }
+
+            // C. LOAD ANALYTICS & RISK (Existing Logic)
+            const resOverview = await fetch(`${API_URL}/api/v1/analytics/teacher/overview`);
+            const dataOv = await resOverview.json();
+            renderCharts(dataOv);
+
+            const resMatrix = await fetch(`${API_URL}/api/v1/analytics/teacher/detailed`);
+            const riskData = await resMatrix.json();
+            renderRiskTable(riskData);
+
+        } catch (e) { console.error("Error loading data:", e); }
     }
 
-    // --- 2. TOGGLE LOGIC ---
+    // --- HELPERS ---
     async function toggleTopic(topic, enabled) {
         await fetch(`${API_URL}/api/v1/config/topics`, {
             method: 'POST',
@@ -176,75 +311,81 @@
         });
     }
 
-    // --- 3. LOAD ALL DATA ---
-    async function loadAllData() {
-        // A. Topics
-        const resTopics = await fetch(`${API_URL}/api/v1/config/topics`);
-        const topics = await resTopics.json();
-        const tGrid = document.getElementById('topicGrid');
-        tGrid.innerHTML = '';
-        for (const [t, on] of Object.entries(topics)) {
-            tGrid.innerHTML += `
-                <div class="topic-card">
-                    <span style="font-weight:600; font-size:0.9rem;">${t}</span>
-                    <label class="switch">
-                        <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleTopic('${t}', this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>`;
-        }
-
-        // B. Analytics Overview
-        const resOverview = await fetch(`${API_URL}/api/v1/analytics/teacher/overview`);
-        const dataOv = await resOverview.json();
+    async function uploadFiles() {
+        const fileInput = document.getElementById('fileInput');
+        const typeSelect = document.getElementById('resourceType');
+        const statusDiv = document.getElementById('uploadStatus');
         
-        new Chart(document.getElementById('topicChart'), {
-            type: 'bar',
-            data: {
-                labels: Object.keys(dataOv.popular_topics),
-                datasets: [{ label: 'Interactions', data: Object.values(dataOv.popular_topics), backgroundColor: '#9b59b6' }]
-            }
-        });
+        if (fileInput.files.length === 0) return;
 
-        new Chart(document.getElementById('struggleChart'), {
-            type: 'bar',
-            data: {
-                labels: Object.keys(dataOv.struggle_areas),
-                datasets: [{ label: 'Struggles', data: Object.values(dataOv.struggle_areas), backgroundColor: '#e74c3c' }]
-            }
-        });
+        const formData = new FormData();
+        formData.append('resource_type', typeSelect.value);
+        for (let i = 0; i < fileInput.files.length; i++) formData.append('files', fileInput.files[i]);
 
-        // C. Student Matrix
-        const resMatrix = await fetch(`${API_URL}/api/v1/analytics/teacher/detailed`);
-        const students = await resMatrix.json();
-        const tbody = document.querySelector('#studentTable tbody');
+        statusDiv.innerText = "Uploading...";
+        statusDiv.style.color = "blue";
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/resources/upload`, { method: 'POST', body: formData });
+            if (res.ok) {
+                statusDiv.innerText = "✅ Success! Updating DB...";
+                statusDiv.style.color = "green";
+            } else {
+                statusDiv.innerText = "❌ Failed";
+                statusDiv.style.color = "red";
+            }
+        } catch (e) { statusDiv.innerText = "❌ Error"; }
+    }
+
+    function renderRiskTable(students) {
+        const tbody = document.querySelector('#riskTable tbody');
         tbody.innerHTML = '';
-
         students.forEach(s => {
-            let strongest = '-', weakest = '-', maxS = -1, minS = 101;
-            for (const [t, score] of Object.entries(s.mastery)) {
-                if(score > maxS) { maxS = score; strongest = t; }
-                if(score < minS) { minS = score; weakest = t; }
-            }
+            let riskColor = s.risk_level === 'High' ? 'red' : (s.risk_level === 'Medium' ? 'orange' : 'green');
             
-            let riskClass = 'risk-low';
-            if (s.risk_level === 'High') riskClass = 'risk-high';
-            else if (s.risk_level === 'Medium') riskClass = 'risk-med';
+            // Calculate strongest/weakest (simple sort)
+            const sortedTopics = Object.entries(s.mastery).sort((a,b) => b[1] - a[1]);
+            const strong = sortedTopics.length > 0 ? sortedTopics[0][0] : '-';
+            const weak = sortedTopics.length > 0 ? sortedTopics[sortedTopics.length-1][0] : '-';
 
             tbody.innerHTML += `
                 <tr>
-                    <td style="font-family:monospace; color:#555;">${anonymize(s.username)}</td>
-                    <td><span class="${riskClass}">${s.risk_level}</span></td>
-                    <td>${strongest}</td>
-                    <td>${weakest}</td>
+                    <td style="font-family:monospace;">${s.username}</td>
+                    <td style="color:${riskColor}; font-weight:bold;">${s.risk_level}</td>
+                    <td>${strong}</td>
+                    <td>${weak}</td>
                     <td>${new Date(s.last_active).toLocaleDateString()}</td>
-                    <td><button class="action-btn" onclick="alert('Nudge sent to ${anonymize(s.username)}')">🔔 Nudge</button></td>
                 </tr>
             `;
         });
     }
 
-    loadAllData();
+    let topicChart, struggleChart;
+    function renderCharts(data) {
+        if(topicChart) topicChart.destroy();
+        if(struggleChart) struggleChart.destroy();
+
+        topicChart = new Chart(document.getElementById('topicChart'), {
+            type: 'bar',
+            data: {
+                labels: Object.keys(data.popular_topics),
+                datasets: [{ label: 'Queries', data: Object.values(data.popular_topics), backgroundColor: '#9b59b6' }]
+            },
+            options: { maintainAspectRatio: false }
+        });
+
+        struggleChart = new Chart(document.getElementById('struggleChart'), {
+            type: 'bar',
+            data: {
+                labels: Object.keys(data.struggle_areas),
+                datasets: [{ label: 'Struggle Events', data: Object.values(data.struggle_areas), backgroundColor: '#e74c3c' }]
+            },
+            options: { maintainAspectRatio: false }
+        });
+    }
+
+    // Init
+    loadData();
 </script>
 </body>
 </html>

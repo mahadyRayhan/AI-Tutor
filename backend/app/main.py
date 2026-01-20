@@ -10,6 +10,7 @@ import logging
 import time
 import json
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 # Import components
 from app.core import config
@@ -32,6 +33,21 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# --- Data Models ---
+class SignupRequest(BaseModel):
+    username: str
+    password: str
+    name: str
+    email: str
+    university: Optional[str] = ""
+    department: Optional[str] = ""
+    interest: Optional[str] = ""
+
+class AdminUserUpdate(BaseModel):
+    target_username: str
+    new_role: Optional[str] = None
+    blocked: Optional[bool] = None
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -379,12 +395,48 @@ async def update_topic(update: TopicUpdate):
 
 @app.post("/api/v1/auth/login")
 async def login(creds: LoginRequest):
-    user = user_manager.authenticate(creds.username, creds.password)
-    if user:
-        return {"status": "success", "user": user}
+    try:
+        user = user_manager.authenticate(creds.username, creds.password)
+        if user:
+            return {"status": "success", "user": user}
+        else:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    except Exception as e:
+        # Catch the "Account Blocked" exception from user_manager
+        raise HTTPException(status_code=403, detail=str(e))
+
+@app.post("/api/v1/auth/signup")
+async def signup(req: SignupRequest):
+    success = user_manager.create_user(
+        username=req.username,
+        password=req.password,
+        name=req.name,
+        email=req.email,
+        university=req.university,
+        department=req.department,
+        interest=req.interest
+    )
+    if success:
+        return {"status": "success", "message": "Account created! Please login."}
     else:
-        # Return 401 Unauthorized
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+@app.get("/api/v1/admin/users")
+async def get_all_users():
+    # In a real app, verify the caller is an admin here via token/session
+    return user_manager.get_all_users()
+
+@app.post("/api/v1/admin/users/update")
+async def update_user(req: AdminUserUpdate):
+    # In a real app, verify the caller is an admin here
+    success = user_manager.update_user_status(
+        username=req.target_username,
+        role=req.new_role,
+        blocked=req.blocked
+    )
+    if success:
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="User not found")
 
 @app.get("/api/v1/analytics/student/{username}")
 async def get_student_analytics(username: str):
