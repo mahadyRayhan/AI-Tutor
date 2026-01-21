@@ -269,6 +269,12 @@
         <input type="email" id="signEmail" class="auth-input" placeholder="Email">
         <input type="text" id="signUser" class="auth-input" placeholder="Username">
         <input type="password" id="signPass" class="auth-input" placeholder="Password">
+        
+        <!-- Optional Fields (Ensure IDs match JS) -->
+        <input type="text" id="signUni" class="auth-input" placeholder="University (Optional)">
+        <input type="text" id="signDept" class="auth-input" placeholder="Department (Optional)">
+        <input type="text" id="signInterest" class="auth-input" placeholder="Topic of Interest (Optional)">
+
         <button class="auth-btn" onclick="performSignup()">Sign Up</button>
         <div class="toggle-link" onclick="toggleAuth('login')">Back to Login</div>
         <div class="error-msg" id="signupError"></div>
@@ -573,30 +579,43 @@
     }
 
     async function performSignup() {
-        // (Keep your existing signup logic)
+        // Safe selection: use ?.value to prevent crash if element is missing
         const data = {
-            name: document.getElementById('signName').value,
-            email: document.getElementById('signEmail').value,
-            username: document.getElementById('signUser').value,
-            password: document.getElementById('signPass').value,
-            university: document.getElementById('signUni').value,
-            department: document.getElementById('signDept').value,
-            interest: document.getElementById('signInterest').value
+            name: document.getElementById('signName')?.value || "",
+            email: document.getElementById('signEmail')?.value || "",
+            username: document.getElementById('signUser')?.value || "",
+            password: document.getElementById('signPass')?.value || "",
+            // Optional fields with safety check
+            university: document.getElementById('signUni')?.value || "",
+            department: document.getElementById('signDept')?.value || "",
+            interest: document.getElementById('signInterest')?.value || ""
         };
+
+        // Validation
+        if(!data.username || !data.password || !data.name) {
+            showError('signupError', "Name, Username, and Password are required.");
+            return;
+        }
+
         try {
             const res = await fetch(`${API_URL}/api/v1/auth/signup`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify(data)
             });
+            
             if (res.ok) {
-                document.getElementById('signupSuccess').innerText = "Account created!";
+                document.getElementById('signupSuccess').innerText = "Account created! Please login.";
                 document.getElementById('signupSuccess').style.display = 'block';
                 setTimeout(() => toggleAuth('login'), 1500);
             } else {
-                const err = await res.json();
-                document.getElementById('signupError').innerText = err.detail;
-                document.getElementById('signupError').style.display = 'block';
+                const result = await res.json();
+                showError('signupError', result.detail || "Signup failed");
             }
-        } catch (e) { console.error(e); }
+        } catch (e) { 
+            console.error(e);
+            showError('signupError', "Connection failed"); 
+        }
     }
 
     function routeUser() {
