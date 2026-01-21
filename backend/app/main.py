@@ -504,8 +504,19 @@ async def get_sessions(username: str):
     """Get list of past conversations for sidebar."""
     return history_manager.get_user_sessions_list(username)
 
+# 1. GET Endpoint (For Loading Chat)
+@app.get("/api/v1/history/session/{session_id}")
+async def get_session_chat(session_id: str, username: str):
+    """Get full chat log for a specific session."""
+    session = history_manager.get_session_details(username, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+# 2. DELETE Endpoint (For Deleting Chat)
 @app.delete("/api/v1/history/session/{session_id}")
 async def delete_session(session_id: str, username: str):
+    """Soft deletes a session."""
     success = history_manager.delete_session(username, session_id)
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")

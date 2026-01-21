@@ -1,9 +1,9 @@
 {
     "Variables": true,
     "Control Flow": true,
-    "Functions": true,
+    "Functions": false,
     "Arrays": true,
-    "Strings": true,
+    "Strings": false,
     "Pointers": true,
     "Structures": true,
     "General": true

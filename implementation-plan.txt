@@ -8,5 +8,109 @@ Teacher dashboard:
 2. load distinct users info and pass guidelines
 
 main chat interface:
-1. load history of conversation
-2. fix data visualization issues
+1. load history of conversation --- "X"
+2. fix data visualization issues --- "X"
+
+
+---------------------------------------------
+
+This checklist bridges the gap between your **current codebase** (which is functional and robust) and the **Aspirational Research Architecture** (based on the ML Model Table and Noah’s feedback).
+
+Use this to track your progress from "Rules-Based System" to "AI-Driven Adaptive Tutor."
+
+---
+
+### **Phase 1: The Observer (NLU & Intent)**
+*Goal: Move from regex/simple embeddings to nuanced understanding of student state.*
+
+| Feature | Research Component | Current Status | Notes / File Location |
+| :--- | :--- | :--- | :--- |
+| **Intent Classification** | **DistilBERT** (The Observer) | ✅ **Implemented** | Using `fast_classifier.py` (GLiNER/MiniLM). Works well for basic intents. |
+| **Entity Extraction** | **GLiNER** | ✅ **Implemented** | Using `fast_classifier.py`. Correctly extracts topics like "Loops". |
+| **Sentiment/Frustration Detection** | **DistilBERT** | 🔴 **Pending** | System currently doesn't know if a student is angry or overwhelmed (Noah's feedback). |
+| **Ambiguity Resolution** | **Context Rewriter** | 🟡 **Partial** | You implemented `_contextualize_query` in `cot_rag_agent.py`, but it relies on LLM prompting, not a specialized model. |
+
+---
+
+### **Phase 2: The Retriever (Knowledge Access)**
+*Goal: Ensure the AI reads the right textbook pages, not just matching keywords.*
+
+| Feature | Research Component | Current Status | Notes / File Location |
+| :--- | :--- | :--- | :--- |
+| **Semantic Search** | **Bi-Encoder** | ✅ **Implemented** | Using ChromaDB in `vector_store.py`. |
+| **Knowledge Graph Access** | **Neo4j** | ✅ **Implemented** | Using `graph_db.py` for prerequisites. |
+| **Access Control (RBAC)** | **Gatekeeper Logic** | ✅ **Implemented** | Hardcoded logic in `cot_rag_agent.py` blocks exam solutions. |
+| **Re-Ranking Filter** | **Cross-Encoder** | 🔴 **Pending** | System currently trusts the Top-8 results blindly. Needs a verification step to remove irrelevant chunks. |
+
+---
+
+### **Phase 3: The User Modeler (Student State)**
+*Goal: Move from a static JSON list of "Known Topics" to a probabilistic model of mastery.*
+
+| Feature | Research Component | Current Status | Notes / File Location |
+| :--- | :--- | :--- | :--- |
+| **Knowledge Logging** | **Data Collection** | ✅ **Implemented** | `history_manager.py` saves chats. `export_research_data.py` formats it for training. |
+| **Explicit Knowledge Tracking** | **Rule-Based** | 🟡 **Partial** | `user_knowledge.json` tracks what users *say* they know or click "Teach me anyway" on. |
+| **Deep Knowledge Tracing** | **SAINT+** | 🔴 **Pending** | System does not yet predict *probability* of answering correctly. Needs the dataset from `export_research_data.py` to train this model. |
+| **Goal Tracking** | **Context** | 🟡 **Partial** | Stored in `user_knowledge.json`, but static. Needs to update dynamically based on progress. |
+
+---
+
+### **Phase 4: The Decider (Pedagogical Policy)**
+*Goal: The "Brain" that addresses Noah's feedback (e.g., "Don't overwhelm the student").*
+
+| Feature | Research Component | Current Status | Notes / File Location |
+| :--- | :--- | :--- | :--- |
+| **Prerequisite Blocking** | **Graph Rules** | ✅ **Implemented** | Logic in `cot_rag_agent.py` blocks topics if prerequisites are missing. |
+| **Scaffolding Strategy** | **Prompting** | 🟡 **Partial** | Done via System Prompts ("Be Socratic"). Needs to be a classifier decision (XGBoost). |
+| **Cognitive Load Management** | **XGBoost (PPN)** | 🔴 **Pending** | **Critical for Noah's feedback.** The system needs to decide: "User is overwhelmed -> Switch to Simple Mode." |
+| **Output Mode Selection** | **Classifier** | 🔴 **Pending** | System currently text-dumps. Needs to decide: *Visual vs. Code vs. Analogy* before generating. |
+
+---
+
+### **Phase 5: The Generator & Aligner (Content)**
+*Goal: High-quality, safe, and concise responses.*
+
+| Feature | Research Component | Current Status | Notes / File Location |
+| :--- | :--- | :--- | :--- |
+| **Response Generation** | **Gemini/LLM** | ✅ **Implemented** | Working via `llm_interface.py`. |
+| **Socratic Alignment** | **DPO / LoRA** | 🟡 **Partial** | Relying on prompt engineering (`_generate_socratic_plan`). A fine-tuned adapter (LoRA) would force brevity and better questions. |
+| **Visual Generation** | **Mermaid.js** | ✅ **Implemented** | System generates graph syntax, frontend renders it. |
+| **Multimedia Support** | **Multimodal** | 🔴 **Pending** | Future capability to generate actual images/diagrams, not just Mermaid flowcharts. |
+
+---
+
+### **Phase 6: The Critic (Safety & Trust)**
+*Goal: Prevent hallucinations and enforce curriculum boundaries.*
+
+| Feature | Research Component | Current Status | Notes / File Location |
+| :--- | :--- | :--- | :--- |
+| **Curriculum Guardrails** | **ABAC Rules** | ✅ **Implemented** | Dashboard toggles work to hide topics (`settings_manager.py`). |
+| **Hallucination Check** | **DeBERTa (NLI)** | 🔴 **Pending** | No current step verifies if the LLM's answer actually matches the retrieved documents. |
+| **Output Sanitization** | **Regex/Rules** | 🟡 **Partial** | `_sanitize_mermaid` exists, but XSS/Injection checking on output is minimal. |
+
+---
+
+### **Phase 7: The Analyst (Teacher Dashboard)**
+*Goal: Give teachers superpowers to see class trends.*
+
+| Feature | Research Component | Current Status | Notes / File Location |
+| :--- | :--- | :--- | :--- |
+| **Topic Popularity** | **Aggregator** | ✅ **Implemented** | `_calculate_mastery` in `main.py` counts intents. |
+| **Struggle Detection** | **Heuristic** | 🟡 **Partial** | Counts "DEBUG" and "REVIEW" intents. Works, but crude. |
+| **Student Clustering** | **K-Means** | 🔴 **Pending** | Needs to group students by *behavior* (e.g., "The Guessers," "The Planners") using vector analysis. |
+| **User Management** | **Admin Panel** | ✅ **Implemented** | Teachers can block users/change roles via Dashboard. |
+
+---
+
+### **Immediate Next Steps (Developer Priority)**
+
+To satisfy the immediate needs of the paper and Noah's feedback, focus on **Phase 4 (The Decider)**:
+
+1.  **Implement a "Mode Switcher":** Instead of one prompt, create 3 prompts:
+    *   `Brief_Mode`: For overwhelmed students (Noah's request).
+    *   `Visual_Mode`: For complex concepts.
+    *   `Code_Mode`: For active coding tasks.
+2.  **Logic for Switching:** Even without XGBoost, write logic:
+    *   *If intent == "DEBUG" -> Use `Code_Mode`.*
+    *   *If history length > 10 (long convo) -> Use `Brief_Mode`.*
