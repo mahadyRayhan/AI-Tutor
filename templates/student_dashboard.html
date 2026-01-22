@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Learning Journey</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -11,15 +12,15 @@
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
         .back-btn { padding: 10px 20px; background: #2c3e50; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
         
-        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        h2 { margin: 0 0 15px 0; color: #2c3e50; font-size: 1.2rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); position: relative; }
+        h2 { margin: 0 0 15px 0; color: #2c3e50; font-size: 1.2rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; display: flex; align-items: center; }
 
         /* Goal Section */
         .goal-box { background: linear-gradient(135deg, #1abc9c, #16a085); color: white; padding: 25px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 4px 15px rgba(26, 188, 156, 0.2); }
         .goal-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .goal-label { font-weight: bold; text-transform: uppercase; opacity: 0.8; font-size: 0.9rem; }
         .goal-text { font-size: 1.5rem; font-weight: bold; }
-        .goal-input { padding: 8px; border-radius: 4px; border: none; width: 60%; }
+        .goal-input { padding: 8px; border-radius: 4px; border: none; width: 60%; font-size: 1rem; }
         .goal-btn { background: rgba(0,0,0,0.2); border: none; color: white; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
         .goal-btn:hover { background: rgba(0,0,0,0.3); }
 
@@ -34,18 +35,39 @@
         .fill { height: 100%; transition: width 1s; }
 
         /* AI Report */
-        .report-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
-        .report-col h3 { font-size: 1rem; color: #2980b9; margin-bottom: 10px; }
-        .report-content ul { padding-left: 20px; margin: 0; color: #555; font-size: 0.95rem; }
-        .report-content li { margin-bottom: 5px; }
+        .report-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; } /* Added 4th column */
+        .report-col h3 { font-size: 1rem; color: #2980b9; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .report-content { font-size: 0.95rem; line-height: 1.5; color: #555; }
+        .reading-chip { display: inline-block; background: #e8f6f3; color: #16a085; padding: 4px 10px; border-radius: 15px; font-size: 0.85rem; margin-right: 5px; margin-bottom: 5px; border: 1px solid #a3e4d7; }
+
+        /* Tooltips */
+        .info-icon {
+            display: inline-block; background: #bdc3c7; color: white; width: 18px; height: 18px;
+            border-radius: 50%; text-align: center; line-height: 18px; font-size: 12px; cursor: help;
+            margin-left: 8px; position: relative; font-family: monospace; font-weight: normal;
+        }
+        .info-icon .tooltip-text {
+            visibility: hidden; width: 220px; background-color: #333; color: #fff; text-align: left;
+            border-radius: 6px; padding: 10px; position: absolute; z-index: 10;
+            bottom: 125%; left: 50%; margin-left: -110px; opacity: 0; transition: opacity 0.3s;
+            font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; font-weight: normal; line-height: 1.4;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .info-icon .tooltip-text::after {
+            content: ""; position: absolute; top: 100%; left: 50%; margin-left: -5px;
+            border-width: 5px; border-style: solid; border-color: #333 transparent transparent transparent;
+        }
+        .info-icon:hover { background: #8e44ad; }
+        .info-icon:hover .tooltip-text { visibility: visible; opacity: 1; }
+
     </style>
 </head>
 <body>
 
 <div class="container">
     <div class="header">
-        <h1>📊 Learning Analytics</h1>
-        <a href="index.html" class="back-btn">Back to Tutor</a>
+        <h1>📊 My Learning Journey</h1>
+        <a href="index.html" class="back-btn">💬 Back to Chat</a>
     </div>
 
     <!-- 1. Goal Section -->
@@ -56,34 +78,63 @@
         </div>
         <div id="goalDisplay" class="goal-text">Loading...</div>
         <div id="goalEdit" style="display:none; margin-top:10px;">
-            <input type="text" id="goalInput" class="goal-input" placeholder="E.g. Master Loops by Friday">
+            <input type="text" id="goalInput" class="goal-input" placeholder="E.g. Build a Calculator">
             <button onclick="saveGoal()" class="goal-btn" style="background:white; color:#16a085;">Save</button>
         </div>
     </div>
 
     <div class="dash-grid">
-        <!-- 2. Learning Style -->
+        <!-- 2. Interaction Patterns -->
         <div class="card">
-            <h2>🧠 Learning Style</h2>
+            <h2>
+                🧩 Interaction Habits
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        Shows <strong>how</strong> you use the AI.<br>
+                        • <strong>Concept:</strong> Asking "What is..."<br>
+                        • <strong>Problem:</strong> Asking "How to write..."<br>
+                        • <strong>Review:</strong> Pasting code for checks.<br>
+                        • <strong>Debug:</strong> Asking for help with errors.
+                    </span>
+                </div>
+            </h2>
             <div style="height:250px"><canvas id="donutChart"></canvas></div>
         </div>
 
-        <!-- 3. Skill Balance -->
+        <!-- 3. Radar Chart -->
         <div class="card">
-            <h2>⚖️ Skill Balance</h2>
+            <h2>
+                ⚖️ Topic Proficiency Radar
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        Visualizes the <strong>balance</strong> of your skills.<br>
+                        A balanced shape means you are learning all topics equally. Spikes indicate specialization.
+                    </span>
+                </div>
+            </h2>
             <div style="height:250px"><canvas id="radarChart"></canvas></div>
         </div>
 
-        <!-- 4. Mastery Tree -->
+        <!-- 4. Mastery Bars -->
         <div class="card full-width">
-            <h2>🌲 Concept Mastery</h2>
+            <h2>
+                🌲 Skill Progress (XP)
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        <strong>How to earn XP:</strong><br>
+                        • Reading Explanations: +5 pts<br>
+                        • Asking for Plans: +10 pts<br>
+                        • Submitting Code for Review: +15 pts (Best way to learn!)
+                    </span>
+                </div>
+            </h2>
             <div class="skill-list" id="skillList"></div>
         </div>
 
         <!-- 5. AI Insights -->
         <div class="card full-width">
             <h2>🤖 Personal Tutor Assessment</h2>
-            <div id="loadingReport" style="text-align:center; padding:20px; color:#999;">Analyzing...</div>
+            <div id="loadingReport" style="text-align:center; padding:20px; color:#999;">Generating insights...</div>
             <div id="reportContent" class="report-grid" style="display:none;">
                 <div class="report-col">
                     <h3>🔍 Current Focus</h3>
@@ -94,8 +145,12 @@
                     <div id="rep-strengths" class="report-content"></div>
                 </div>
                 <div class="report-col">
-                    <h3>🚀 Recommendations</h3>
+                    <h3>🚧 Needs Work</h3>
                     <div id="rep-weakness" class="report-content"></div>
+                </div>
+                <div class="report-col">
+                    <h3>📚 Recommended</h3>
+                    <div id="rep-reading" class="report-content"></div>
                 </div>
             </div>
         </div>
@@ -109,7 +164,6 @@
 
     const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings", "Pointers", "Structures"];
 
-    // --- Goal Logic ---
     function toggleEdit() {
         const display = document.getElementById('goalDisplay');
         const edit = document.getElementById('goalEdit');
@@ -133,57 +187,68 @@
         location.reload();
     }
 
-    // --- Load Data ---
     async function loadData() {
         try {
             const res = await fetch(`${API_URL}/api/v1/analytics/student/${currentUser.username}`);
             const data = await res.json();
 
             // 1. Goal
-            document.getElementById('goalDisplay').innerText = data.goal || "Set a goal to get specific guidance!";
+            document.getElementById('goalDisplay').innerText = data.goal || "Set a goal (e.g. Master Pointers)";
 
-            // 2. Charts
+            // 2. Donut Chart (Habits)
             new Chart(document.getElementById('donutChart'), {
                 type: 'doughnut',
                 data: {
-                    labels: ['Concept', 'Problem', 'Debug', 'Review'],
+                    labels: ['Concept (Reading)', 'Problem (Planning)', 'Debug (Fixing)', 'Review (Coding)'],
                     datasets: [{
                         data: [data.stats.CONCEPT, data.stats.PROBLEM, data.stats.DEBUG, data.stats.REVIEW],
-                        backgroundColor: ['#3498db', '#2ecc71', '#e74c3c', '#f1c40f']
+                        backgroundColor: ['#3498db', '#9b59b6', '#e74c3c', '#f1c40f'],
+                        borderWidth: 0
                     }]
                 },
-                options: { maintainAspectRatio: false }
+                options: { 
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } 
+                }
             });
 
+            // 3. Radar Chart (Proficiency)
             const masteryScores = TOPICS.map(t => data.mastery[t] || 0);
             new Chart(document.getElementById('radarChart'), {
                 type: 'radar',
                 data: {
                     labels: TOPICS,
                     datasets: [{
-                        label: 'Mastery',
+                        label: 'Proficiency Level',
                         data: masteryScores,
-                        backgroundColor: 'rgba(52, 152, 219, 0.2)',
-                        borderColor: '#3498db'
+                        backgroundColor: 'rgba(46, 204, 113, 0.2)',
+                        borderColor: '#2ecc71',
+                        pointBackgroundColor: '#2ecc71',
+                        borderWidth: 2
                     }]
                 },
                 options: { 
                     maintainAspectRatio: false,
-                    scales: { r: { min: 0, max: 100 } } 
+                    scales: { r: { min: 0, max: 100, ticks: { display: false } } },
+                    plugins: { legend: { display: false } }
                 }
             });
 
-            // 3. Skill Bars
+            // 4. Skill Progress Bars
             const skillDiv = document.getElementById('skillList');
             skillDiv.innerHTML = '';
             TOPICS.forEach((t, i) => {
                 const score = masteryScores[i];
-                const color = score > 70 ? '#2ecc71' : (score > 30 ? '#f1c40f' : '#e74c3c');
+                // Color Logic: Red (Low) -> Yellow (Med) -> Green (High)
+                let color = '#e74c3c'; 
+                if(score > 30) color = '#f1c40f';
+                if(score > 70) color = '#2ecc71';
+
                 skillDiv.innerHTML += `
                     <div class="skill-item">
                         <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-weight:600; font-size:0.9rem;">
                             <span>${t}</span>
-                            <span>${score}%</span>
+                            <span>${score}/100 XP</span>
                         </div>
                         <div class="progress-bar">
                             <div class="fill" style="width:${score}%; background:${color};"></div>
@@ -191,21 +256,31 @@
                     </div>`;
             });
 
-            // 4. Report
+            // 5. AI Report
             const rep = data.report;
             if (rep && rep.focus && rep.focus !== "Analysis failed") {
                 document.getElementById('loadingReport').style.display = 'none';
                 document.getElementById('reportContent').style.display = 'grid';
-                document.getElementById('rep-focus').innerHTML = rep.focus;
-                document.getElementById('rep-strengths').innerHTML = rep.strengths;
-                document.getElementById('rep-weakness').innerHTML = rep.weakness;
+                
+                document.getElementById('rep-focus').innerText = rep.focus;
+                document.getElementById('rep-strengths').innerText = rep.strengths;
+                document.getElementById('rep-weakness').innerText = rep.weakness;
+                
+                // Render Reading List as Chips
+                const readDiv = document.getElementById('rep-reading');
+                readDiv.innerHTML = '';
+                if(rep.reading && Array.isArray(rep.reading)) {
+                    rep.reading.forEach(item => {
+                        readDiv.innerHTML += `<span class="reading-chip">📖 ${item}</span>`;
+                    });
+                } else {
+                    readDiv.innerText = "Keep practicing basic concepts.";
+                }
             } else {
-                document.getElementById('loadingReport').innerText = "Not enough data yet.";
+                document.getElementById('loadingReport').innerText = "Not enough data yet. Ask more questions!";
             }
 
-        } catch (e) {
-            console.error(e);
-        }
+        } catch (e) { console.error(e); }
     }
 
     loadData();

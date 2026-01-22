@@ -299,14 +299,10 @@ async def update_user(req: AdminUserUpdate):
 @app.get("/api/v1/analytics/student/{username}")
 async def get_student_analytics(username: str):
     history = history_manager.get_student_history(username)
-    goal = knowledge_manager.get_goal(username) # <--- Correct Manager
- 
+    goal = knowledge_manager.get_goal(username) 
     
-    if not history:
-        return {"stats": {}, "mastery": {}, "report": "No history found.", "goal": goal}
-
-    # 1. Mastery Calculation
-    mastery = _calculate_mastery(history) # Make sure _calculate_mastery is defined above this function
+    # 1. Mastery Calculation (Reusing existing logic)
+    mastery = _calculate_mastery(history)
 
     # 2. Basic Stats
     stats = {"CONCEPT": 0, "PROBLEM": 0, "DEBUG": 0, "REVIEW": 0}
@@ -315,8 +311,11 @@ async def get_student_analytics(username: str):
         if i in stats: stats[i] += 1
     
     # 3. Generate LLM Report
-    recent_logs = history[-15:]
-    log_text = "\n".join([f"- [{log['intent']}] Q: {log['query']}" for log in recent_logs])
+    # --- FIX START ---
+    recent_logs = history[-15:] # Define recent_logs first
+    
+    # Now use it
+    log_text = "\n".join([f"- [{log['intent']}] Topic: {log.get('topic', 'General')} - Q: {log['query']}" for log in recent_logs])
     
     prompt = f"""
     Analyze this student's recent interaction history with a C Tutor AI.
@@ -324,28 +323,29 @@ async def get_student_analytics(username: str):
     Student Logs:
     {log_text}
     
-    Task: Write a helpful "Progress Report".
-    **FORMAT RULES:**
-    - Use HTML `<ul><li>...</li></ul>` for lists.
-    - Do NOT use Markdown.
-    - Keep it concise.
-
-    1. **Focus Areas:** What topics are they asking about most?
-    2. **Strengths:** Are they asking good conceptual questions or writing code?
-    3. **Weakness/Recommendations:** What should they practice next?
+    Task: Write a helpful "Progress Report" in JSON format.
     
-    Return JSON: {{ "focus": "...", "strengths": "...", "weakness": "..." }}
+    1. **Focus:** What topics are they asking about most? (Max 10 words)
+    2. **Strengths:** What are they doing well? (e.g., "Good curiosity about Pointers")
+    3. **Weakness:** What are they struggling with? (e.g., "Syntax errors in Loops")
+    4. **Reading:** Suggest 2 specific C topics or concepts they should study next based on their weaknesses (e.g., "Arrays", "Memory Management"). Return as a list of strings.
+    
+    Return ONLY JSON: {{ "focus": "...", "strengths": "...", "weakness": "...", "reading": ["Topic A", "Topic B"] }}
     """
     
-    report_raw = llm_interface.generate_response(prompt)
-    
     try:
-        import json
+        report_raw = llm_interface.generate_response(prompt)
         clean_json = report_raw.replace("```json", "").replace("```", "").strip()
         report_data = json.loads(clean_json)
-        # --- FIX: Removed the hardcoded overwrite line here ---
-    except:
-        report_data = {"focus": "Analysis failed", "strengths": "N/A", "weakness": "N/A"}
+    except Exception as e:
+        logger.error(f"Analytics LLM error: {e}")
+        report_data = {
+            "focus": "Not enough data", 
+            "strengths": "Keep learning!", 
+            "weakness": "Practice consistently.", 
+            "reading": ["Basic Concepts"]
+        }
+    # --- FIX END ---
 
     return {
         "stats": stats,
