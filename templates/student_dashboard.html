@@ -160,10 +160,136 @@
 <script>
     const API_URL = "http://127.0.0.1:8000";
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
+    
+    // Auth Guard
     if (!currentUser) window.location.href = 'index.html';
 
     const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings", "Pointers", "Structures"];
 
+    // --- MAIN INIT ---
+    function initDashboard() {
+        // 1. Load Fast Data (Charts & Stats)
+        loadStats();
+        // 2. Load Slow Data (LLM Report) - Running in parallel
+        loadReport();
+    }
+
+    // --- FAST DATA LOADER ---
+    async function loadStats() {
+        try {
+            const resStats = await fetch(`${API_URL}/api/v1/analytics/student/${currentUser.username}`);
+            const data = await resStats.json();
+
+            // Goal
+            document.getElementById('goalDisplay').innerText = data.goal || "Set a goal (e.g. Master Pointers)";
+
+            // Visuals
+            renderCharts(data); 
+            renderSkillBars(data.mastery);
+        } catch(e) { 
+            console.error("Stats load failed", e); 
+        }
+    }
+
+    // --- SLOW DATA LOADER ---
+    async function loadReport() {
+        try {
+            const resReport = await fetch(`${API_URL}/api/v1/analytics/report/${currentUser.username}`);
+            const rep = await resReport.json();
+            
+            // Show Content
+            document.getElementById('loadingReport').style.display = 'none';
+            document.getElementById('reportContent').style.display = 'grid';
+            
+            // Populate Text
+            document.getElementById('rep-focus').innerText = rep.focus || "No data";
+            document.getElementById('rep-strengths').innerText = rep.strengths || "N/A";
+            document.getElementById('rep-weakness').innerText = rep.weakness || "N/A";
+            
+            // Populate Chips
+            const readDiv = document.getElementById('rep-reading');
+            readDiv.innerHTML = '';
+            if(rep.reading && Array.isArray(rep.reading)) {
+                rep.reading.forEach(item => {
+                    readDiv.innerHTML += `<span class="reading-chip">📖 ${item}</span>`;
+                });
+            } else {
+                readDiv.innerText = "Keep practicing basic concepts.";
+            }
+        } catch (e) { 
+            console.error("Report load failed", e);
+            document.getElementById('loadingReport').innerText = "Analysis unavailable.";
+        }
+    }
+
+    // --- CHART RENDERER ---
+    function renderCharts(data) {
+        // Donut Chart (Habits)
+        new Chart(document.getElementById('donutChart'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Concept (Reading)', 'Problem (Planning)', 'Debug (Fixing)', 'Review (Coding)'],
+                datasets: [{
+                    data: [data.stats.CONCEPT, data.stats.PROBLEM, data.stats.DEBUG, data.stats.REVIEW],
+                    backgroundColor: ['#3498db', '#9b59b6', '#e74c3c', '#f1c40f'],
+                    borderWidth: 0
+                }]
+            },
+            options: { 
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } 
+            }
+        });
+
+        // Radar Chart (Proficiency)
+        const masteryScores = TOPICS.map(t => data.mastery[t] || 0);
+        new Chart(document.getElementById('radarChart'), {
+            type: 'radar',
+            data: {
+                labels: TOPICS,
+                datasets: [{
+                    label: 'Proficiency Level',
+                    data: masteryScores,
+                    backgroundColor: 'rgba(46, 204, 113, 0.2)',
+                    borderColor: '#2ecc71',
+                    pointBackgroundColor: '#2ecc71',
+                    borderWidth: 2
+                }]
+            },
+            options: { 
+                maintainAspectRatio: false,
+                scales: { r: { min: 0, max: 100, ticks: { display: false } } },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    // --- SKILL BAR RENDERER ---
+    function renderSkillBars(mastery) {
+        const skillDiv = document.getElementById('skillList');
+        skillDiv.innerHTML = '';
+        
+        TOPICS.forEach((t) => {
+            const score = mastery[t] || 0;
+            // Color Logic
+            let color = '#e74c3c'; // Red
+            if(score > 30) color = '#f1c40f'; // Yellow
+            if(score > 70) color = '#2ecc71'; // Green
+
+            skillDiv.innerHTML += `
+                <div class="skill-item">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-weight:600; font-size:0.9rem;">
+                        <span>${t}</span>
+                        <span>${score}/100 XP</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="fill" style="width:${score}%; background:${color};"></div>
+                    </div>
+                </div>`;
+        });
+    }
+
+    // --- GOAL LOGIC ---
     function toggleEdit() {
         const display = document.getElementById('goalDisplay');
         const edit = document.getElementById('goalEdit');
@@ -187,103 +313,8 @@
         location.reload();
     }
 
-    async function loadData() {
-        try {
-            const res = await fetch(`${API_URL}/api/v1/analytics/student/${currentUser.username}`);
-            const data = await res.json();
-
-            // 1. Goal
-            document.getElementById('goalDisplay').innerText = data.goal || "Set a goal (e.g. Master Pointers)";
-
-            // 2. Donut Chart (Habits)
-            new Chart(document.getElementById('donutChart'), {
-                type: 'doughnut',
-                data: {
-                    labels: ['Concept (Reading)', 'Problem (Planning)', 'Debug (Fixing)', 'Review (Coding)'],
-                    datasets: [{
-                        data: [data.stats.CONCEPT, data.stats.PROBLEM, data.stats.DEBUG, data.stats.REVIEW],
-                        backgroundColor: ['#3498db', '#9b59b6', '#e74c3c', '#f1c40f'],
-                        borderWidth: 0
-                    }]
-                },
-                options: { 
-                    maintainAspectRatio: false,
-                    plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } 
-                }
-            });
-
-            // 3. Radar Chart (Proficiency)
-            const masteryScores = TOPICS.map(t => data.mastery[t] || 0);
-            new Chart(document.getElementById('radarChart'), {
-                type: 'radar',
-                data: {
-                    labels: TOPICS,
-                    datasets: [{
-                        label: 'Proficiency Level',
-                        data: masteryScores,
-                        backgroundColor: 'rgba(46, 204, 113, 0.2)',
-                        borderColor: '#2ecc71',
-                        pointBackgroundColor: '#2ecc71',
-                        borderWidth: 2
-                    }]
-                },
-                options: { 
-                    maintainAspectRatio: false,
-                    scales: { r: { min: 0, max: 100, ticks: { display: false } } },
-                    plugins: { legend: { display: false } }
-                }
-            });
-
-            // 4. Skill Progress Bars
-            const skillDiv = document.getElementById('skillList');
-            skillDiv.innerHTML = '';
-            TOPICS.forEach((t, i) => {
-                const score = masteryScores[i];
-                // Color Logic: Red (Low) -> Yellow (Med) -> Green (High)
-                let color = '#e74c3c'; 
-                if(score > 30) color = '#f1c40f';
-                if(score > 70) color = '#2ecc71';
-
-                skillDiv.innerHTML += `
-                    <div class="skill-item">
-                        <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-weight:600; font-size:0.9rem;">
-                            <span>${t}</span>
-                            <span>${score}/100 XP</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="fill" style="width:${score}%; background:${color};"></div>
-                        </div>
-                    </div>`;
-            });
-
-            // 5. AI Report
-            const rep = data.report;
-            if (rep && rep.focus && rep.focus !== "Analysis failed") {
-                document.getElementById('loadingReport').style.display = 'none';
-                document.getElementById('reportContent').style.display = 'grid';
-                
-                document.getElementById('rep-focus').innerText = rep.focus;
-                document.getElementById('rep-strengths').innerText = rep.strengths;
-                document.getElementById('rep-weakness').innerText = rep.weakness;
-                
-                // Render Reading List as Chips
-                const readDiv = document.getElementById('rep-reading');
-                readDiv.innerHTML = '';
-                if(rep.reading && Array.isArray(rep.reading)) {
-                    rep.reading.forEach(item => {
-                        readDiv.innerHTML += `<span class="reading-chip">📖 ${item}</span>`;
-                    });
-                } else {
-                    readDiv.innerText = "Keep practicing basic concepts.";
-                }
-            } else {
-                document.getElementById('loadingReport').innerText = "Not enough data yet. Ask more questions!";
-            }
-
-        } catch (e) { console.error(e); }
-    }
-
-    loadData();
+    // Start!
+    initDashboard();
 </script>
 </body>
 </html>

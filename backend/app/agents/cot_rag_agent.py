@@ -951,6 +951,7 @@ class ChainOfThoughtRAGAgent:
                 "suggestions": suggestions,
                 "intent": intent,
                 "timings": profiler,
-                "session_id": session_id 
+                "session_id": session_id,
+                "detected_entity": entities[0] if entities else "General" # <--- ADD THIS
             }
         }

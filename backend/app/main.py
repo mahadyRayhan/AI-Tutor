@@ -236,13 +236,41 @@ async def chat_stream(request: ChatRequest):
                         full_bot_response = final_data.get('answer', '')
                     final_sources = final_data.get('sources', [])
                     
-                    # LOG ANALYTICS (Existing)
+                    # --- FIX: Better Topic Detection ---
+                    detected_topic = "General"
+                    
+                    # 1. Try to get topic from sources
+                    if final_sources:
+                        # Extract all topics found in sources
+                        topics = [s.get('topic') for s in final_sources if s.get('topic')]
+                        if topics:
+                            # Pick the most common topic (e.g., if 3 docs say "Arrays" and 1 says "General", pick "Arrays")
+                            from collections import Counter
+                            detected_topic = Counter(topics).most_common(1)[0][0]
+                    
+                    # 2. Fallback: If no sources (e.g. Prereq Check), try to infer from Intent + Content
+                    if detected_topic == "General":
+                         # Get the entity the agent found (e.g., "array")
+                         entity = final_data.get("detected_entity", "General").lower()
+                         
+                         # Map entity to frontend topic
+                         if "array" in entity: detected_topic = "Arrays"
+                         elif "loop" in entity: detected_topic = "Control Flow"
+                         elif "pointer" in entity: detected_topic = "Pointers"
+                         elif "struct" in entity: detected_topic = "Structures"
+                         elif "string" in entity: detected_topic = "Strings"
+                         elif "function" in entity: detected_topic = "Functions"
+                         elif "var" in entity: detected_topic = "Variables"
+                         # You could add simple keyword matching here if you want, 
+                         # but usually sources are the source of truth.
+                    # -----------------------------------
+
+                    # Log with the CORRECT topic
                     history_manager.log_interaction(
                         request.username, request.message, final_data['intent'], 
-                        final_data['answer'], "General"
+                        final_data['answer'], detected_topic 
                     )
                     
-                    # Send session_id back to client
                     event["data"]["session_id"] = session_id 
 
                 yield f"data: {json.dumps(event)}\n\n"
@@ -281,6 +309,75 @@ async def chat_stream(request: ChatRequest):
                 logger.error(f"Profiling save failed: {prof_e}")
 
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
+
+@app.get("/api/v1/analytics/student/{username}")
+async def get_student_stats(username: str):
+    """FAST Endpoint: Returns charts data only."""
+    history = history_manager.get_student_history(username)
+    goal = knowledge_manager.get_goal(username)
+    
+    mastery = _calculate_mastery(history)
+    stats = {"CONCEPT": 0, "PROBLEM": 0, "DEBUG": 0, "REVIEW": 0}
+    for h in history:
+        i = h.get('intent', 'UNKNOWN')
+        if i in stats: stats[i] += 1
+        
+    return {
+        "stats": stats,
+        "mastery": mastery, 
+        "total_queries": len(history),
+        "goal": goal
+    }
+
+@app.get("/api/v1/analytics/report/{username}")
+async def get_student_report(username: str):
+    """SLOW Endpoint: Returns LLM advice."""
+    history = history_manager.get_student_history(username)
+    recent_logs = history[-15:]
+    
+    if not recent_logs:
+        return {"focus": "Just getting started", "strengths": "N/A", "weakness": "N/A", "reading": ["Basics"]}
+        
+    log_text = "\n".join([f"- [{log['intent']}] Topic: {log.get('topic', 'General')} - Q: {log['query']}" for log in recent_logs])
+    
+    # --- RESTORED PROMPT ---
+    prompt = f"""
+    You are an AI Tutor Analyst. Analyze this student's recent interaction history.
+    
+    Student Logs:
+    {log_text}
+    
+    Task: Write a helpful "Progress Report" strictly in JSON format.
+    
+    1. **Focus:** What topics are they asking about most? (Max 10 words)
+    2. **Strengths:** What are they doing well? (e.g., "Good curiosity about Pointers")
+    3. **Weakness:** What are they struggling with? (e.g., "Syntax errors in Loops")
+    4. **Reading:** Suggest 2 specific C topics or concepts they should study next based on their weaknesses (e.g., "Arrays", "Memory Management"). Return as a list of strings.
+    
+    Return ONLY JSON: {{ "focus": "...", "strengths": "...", "weakness": "...", "reading": ["Topic A", "Topic B"] }}
+    """
+    
+    try:
+        report_raw = llm_interface.generate_response(prompt)
+        
+        # --- ROBUST JSON CLEANER ---
+        # 1. Strip markdown
+        clean_text = report_raw.replace("```json", "").replace("```", "").strip()
+        
+        # 2. Extract JSON substring if LLM chatted (Find first '{' and last '}')
+        start = clean_text.find('{')
+        end = clean_text.rfind('}') + 1
+        if start != -1 and end != -1:
+            clean_text = clean_text[start:end]
+            
+        return json.loads(clean_text)
+        # ---------------------------
+        
+    except Exception as e:
+        # Log the specific error to the terminal so you can see it
+        logger.error(f"Analytics Report Failed: {e}")
+        logger.error(f"Raw Output was: {report_raw}")
+        return {"focus": "Analysis Error", "strengths": "N/A", "weakness": "Try again later", "reading": []}
 
 @app.get("/api/v1/config/topics")
 async def get_topics():
@@ -340,10 +437,14 @@ async def update_user(req: AdminUserUpdate):
 
 @app.get("/api/v1/analytics/student/{username}")
 async def get_student_analytics(username: str):
-    history = history_manager.get_student_history(username)
-    goal = knowledge_manager.get_goal(username) 
+    # Start timer
+    import time
+    t0 = time.time()
     
-    # 1. Mastery Calculation (Reusing existing logic)
+    history = history_manager.get_student_history(username)
+    goal = knowledge_manager.get_goal(username)
+    
+    # 1. Mastery Calculation
     mastery = _calculate_mastery(history)
 
     # 2. Basic Stats
@@ -352,43 +453,50 @@ async def get_student_analytics(username: str):
         i = h.get('intent', 'UNKNOWN')
         if i in stats: stats[i] += 1
     
-    # 3. Generate LLM Report
-    # --- FIX START ---
-    recent_logs = history[-15:] # Define recent_logs first
+    # 3. Generate LLM Report (Optimized)
+    recent_logs = history[-15:]
     
-    # Now use it
-    log_text = "\n".join([f"- [{log['intent']}] Topic: {log.get('topic', 'General')} - Q: {log['query']}" for log in recent_logs])
-    
-    prompt = f"""
-    Analyze this student's recent interaction history with a C Tutor AI.
-    
-    Student Logs:
-    {log_text}
-    
-    Task: Write a helpful "Progress Report" in JSON format.
-    
-    1. **Focus:** What topics are they asking about most? (Max 10 words)
-    2. **Strengths:** What are they doing well? (e.g., "Good curiosity about Pointers")
-    3. **Weakness:** What are they struggling with? (e.g., "Syntax errors in Loops")
-    4. **Reading:** Suggest 2 specific C topics or concepts they should study next based on their weaknesses (e.g., "Arrays", "Memory Management"). Return as a list of strings.
-    
-    Return ONLY JSON: {{ "focus": "...", "strengths": "...", "weakness": "...", "reading": ["Topic A", "Topic B"] }}
-    """
-    
-    try:
-        report_raw = llm_interface.generate_response(prompt)
-        clean_json = report_raw.replace("```json", "").replace("```", "").strip()
-        report_data = json.loads(clean_json)
-    except Exception as e:
-        logger.error(f"Analytics LLM error: {e}")
+    # --- CRITICAL CHECK ---
+    if not recent_logs:
+        print(f"⚡ FAST PATH: No history for {username}. Skipping LLM.")
         report_data = {
-            "focus": "Not enough data", 
-            "strengths": "Keep learning!", 
-            "weakness": "Practice consistently.", 
-            "reading": ["Basic Concepts"]
+            "focus": "Just getting started", 
+            "strengths": "N/A", 
+            "weakness": "N/A", 
+            "reading": ["Introduction to C"]
         }
-    # --- FIX END ---
+    else:
+        print(f"🐢 SLOW PATH: Generative report for {username}...")
+        log_text = "\n".join([f"- [{log['intent']}] Topic: {log.get('topic', 'General')} - Q: {log['query']}" for log in recent_logs])
+        
+        prompt = f"""
+        Analyze this student's recent interaction history with a C Tutor AI.
+        Student Logs:
+        {log_text}
+        
+        Task: Write a helpful "Progress Report" in JSON format.
+        1. **Focus:** What topics are they asking about most? (Max 10 words)
+        2. **Strengths:** What are they doing well?
+        3. **Weakness:** What are they struggling with?
+        4. **Reading:** Suggest 2 specific C topics or concepts they should study next.
+        
+        Return ONLY JSON: {{ "focus": "...", "strengths": "...", "weakness": "...", "reading": ["Topic A", "Topic B"] }}
+        """
+        
+        try:
+            report_raw = llm_interface.generate_response(prompt)
+            clean_json = report_raw.replace("```json", "").replace("```", "").strip()
+            report_data = json.loads(clean_json)
+        except Exception as e:
+            logger.error(f"Analytics LLM error: {e}")
+            report_data = {
+                "focus": "Analysis unavailable", 
+                "strengths": "N/A", "weakness": "N/A", 
+                "reading": ["Basics"]
+            }
 
+    print(f"⏱️ Analytics took: {time.time() - t0:.2f}s")
+    
     return {
         "stats": stats,
         "mastery": mastery, 
