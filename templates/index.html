@@ -240,7 +240,61 @@
             background: rgba(230, 126, 34, 0.1);
         }
 
-        /* Responsive */
+        .loading-container {
+            width: 100%;
+            max-width: 600px;
+            padding: 10px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* The Status Text (e.g. "Reading documents...") */
+        .loading-status {
+            font-size: 0.85rem;
+            color: var(--accent-color);
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            animation: fadeIn 0.5s ease;
+        }
+
+        /* The Spinner Icon */
+        .spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(168, 199, 250, 0.3);
+            border-top: 2px solid var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* The "Ghost" Lines (Skeleton Text) */
+        .skeleton-line {
+            height: 12px;
+            border-radius: 6px;
+            background: #2a2b2d;
+            background-image: linear-gradient(
+                90deg, 
+                #2a2b2d 0%, 
+                #333 50%, 
+                #2a2b2d 100%
+            );
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+
+        /* Different widths to look like real text paragraphs */
+        .w-100 { width: 100%; }
+        .w-80  { width: 80%; }
+        .w-60  { width: 60%; }
+
+        /* Animations */
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
         @media (max-width: 900px) {
             .resources-section { display: none; }
             .sidebar { position: absolute; z-index: 100; height: 100%; }
@@ -356,6 +410,32 @@
         sendMessage();
     };
 
+    function addProfilerButton(container, relativeUrl) {
+        const btn = document.createElement('a');
+        
+        // --- FIX: Prepend API_URL ---
+        // If relativeUrl starts with /, remove it to avoid double slashes if needed
+        const cleanPath = relativeUrl.startsWith('/') ? relativeUrl.slice(1) : relativeUrl;
+        btn.href = `${API_URL}/${cleanPath}`; 
+        // -----------------------------
+        
+        btn.target = "_blank"; 
+        btn.className = 'profiler-btn';
+        btn.innerHTML = '⚡ View Execution Profile';
+        
+        // ... rest of styling ...
+        btn.style.display = 'inline-block';
+        btn.style.marginTop = '10px';
+        btn.style.fontSize = '0.75rem';
+        btn.style.color = '#e67e22';
+        btn.style.textDecoration = 'none';
+        btn.style.border = '1px solid #e67e22';
+        btn.style.padding = '4px 10px';
+        btn.style.borderRadius = '12px';
+        
+        container.appendChild(btn);
+    }
+
     window.sendMessage = async function(overrideText = null) {
         const input = document.getElementById('userInput');
         const rawText = overrideText || input.value.trim();
@@ -391,13 +471,15 @@
         botDiv.className = 'message bot';
         const progId = `prog-${Date.now()}`;
         botDiv.innerHTML = `
-            <div class="progress-step-container">
-                <div class="progress-step-text">
-                    <span>Thinking...</span> <span id="pct-${progId}">0%</span>
+            <div class="loading-container" id="${progId}">
+                <div class="loading-status">
+                    <div class="spinner"></div>
+                    <span id="status-text-${progId}">Thinking...</span>
                 </div>
-                <div class="progress-step-track">
-                    <div id="bar-${progId}" class="progress-step-fill" style="width:5%"></div>
-                </div>
+                <!-- Fake Paragraph Lines -->
+                <div class="skeleton-line w-100"></div>
+                <div class="skeleton-line w-80"></div>
+                <div class="skeleton-line w-60"></div>
             </div>`;
         document.getElementById('messages').appendChild(botDiv);
 
@@ -437,14 +519,20 @@
                             const data = JSON.parse(line.slice(6));
                             
                             if (data.type === 'status') {
-                                const pctEl = document.getElementById(`pct-${progId}`);
-                                const barEl = document.getElementById(`bar-${progId}`);
-                                if(pctEl && barEl) {
-                                    pctEl.innerText = data.percent + "%";
-                                    barEl.style.width = data.percent + "%";
+                                // 1. Update the status text next to the spinner
+                                const statusText = document.getElementById(`status-text-${progId}`);
+                                if (statusText) {
+                                    statusText.innerText = data.message;
                                 }
                             }
                             else if (data.type === 'token' || data.type === 'answer') {
+                                // 2. First Token Arrived? DESTROY the Skeleton!
+                                const skeletonContainer = document.getElementById(progId);
+                                if (skeletonContainer) {
+                                    skeletonContainer.remove(); // Removes the spinner & grey bars
+                                }
+
+                                // 3. Render Real Text
                                 currentMarkdown += data.text;
                                 botDiv.innerHTML = marked.parse(currentMarkdown);
                                 scrollToBottom();
@@ -457,9 +545,11 @@
                                 renderDiagrams(botDiv);
                                 Prism.highlightAllUnder(botDiv);
                                 
-                                // RENDER SUGGESTIONS (The Fix)
                                 displaySuggestions(data.data.suggestions, botDiv);
                                 loadChatHistory(); 
+                            }
+                            else if (data.type === 'profiler_report') {
+                                addProfilerButton(botDiv, data.url);
                             }
                         } catch(e) { console.warn(e); }
                     }

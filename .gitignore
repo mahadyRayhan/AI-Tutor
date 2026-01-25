@@ -212,3 +212,4 @@ papers
 .DS*
 resources
 models
+profiling_reports/*

@@ -140,11 +140,13 @@ class ChainOfThoughtRAGAgent:
             for record in results: expanded_terms.append(record['name'])
         return list(set(expanded_terms))
 
-    def _execute_retrieval(self, query: str, intent: str, user_role: str = 'student') -> List[Dict[str, Any]]:
-        # Same as before
-        extract_prompt = f"Extract C terms: '{query}'. Return CSV."
-        entities_str = self.llm_interface.generate_response(extract_prompt)
-        entities = [e.strip() for e in entities_str.split(',') if e.strip()]
+    def _execute_retrieval(self, query: str, intent: str, user_role: str = 'student', existing_entities: List[str] = None) -> List[Dict[str, Any]]:
+        if existing_entities:
+            entities = existing_entities
+        else:
+            extract_prompt = f"Extract C terms: '{query}'. Return CSV."
+            entities_str = self.llm_interface.generate_response(extract_prompt)
+            entities = [e.strip() for e in entities_str.split(',') if e.strip()]
         related_terms = self._expand_query_using_graph(query, entities)
         query_embedding = self.llm_interface.get_embedding(query)
         raw_chunks = self.vector_store.query(query_embedding, top_k=8)
@@ -205,59 +207,6 @@ class ChainOfThoughtRAGAgent:
         """
         # return self.llm_interface.generate_response(prompt)
         return self.llm_interface.generate_response(f"Review C code: {query} using context: {context}")
-
-    # def _generate_socratic_plan(self, query: str, context: str, user_goal: str = None) -> str:
-        
-    #     # Build dynamic instruction based on whether a goal exists
-    #     goal_instruction = ""
-    #     if user_goal:
-    #         goal_instruction = f"6. **GOAL ALIGNMENT:** The student's current learning goal is: '{user_goal}'. If the topic of their query helps them reach that goal, explicitly mention it in the Strategy section to motivate them."
-
-    #     prompt = f"""
-    #     You are an encouraging C Programming Tutor for junior students.
-        
-    #     Student Query: "{query}"
-    #     Reference Material: {context}
-
-    #     **CRITICAL RULES:**
-    #     1. **CONCEPT LIMITATION:** You may ONLY teach concepts present in the Reference Material.
-    #        - If the answer is NOT in the Reference Material, state that you do not have information on it.
-    #     2. **SOURCE GROUNDING:** Mention specific variable names/examples from the text.
-    #     3. **TEXT FIRST:** Text explanation MUST come before any diagrams.
-    #     4. **VISUALIZATION:** If appropriate, include a Mermaid diagram.
-    #        - **CRITICAL SANITIZATION:** 
-    #          - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
-    #          - ABSOLUTELY NO BRACKETS `[]` inside node labels.
-    #          - ABSOLUTELY NO QUOTES `"` inside node labels.
-    #          - **BAD:** `A[sum(a,b)]` or `B{{arr[i]}}`
-    #          - **GOOD:** `A[sum a b]` or `B{{arr index i}}`
-    #     5. **TONE INSTRUCTIONS:** Speak DIRECTLY to the student. Use "You" and "We".
-    #     {goal_instruction}
-
-    #     Format your response like this:
-        
-    #     ## Strategy
-    #     [Text Explanation. Mention the Goal here if applicable.]
-
-    #     ## Visual Logic
-    #     ```mermaid
-    #     graph TD
-    #        A[Start] --> B[End]
-    #     ```
-        
-    #     ## Implementation Plan
-    #     1. **[Step Name]**: [Description]
-    #        - *Example from text:* "In [Filename], we saw..."
-    #        ```c
-    #        // Generic Syntax
-    #        code...
-    #        ```
-        
-    #     ## Guiding Question
-    #     [Your question here]
-    #     """
-    #     # return self.llm_interface.generate_response(prompt)
-    #     return self.llm_interface.generate_response(f"Socratic plan for {query} using {context}")
 
     def _generate_socratic_plan(self, query: str, context: str, user_goal: str = None) -> str:
         
@@ -406,6 +355,116 @@ class ChainOfThoughtRAGAgent:
         [Reference specific code from text]
         """
 
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+        goal_section = ""
+        if user_goal:
+            goal_section = f"""
+            6. **GOAL CONNECTION (CRITICAL):** The student's goal is: "{user_goal}". 
+               - You MUST explicitly explain how the current concept helps them achieve "{user_goal}".
+            """
+        return f"""
+        You are an expert C Programming Tutor.
+        
+        Student Query: "{query}"
+        User's Goal: "{user_goal if user_goal else 'None'}"
+        Reference Material: {context}
+
+        **MANDATORY RULES:**
+        1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information..."
+        2. **PERSONALIZATION:** Acknowledge known concepts from USER CONTEXT.
+        3. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences). Use analogies. **Explicitly explain Use Cases.**
+        4. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`) if the concept involves flow/structure.
+           - **STRICT SYNTAX:** Use square brackets for labels: `A["Label"]`. Do NOT use single quotes.
+        5. **SOURCE GROUNDING:** Quote specific examples from text.
+        6. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
+        
+        **STRICT RESPONSE FORMAT:**
+        
+        ## Explanation
+        [Start by bridging from known concepts if applicable. Then explain the new concept using text and analogies.]
+        
+        ## Use Cases
+        [Explain WHEN and WHY this concept is used in real programming.]
+
+        {goal_section}
+
+        ## Visual Model
+        ```mermaid
+        graph TD
+           A["Start"] --> B{{"Condition?"}}
+           B -- "Yes" --> C["Action"]
+           B -- "No" --> D["End"]
+        ```
+        
+        ## Example from Class
+        [Reference specific code from text]
+        """
+
+    def _build_socratic_plan_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+        goal_instruction = ""
+        if user_goal:
+            goal_instruction = f"""
+            6. **CONNECT TO USER'S PROJECT:** The student's long-term goal is: "{user_goal}".
+               - You MUST explicitly explain how this specific concept helps them achieve "{user_goal}".
+            """
+
+        return f"""
+        You are an encouraging C Programming Tutor. You are talking DIRECTLY to a junior student.
+        
+        **YOUR TASK:** Help the student solve their problem: "{query}" using the Reference Material below.
+
+        Reference Material: {context}
+
+        **CRITICAL RULES:**
+        1. **TONE:** Be active, encouraging, and direct. Use "You" and "We".
+        2. **NO META-TALK:** Do NOT say "Here is a Socratic plan". Just start teaching!
+        3. **CONCEPT LIMITATION:** Only use concepts found in the Reference Material.
+        4. **SOURCE GROUNDING:** Mention specific variable names/examples from the text.
+        5. **TEXT FIRST:** Text explanation MUST come before any diagrams.
+        {goal_instruction}
+
+        **STRICT RESPONSE FORMAT:**
+        
+        ## Strategy
+        [Explain the concept enthusiastically. Connect it to their "{user_goal}" project immediately.]
+
+        ## Visual Logic
+        ```mermaid
+        graph TD
+           ...
+        ```
+        
+        ## Implementation Plan
+        1. **[Step Name]**: [Description]
+           ```c
+           // Generic Syntax
+           code...
+           ```
+        
+        ## Guiding Question
+        [A thoughtful question to check their understanding]
+        """
+
+    def _build_review_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+        return f"""
+        You are a supportive C Code Reviewer.
+        
+        Student's Input: {query}
+        Reference Material: {context}
+
+        **RULES:**
+        1. **CHECK CONTEXT:** Look for a "[CONTEXT: ...]" tag.
+        2. **SANDWICH METHOD:** Positive -> Improvement -> Hint.
+        3. **SOURCE GROUNDING:** Use variable names from Reference Material.
+        4. **NO SOLUTIONS:** Do not rewrite code.
+        
+        Format:
+        ## Code Review
+        **✅ What looks good:** ...
+        **⚠️ What needs work:** ...
+        **💡 Hint:** ...
+        """
+    
     def _build_socratic_prompt(self, query: str, context: str, user_goal: str = None) -> str:
         goal_instruction = ""
         if user_goal:
@@ -824,7 +883,7 @@ class ChainOfThoughtRAGAgent:
         t0 = time.time()
         
         q_search = f"{' '.join(entities)} in C" if len(search_query.split()) > 5 else search_query
-        chunks = self._execute_retrieval(q_search, intent, user_role)
+        chunks = self._execute_retrieval(q_search, intent, user_role, existing_entities=entities)
         profiler["4_Retrieval"] = time.time() - t0
         
         if not chunks:
@@ -840,43 +899,43 @@ class ChainOfThoughtRAGAgent:
         yield {"type": "status", "message": "Drafting response...", "percent": 80}
         t0 = time.time()
 
-        # Context Building
+        # 1. BUILD CONTEXT
         known_concepts = knowledge_manager.get_known_concepts(username)
         user_context_str = f"USER CONTEXT: The student already knows: {', '.join(known_concepts)}." if known_concepts else ""
         context_text = f"{user_context_str}\n\n"
         for c in chunks:
             context_text += f"--- Source: {c.get('metadata', {}).get('document_name')} ---\n{c.get('text')}\n\n"
 
+        # 2. START SUGGESTIONS (Parallel)
         suggest_task = asyncio.create_task(
             asyncio.to_thread(self._generate_suggestions, search_query, context_text)
         )
 
-        prompt = ""
+        # 3. BUILD PROMPT STRING (Don't call LLM yet)
+        final_prompt = ""
         if intent == "REVIEW": 
-            prompt = self._generate_code_review(search_query, context_text, user_goal)
+            final_prompt = self._build_review_prompt(search_query, context_text, user_goal)
         elif intent == "PROBLEM": 
-            prompt = self._generate_socratic_plan(search_query, context_text, user_goal)
+            final_prompt = self._build_socratic_plan_prompt(search_query, context_text, user_goal)
         else: 
-            prompt = self._generate_concept_explanation(search_query, context_text, user_goal)
+            final_prompt = self._build_concept_prompt(search_query, context_text, user_goal)
 
         yield {"type": "status", "message": "Generating...", "percent": 100}
         
-        # Simulate Streaming / Pass-through
-        full_answer = prompt # The prompt variable actually holds the response text here
-        chunk_size = 20
-        for i in range(0, len(full_answer), chunk_size):
-            yield {"type": "token", "text": full_answer[i:i+chunk_size]}
-            await asyncio.sleep(0.01)
+        full_answer = ""
+        
+        # 4. STREAMING CALL
+        # This calls Google/OpenAI with stream=True and yields tokens immediately
+        async for token in self.llm_interface.stream_response_async(final_prompt):
+            full_answer += token
+            yield {"type": "token", "text": token}
 
         suggestions = await suggest_task
         profiler["5_Gen"] = time.time() - t0
         
-        # --- FIX: AUTO-UPDATE KNOWLEDGE ---
-        # If we successfully explained a concept, mark it as known!
-        # This prevents the Prereq check from triggering again in future sessions.
+        # 5. AUTO-UPDATE KNOWLEDGE
         if intent == "CONCEPT":
             for entity in entities:
-                # Filter out garbage words before saving
                 if len(entity) > 2 and entity.lower() not in ["teach", "anyway", "me", "show", "tell", "explain"]:
                     knowledge_manager.mark_concept_as_known(username, entity)
                     self.logger.info(f"📚 Auto-Learned: {username} now knows {entity}")
@@ -892,6 +951,6 @@ class ChainOfThoughtRAGAgent:
                 "suggestions": suggestions,
                 "intent": intent,
                 "timings": profiler,
-                "session_id": session_id # Ensure session is maintained
+                "session_id": session_id 
             }
         }

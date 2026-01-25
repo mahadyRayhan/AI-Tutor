@@ -1,5 +1,5 @@
 # backend/app/main.py
-
+import os
 import shutil
 import subprocess
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form 
@@ -13,6 +13,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pathlib import Path
 
+from pyinstrument import Profiler
+from fastapi.staticfiles import StaticFiles # Needed to serve the reports
+
 # Import components
 from app.core import config
 from app.db.llm_interface import LLMInterface
@@ -25,6 +28,14 @@ from app.core.history_manager import history_manager # <--- Import
 from app.core.user_knowledge_manager import knowledge_manager # Ensure this is imported
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
+
+# 2. Setup Static Mount for Profiles
+PROFILE_DIR = os.path.join(config.PROJECT_ROOT, "profiling_reports")
+if not os.path.exists(PROFILE_DIR):
+    os.makedirs(PROFILE_DIR)
+
+# This makes http://localhost:8000/profiles/ accessible
+app.mount("/profiles", StaticFiles(directory=PROFILE_DIR), name="profiles")
 
 # CORS middleware
 app.add_middleware(
@@ -165,14 +176,19 @@ async def health():
 @app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest):
     """
-    Stream the response AND save to session history.
+    Stream the response AND save to session history, while Profiling execution time.
     """
+    # --- 1. START PROFILER ---
+    profiler = Profiler(interval=0.001, async_mode="enabled")
+    profiler.start()
+
+    # --- 2. SESSION MANAGEMENT ---
     # Create session if new
     session_id = request.session_id
     if not session_id:
         session_id = history_manager.create_session(request.username)
 
-    # --- FETCH CONTEXT ---
+    # --- 3. FETCH CONTEXT ---
     # Get the last few messages to find the active topic
     session_data = history_manager.get_session_details(request.username, session_id)
     last_context = ""
@@ -181,8 +197,6 @@ async def chat_stream(request: ChatRequest):
         # Look backwards for the last BOT message to find what we were talking about
         for msg in reversed(session_data["messages"]):
             if msg["role"] == "bot":
-                # We simply use the previous answer as context, or if you saved 'topic' metadata, use that.
-                # For now, let's pass the last 200 chars of the previous bot response as context.
                 last_context = msg["content"][:200]
                 break
     # --------------------------
@@ -191,22 +205,25 @@ async def chat_stream(request: ChatRequest):
     history_manager.add_message(request.username, session_id, "user", request.message)
 
     async def generate_stream():
-        if not cot_rag_agent:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
-            return
-
+        # Define vars scope for finally block
         full_bot_response = ""
         final_sources = []
-
+        
         try:
+            if not cot_rag_agent:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
+                return
+
             user_goal = knowledge_manager.get_goal(request.username)
 
+            # --- 4. RUN AGENT ---
             async for event in cot_rag_agent.run_stream(
                 request.message, 
                 request.user_role, 
                 username=request.username,
                 user_goal=user_goal,
-                conversation_context=last_context
+                conversation_context=last_context, # Passing the context we fetched
+                session_id=session_id # Passing session ID for contextualization
             ):
                 # Capture text for history
                 if event["type"] in ["token", "answer"]:
@@ -215,7 +232,6 @@ async def chat_stream(request: ChatRequest):
                 # Capture sources/metadata for history
                 if event["type"] == "complete":
                     final_data = event["data"]
-                    # If stream logic varies, ensure we capture the final answer text here too if needed
                     if not full_bot_response: 
                         full_bot_response = final_data.get('answer', '')
                     final_sources = final_data.get('sources', [])
@@ -226,7 +242,7 @@ async def chat_stream(request: ChatRequest):
                         final_data['answer'], "General"
                     )
                     
-                    # Send session_id back to client so they can attach it to next msg
+                    # Send session_id back to client
                     event["data"]["session_id"] = session_id 
 
                 yield f"data: {json.dumps(event)}\n\n"
@@ -237,7 +253,33 @@ async def chat_stream(request: ChatRequest):
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
+        
+        finally:
+            # --- 5. STOP PROFILER & SAVE REPORT ---
+            # This runs even if an error occurs
+            try:
+                profiler.stop()
+                
+                timestamp = int(time.time())
+                # Sanitize session_id just in case
+                safe_sess_id = str(session_id).replace("/", "_")
+                filename = f"profile_{safe_sess_id}_{timestamp}.html"
+                filepath = os.path.join(PROFILE_DIR, filename)
+                
+                # Write HTML to disk
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(profiler.output_html())
+                
+                # Send the link to the Frontend
+                # Note: We assume API_URL in frontend is pointing to the same host
+                # We send a relative path or full URL depending on your setup.
+                # Here we send a relative path which usually works best with mounted static files.
+                profile_url = f"/profiles/{filename}"
+                
+                yield f"data: {json.dumps({'type': 'profiler_report', 'url': profile_url})}\n\n"
+            except Exception as prof_e:
+                logger.error(f"Profiling save failed: {prof_e}")
+
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
 @app.get("/api/v1/config/topics")

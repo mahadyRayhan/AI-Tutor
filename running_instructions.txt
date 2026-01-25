@@ -1,0 +1,64 @@
+Here is the complete command sequence to run the project from scratch.
+
+### Prerequisites
+1.  **Neo4j Desktop** must be installed and the database **Started**.
+2.  You must have a `.env` file in the root directory with your keys (`GOOGLE_API_KEY`, `NEO4J_URI`, etc.).
+
+---
+
+### Step 1: Install Dependencies
+Open your terminal in the project root folder.
+
+**Windows:**
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+**Mac/Linux:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+---
+
+### Step 2: Data Ingestion (Building the Brain)
+You must run these scripts to populate the Vector Database (Chroma) and Knowledge Graph (Neo4j).
+
+1.  **Ingest Content (Code & Concepts):**
+    This reads `.c` and `.md` files, chunks them, creates embeddings, and creates graph nodes.
+    ```bash
+    python scripts/ingest_data.py
+    ```
+
+2.  **Ingest Logic (Curriculum Structure):**
+    This loads the "Prerequisite" logic (e.g., "Loops require Variables") into the graph.
+    ```bash
+    python scripts/ingest_manual_graph.py
+    ```
+
+*(Optional Check)*: You can run `python scripts/debug_retrieval.py` to make sure data was loaded correctly.
+
+---
+
+### Step 3: Start the Backend Server
+This launches the FastAPI application.
+
+```bash
+uvicorn app.main:app --reload
+```
+
+*Wait until you see: `Application startup complete.`*
+
+---
+
+### Step 4: Open the Frontend
+Go to your project folder and double-click **`index.html`** to open it in your browser.
+
+1.  **Login:** Use the default admin credentials (created automatically on first run):
+    *   **Username:** `teacher1`
+    *   **Password:** `admin123`
+2.  **Or Signup:** Create a new student account via the "Create Account" link.
