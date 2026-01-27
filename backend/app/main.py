@@ -10,8 +10,9 @@ import logging
 import time
 import json
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 from pathlib import Path
+from datetime import datetime
+import csv
 
 from pyinstrument import Profiler
 from fastapi.staticfiles import StaticFiles # Needed to serve the reports
@@ -23,9 +24,9 @@ from app.db.vector_store import ChromaVectorStore
 from app.db.graph_db import Neo4jGraphDB
 from app.agents.cot_rag_agent import ChainOfThoughtRAGAgent
 from app.core.settings_manager import settings_manager
-from app.core.user_manager import user_manager # <--- Import this
-from app.core.history_manager import history_manager # <--- Import
-from app.core.user_knowledge_manager import knowledge_manager # Ensure this is imported
+from app.core.user_manager import user_manager 
+from app.core.history_manager import history_manager
+from app.core.user_knowledge_manager import knowledge_manager 
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -83,6 +84,12 @@ class GoalRequest(BaseModel):
     username: str
     goal: str
 
+class FeedbackRequest(BaseModel):
+    username: str
+    session_id: str
+    message_index: int  # Which message in the chat history is this for?
+    feedback_type: str  # "up", "down", "simplify", "deep_dive"
+    original_query: str # Needed for re-generation
 
 def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
     """
@@ -678,7 +685,49 @@ async def set_user_goal(req: GoalRequest):
     from app.core.user_knowledge_manager import knowledge_manager
     knowledge_manager.set_goal(req.username, req.goal)
     return {"status": "success", "goal": req.goal}
+
+@app.post("/api/v1/chat/feedback")
+async def handle_feedback(req: FeedbackRequest):
+    """
+    Logs feedback and optionally returns a new answer.
+    """
+    # 1. Log the Feedback (Crucial for your future ML model)
+    feedback_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "username": req.username,
+        "query": req.original_query,
+        "preference": req.feedback_type
+    }
     
+    # Save to a new 'feedback_dataset.csv' for training later
+    feedback_file = os.path.join(config.PROJECT_ROOT, "database", "feedback_history.csv")
+    file_exists = os.path.isfile(feedback_file)
+    
+    with open(feedback_file, 'a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=["timestamp", "username", "query", "preference"])
+        if not file_exists: writer.writeheader()
+        writer.writerow(feedback_entry)
+
+    # 2. Handle Re-Generation (Simplify / Deep Dive)
+    if req.feedback_type in ["simplify", "deep_dive"]:
+        # We need to trigger the agent with a specific instruction
+        instruction = ""
+        if req.feedback_type == "simplify":
+            instruction = "Explain this again, but extremely simple. Use 5th-grader language. Keep it under 3 sentences."
+        elif req.feedback_type == "deep_dive":
+            instruction = "Explain this again, but go very deep. Cover memory management, advanced edge cases, and best practices."
+            
+        # We use a special internal prompt format for this
+        modified_query = f"{instruction} Query: {req.original_query}"
+        
+        # Return a stream response just like the main chat
+        # Note: We reuse the existing chat_stream logic by creating a dummy request
+        # But since we can't call an endpoint from an endpoint easily in FastAPI without overhead,
+        # we will return a flag to the frontend to call the stream endpoint again.
+        return {"action": "regenerate", "modified_query": modified_query}
+
+    return {"status": "recorded"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)

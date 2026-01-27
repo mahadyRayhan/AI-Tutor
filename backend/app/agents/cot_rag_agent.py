@@ -286,7 +286,7 @@ class ChainOfThoughtRAGAgent:
         **MANDATORY RULES:**
         1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information..."
         2. **PERSONALIZATION:** Acknowledge known concepts from USER CONTEXT.
-        3. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences). Use analogies. **Explicitly explain Use Cases.**
+        3. **TEXT PRIORITY:** Be CONCISE. Max 2 short paragraphs for the explanation. No fluff.
         4. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`) if the concept involves flow/structure.
            - **STRICT SYNTAX:** Use square brackets for labels: `A["Label"]`. Do NOT use single quotes like `A'Label'`. 
            - Escape internal quotes.

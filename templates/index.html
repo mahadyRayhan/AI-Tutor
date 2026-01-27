@@ -149,12 +149,12 @@
 
         /* Messages */
         .messages-container { 
-            flex: 1; padding: 20px 15%; 
+            flex: 1; padding: 20px 6%; 
             overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
             padding-bottom: 120px; z-index: 6;
         }
         .message { 
-            max-width: 90%; padding: 10px 20px; border-radius: 18px; 
+            max-width: 95%; padding: 10px 10px; border-radius: 18px; 
             line-height: 1.6; font-size: 1rem; color: var(--text-primary);
         }
         .message.user { align-self: flex-end; background-color: #282a2c; border-bottom-right-radius: 4px; }
@@ -285,6 +285,19 @@
             animation: shimmer 1.5s infinite;
         }
 
+        .feedback-bar {
+            display: flex; gap: 8px; margin-top: 10px; opacity: 0.7; transition: opacity 0.2s;
+        }
+        .feedback-bar:hover { opacity: 1; }
+        
+        .feedback-btn {
+            background: transparent; border: 1px solid var(--border-color);
+            color: var(--text-secondary); border-radius: 6px; padding: 4px 8px;
+            font-size: 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 4px;
+        }
+        .feedback-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+        .feedback-btn.active { background: var(--accent-color); color: #000; border-color: var(--accent-color); }
+
         /* Different widths to look like real text paragraphs */
         .w-100 { width: 100%; }
         .w-80  { width: 80%; }
@@ -410,63 +423,126 @@
         sendMessage();
     };
 
-    function addProfilerButton(container, relativeUrl) {
-        const btn = document.createElement('a');
+    // function addProfilerButton(container, relativeUrl) {
+    //     const btn = document.createElement('a');
         
-        // --- FIX: Prepend API_URL ---
-        // If relativeUrl starts with /, remove it to avoid double slashes if needed
-        const cleanPath = relativeUrl.startsWith('/') ? relativeUrl.slice(1) : relativeUrl;
-        btn.href = `${API_URL}/${cleanPath}`; 
-        // -----------------------------
+    //     const cleanPath = relativeUrl.startsWith('/') ? relativeUrl.slice(1) : relativeUrl;
+    //     btn.href = `${API_URL}/${cleanPath}`;         
+    //     btn.target = "_blank"; 
+    //     btn.className = 'profiler-btn';
+    //     btn.innerHTML = '⚡ View Execution Profile';
         
-        btn.target = "_blank"; 
-        btn.className = 'profiler-btn';
-        btn.innerHTML = '⚡ View Execution Profile';
+    //     btn.style.display = 'inline-block';
+    //     btn.style.marginTop = '10px';
+    //     btn.style.fontSize = '0.75rem';
+    //     btn.style.color = '#e67e22';
+    //     btn.style.textDecoration = 'none';
+    //     btn.style.border = '1px solid #e67e22';
+    //     btn.style.padding = '4px 10px';
+    //     btn.style.borderRadius = '12px';
         
-        // ... rest of styling ...
-        btn.style.display = 'inline-block';
-        btn.style.marginTop = '10px';
-        btn.style.fontSize = '0.75rem';
-        btn.style.color = '#e67e22';
-        btn.style.textDecoration = 'none';
-        btn.style.border = '1px solid #e67e22';
-        btn.style.padding = '4px 10px';
-        btn.style.borderRadius = '12px';
+    //     container.appendChild(btn);
+    // }
+
+    function addFeedbackButtons(container, originalQuery) {
+        const bar = document.createElement('div');
+        bar.className = 'feedback-bar';
         
-        container.appendChild(btn);
+        const actions = [
+            { id: 'up', icon: '👍', label: '' },
+            { id: 'down', icon: '👎', label: '' },
+            { id: 'simplify', icon: '👶', label: 'Simplify' },
+            { id: 'deep_dive', icon: '🤿', label: 'Deep Dive' }
+        ];
+
+        actions.forEach(act => {
+            const btn = document.createElement('button');
+            btn.className = 'feedback-btn';
+            btn.innerHTML = `${act.icon} ${act.label}`;
+            
+            btn.onclick = async () => {
+                // Visual Feedback
+                btn.classList.add('active');
+                
+                // Send to Backend
+                const res = await fetch(`${API_URL}/api/v1/chat/feedback`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        username: currentUser.username,
+                        session_id: currentSessionId,
+                        message_index: 0, 
+                        feedback_type: act.id,
+                        original_query: originalQuery
+                    })
+                });
+                
+                const data = await res.json();
+                
+                // Handle Regeneration
+                if (data.action === 'regenerate') {
+                    // Send hidden message to trigger new stream
+                    // TRUE = Hidden (Don't show user bubble)
+                    window.sendMessage(data.modified_query, true); 
+                }
+            };
+            
+            bar.appendChild(btn);
+        });
+        
+        container.appendChild(bar);
     }
 
-    window.sendMessage = async function(overrideText = null) {
+    function addProfilerButton(container, relativeUrl) {
+        const btn = document.createElement('a');
+        const cleanPath = relativeUrl.startsWith('/') ? relativeUrl.slice(1) : relativeUrl;
+        btn.href = `${API_URL}/${cleanPath}`; 
+        btn.target = "_blank"; 
+        btn.className = 'feedback-btn'; // Reuse feedback style
+        btn.style.color = '#e67e22';
+        btn.style.borderColor = '#e67e22';
+        btn.innerHTML = '⚡ Profile';
+        
+        // Append to feedback bar if exists, else container
+        const bar = container.querySelector('.feedback-bar');
+        if(bar) bar.appendChild(btn);
+        else container.appendChild(btn);
+    }
+
+    window.sendMessage = async function(overrideText = null, hidden = false) {
         const input = document.getElementById('userInput');
         const rawText = overrideText || input.value.trim();
         
-        console.log("Sending:", rawText); // DEBUG LOG
+        console.log("Sending:", rawText);
 
         if (!rawText) return;
 
-        // Hide Welcome Screen if visible
+        // Hide Welcome Screen
         const welcome = document.getElementById('welcome-view');
         if (welcome) welcome.style.display = 'none';
         const initialSug = document.getElementById('initialSuggestions');
         if (initialSug) initialSug.style.display = 'none';
 
-        // 1. Add User Message
-        const userDiv = document.createElement('div');
-        userDiv.className = 'message user';
-        let displayText = rawText.replace(/\n/g, '<br>');
-        if (rawText.includes('{') || rawText.includes(';')) {
-            displayText = `<pre><code class="language-c">${rawText.replace(/</g, '&lt;')}</code></pre>`;
+        // --- NEW LOGIC: Only show bubble if NOT hidden ---
+        if (!hidden) {
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            let displayText = rawText.replace(/\n/g, '<br>');
+            if (rawText.includes('{') || rawText.includes(';')) {
+                displayText = `<pre><code class="language-c">${rawText.replace(/</g, '&lt;')}</code></pre>`;
+            }
+            userDiv.innerHTML = displayText;
+            document.getElementById('messages').appendChild(userDiv);
+            Prism.highlightAllUnder(userDiv);
         }
-        userDiv.innerHTML = displayText;
-        document.getElementById('messages').appendChild(userDiv);
-        Prism.highlightAllUnder(userDiv);
+        // ------------------------------------------------
 
         // Clear Input
         input.value = '';
         input.style.height = 'auto';
         scrollToBottom();
 
-        // 2. Add Bot Placeholder
+        // 2. Add Bot Placeholder (Skeleton Loader)
         const botDiv = document.createElement('div');
         botDiv.className = 'message bot';
         const progId = `prog-${Date.now()}`;
@@ -476,7 +552,6 @@
                     <div class="spinner"></div>
                     <span id="status-text-${progId}">Thinking...</span>
                 </div>
-                <!-- Fake Paragraph Lines -->
                 <div class="skeleton-line w-100"></div>
                 <div class="skeleton-line w-80"></div>
                 <div class="skeleton-line w-60"></div>
@@ -518,25 +593,21 @@
                         try {
                             const data = JSON.parse(line.slice(6));
                             
+                            // 1. STATUS UPDATE
                             if (data.type === 'status') {
-                                // 1. Update the status text next to the spinner
                                 const statusText = document.getElementById(`status-text-${progId}`);
-                                if (statusText) {
-                                    statusText.innerText = data.message;
-                                }
+                                if (statusText) statusText.innerText = data.message;
                             }
+                            // 2. TOKEN STREAM
                             else if (data.type === 'token' || data.type === 'answer') {
-                                // 2. First Token Arrived? DESTROY the Skeleton!
-                                const skeletonContainer = document.getElementById(progId);
-                                if (skeletonContainer) {
-                                    skeletonContainer.remove(); // Removes the spinner & grey bars
-                                }
+                                const skeleton = document.getElementById(progId);
+                                if (skeleton) skeleton.remove(); // Kill the skeleton
 
-                                // 3. Render Real Text
                                 currentMarkdown += data.text;
                                 botDiv.innerHTML = marked.parse(currentMarkdown);
                                 scrollToBottom();
                             }
+                            // 3. COMPLETE
                             else if (data.type === 'complete') {
                                 if (data.data.session_id) currentSessionId = data.data.session_id;
                                 
@@ -546,8 +617,10 @@
                                 Prism.highlightAllUnder(botDiv);
                                 
                                 displaySuggestions(data.data.suggestions, botDiv);
+                                addFeedbackButtons(botDiv, rawText); 
                                 loadChatHistory(); 
                             }
+                            // 4. PROFILER
                             else if (data.type === 'profiler_report') {
                                 addProfilerButton(botDiv, data.url);
                             }
@@ -583,7 +656,6 @@
                 btn.innerText = text;
                 // Explicitly bind the click
                 btn.addEventListener('click', function() {
-                    console.log("Suggestion clicked:", text);
                     window.sendMessage(text);
                 });
             }
