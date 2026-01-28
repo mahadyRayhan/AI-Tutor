@@ -159,3 +159,35 @@ I need a good to the point plan for this.
     max-width: 95%; padding: 10px 10px; border-radius: 18px; 
     line-height: 1.6; font-size: 1rem; color: var(--text-primary);
 }
+
+------ ML for PPN ------------
+Got it. Now it works and saves users feedback as well as changes text based on your choice, like simplified or deepdive. Now, I have a question: how can I use some ML model here (specifically for content visual decision making)? previously I had some suggestions like this:
+
+Here is the updated, comprehensive **ML Model Table** for your research-grade AI Tutor system.
+
+This table covers the entire pipeline: from understanding the user, to deciding the teaching strategy (UX/Complexity), to generating the content, and finally verifying it.
+
+### **The AI Tutor Research Model Stack**
+
+| **System Role** | **Model Architecture** | **Description & Research Purpose** |
+| :--- | :--- | :--- |
+| **1. The User Modeler (DKT)** | **SAINT+ (Transformer)** | **Deep Knowledge Tracing.** Instead of simple counters, this Transformer models the student's "brain state." It uses self-attention to weigh recent vs. distant interactions, outputting a probability score (0-1) of how well the student understands the current topic. |
+| **2. The Decider (PPN)** | **XGBoost (Classifier)** | **Pedagogical Policy Network.** This is the "Director" you asked for. It takes the student's mastery score (from SAINT+) and intent (from BERT) to predict the optimal **Output Mode** (e.g., *Visual+Simple* vs. *Text+Complex*) and **Scaffolding Level** before the LLM generates a single word. |
+| **3. The Generator (Tutor)** | **Llama 3 / Gemini Flash** | **Generative Agent.** The core LLM that writes the actual response. It receives the "Mode" constraints from the PPN (e.g., "Do not write code, use an analogy") and generates the content. Using a quantization (4-bit) allows Llama 3 to run locally for development. |
+| **4. The Aligner (Policy)** | **LoRA Adapter (via DPO)** | **Direct Preference Optimization.** Rather than using complex Reinforcement Learning, this lightweight adapter is fine-tuned on a dataset of "Good vs. Bad" tutoring interactions. It creates an implicit bias in the LLM to ask Socratic questions rather than giving direct answers. |
+| **5. The Observer (NLU)** | **DistilBERT** | **Intent & Sentiment Analysis.** A fast, lightweight model that runs in the background. It tags every user message with labels like "Confused," "Frustrated," or "Debugging." These tags serve as critical input features for the PPN and Teacher Dashboard. |
+| **6. The Retriever (Search)** | **Bi-Encoder (MiniLM)** | **Semantic Embedding.** Converts student queries into vector space for ChromaDB. It allows the system to find relevant textbook concepts based on *meaning* rather than just keyword matching (e.g., matching "how to repeat code" with "loops"). |
+| **7. The Filter (Quality)** | **Cross-Encoder** | **Causal Re-Ranking.** A highly accurate model that reads the top 10 retrieved documents and the user query together. It assigns a "Usefulness Score" to filter out irrelevant search results, ensuring the Tutor Agent is grounded in high-quality context. |
+| **8. The Critic (Trust)** | **DeBERTa-v3 (NLI)** | **Hallucination Detection.** A Natural Language Inference model that acts as a safety guardrail. It compares the *Retrieved Text* against the *Generated Answer* to ensure the AI isn't making things up. If contradiction is found, it forces a regeneration. |
+| **9. The Analyst (Teacher)**| **K-Means Clustering** | **Unsupervised Grouping.** Used for the Teacher Dashboard. It analyzes vector embeddings of all class queries to group students into "Struggle Clusters" (e.g., "Cluster 3 is struggling with Pointers") without revealing individual identities. |
+
+### **How they flow together:**
+
+1.  **DistilBERT** sees the user is "Confused."
+2.  **SAINT+** sees the user has "Low Mastery" in this topic.
+3.  **XGBoost (PPN)** calculates: `Confused + Low Mastery` = **`Output Mode: Visual Analogy`**.
+4.  **Llama 3 (DPO)** receives the prompt: *"Explain loops using a visual analogy. Do not give code."*
+5.  **DeBERTa** verifies the explanation is accurate.
+6.  **The User** sees a helpful diagram instead of a wall of text.
+
+which one is useful here?
