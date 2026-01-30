@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - NEO4J_URI=bolt://graph-db:7687
+      - CHROMA_DB_PATH=/app/chroma_data
+    volumes:
+      - ./chroma_data:/app/chroma_data
+    depends_on:
+      - graph-db
+    # This command runs your ingestion scripts before starting uvicorn
+    command: >
+      sh -c "python scripts/ingest_data.py && 
+             python scripts/ingest_manual_graph.py && 
+             uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+
+  # Knowledge Graph (Neo4j)
+  graph-db:
+    image: neo4j:latest
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/12345678
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  neo4j_data:
