@@ -189,6 +189,8 @@ MAX_MULTIMEDIA_SIZE_MB = int(os.getenv("MAX_MULTIMEDIA_SIZE_MB", "50"))
 ENABLE_IMAGE_GENERATION = os.getenv("ENABLE_IMAGE_GENERATION", "true").lower() == "true"
 ENABLE_VIDEO_GENERATION = os.getenv("ENABLE_VIDEO_GENERATION", "true").lower() == "true"
 ENABLE_MULTIMEDIA_FOR_STUDENTS_ONLY = os.getenv("ENABLE_MULTIMEDIA_FOR_STUDENTS_ONLY", "true").lower() == "true"
+# --- Profiling ---
+ENABLE_PROFILING = os.getenv("ENABLE_PROFILING", "false").lower() == "true" # Default to False for production speed
 
 # Chain of Thoughts Settings
 COT_MAX_COMPONENTS = int(os.getenv("COT_MAX_COMPONENTS", "6"))

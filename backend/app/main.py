@@ -186,8 +186,10 @@ async def chat_stream(request: ChatRequest):
     Stream the response AND save to session history, while Profiling execution time.
     """
     # --- 1. START PROFILER ---
-    profiler = Profiler(interval=0.001, async_mode="enabled")
-    profiler.start()
+    profiler = None
+    if config.ENABLE_PROFILING:
+        profiler = Profiler(interval=0.001, async_mode="enabled")
+        profiler.start()
 
     # --- 2. SESSION MANAGEMENT ---
     # Create session if new
@@ -290,30 +292,24 @@ async def chat_stream(request: ChatRequest):
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         
         finally:
-            # --- 5. STOP PROFILER & SAVE REPORT ---
-            # This runs even if an error occurs
-            try:
-                profiler.stop()
-                
-                timestamp = int(time.time())
-                # Sanitize session_id just in case
-                safe_sess_id = str(session_id).replace("/", "_")
-                filename = f"profile_{safe_sess_id}_{timestamp}.html"
-                filepath = os.path.join(PROFILE_DIR, filename)
-                
-                # Write HTML to disk
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(profiler.output_html())
-                
-                # Send the link to the Frontend
-                # Note: We assume API_URL in frontend is pointing to the same host
-                # We send a relative path or full URL depending on your setup.
-                # Here we send a relative path which usually works best with mounted static files.
-                profile_url = f"/profiles/{filename}"
-                
-                yield f"data: {json.dumps({'type': 'profiler_report', 'url': profile_url})}\n\n"
-            except Exception as prof_e:
-                logger.error(f"Profiling save failed: {prof_e}")
+            # --- 5. STOP PROFILER & SAVE REPORT (Conditional) ---
+            if profiler:
+                try:
+                    profiler.stop()
+                    
+                    timestamp = int(time.time())
+                    safe_sess_id = str(session_id).replace("/", "_")
+                    filename = f"profile_{safe_sess_id}_{timestamp}.html"
+                    filepath = os.path.join(PROFILE_DIR, filename)
+                    
+                    # This is the heavy part (2-3s) - only runs if enabled
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(profiler.output_html())
+                    
+                    profile_url = f"/profiles/{filename}"
+                    yield f"data: {json.dumps({'type': 'profiler_report', 'url': profile_url})}\n\n"
+                except Exception as prof_e:
+                    logger.error(f"Profiling save failed: {prof_e}")
 
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
