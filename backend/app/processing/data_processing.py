@@ -9,11 +9,13 @@ from typing import List, Dict, Any
 
 # We use the Language-aware splitter for C code
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
+from sentence_transformers import SentenceTransformer
 
 from app.core import config
 from app.db.graph_db import Neo4jGraphDB
 from app.db.llm_interface import LLMInterface
 
+local_embedder = SentenceTransformer('all-MiniLM-L6-v2')
 logger = logging.getLogger(__name__)
 
 def _create_chunk_id(doc_name: str, chunk_idx: int) -> str:
@@ -108,6 +110,45 @@ def _determine_metadata(filename: str) -> Dict[str, str]:
     elif "struct" in name: topic = "Structures"
     
     return {"access_level": access_level, "topic": topic}
+
+def _generate_concept_quiz_with_answers(concept_name: str, context: str, llm: LLMInterface) -> List[Dict]:
+    """Generates Q&A pairs and pre-computes embeddings (Google + Local)."""
+    prompt = f"""
+    Context: {context[:800]}
+    
+    Task: Generate 3 specific Q&A pairs to test a student's understanding of "{concept_name}" in C.
+    - Questions must be answerable in 1 sentence or a code snippet.
+    - NO multiple choice.
+    - Return strictly as a JSON list of objects: [{{ "q": "Question?", "a": "Correct Answer" }}]
+    """
+    try:
+        resp = llm.generate_response(prompt)
+        # Robust JSON cleaning
+        clean = resp.replace("```json", "").replace("```", "").strip()
+        start = clean.find('[')
+        end = clean.rfind(']') + 1
+        pairs = json.loads(clean[start:end])
+        
+        valid_pairs = []
+        for p in pairs:
+            # 1. Google Embedding (High Quality, for legacy/fallback)
+            emb_google = llm.get_embedding(p['a']) 
+            
+            # 2. Local Embedding (Fast, for real-time grading)
+            # Encode returns numpy array, convert to list for JSON serialization
+            emb_local = local_embedder.encode(p['a']).tolist()
+            
+            if emb_google:
+                valid_pairs.append({
+                    "q": p['q'], 
+                    "a": p['a'], 
+                    "a_vector": emb_google,        # Google
+                    "a_vector_local": emb_local    # Local
+                })
+        return valid_pairs
+    except Exception as e:
+        logger.warning(f"Quiz gen failed for {concept_name}: {e}")
+        return []
 
 def process_and_chunk_documents(
     resource_paths: List[str],
@@ -237,11 +278,16 @@ def process_and_chunk_documents(
                 # Link Concepts (Common to both Code and Markdown)
                 # This bridges the gap: The MD mentions "Pointers", the C code demonstrates "Pointers"
                 for concept in entities.get('concepts', []):
+                    # 1. Generate & Embed Quiz (Offline)
+                    qa_pairs = _generate_concept_quiz_with_answers(concept, text, embedding_interface)
+                    
+                    # 2. Save to Neo4j as JSON string
                     graph_db.execute_query("""
                         MATCH (c:Chunk {id: $cid})
                         MERGE (con:Concept {name: $name})
+                        SET con.quiz_data = $data 
                         MERGE (c)-[:RELATES_TO]->(con)
-                    """, {"cid": chunk_id, "name": concept})
+                    """, {"cid": chunk_id, "name": concept, "data": json.dumps(qa_pairs)})
 
         except Exception as e:
             logger.error(f"Error processing {filename}: {e}")

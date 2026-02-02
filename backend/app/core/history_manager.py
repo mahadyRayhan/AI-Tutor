@@ -116,6 +116,20 @@ class HistoryManager:
         sessions.sort(key=lambda x: x['timestamp'], reverse=True)
         return [{"id": s["id"], "title": s["title"], "date": s["timestamp"]} for s in sessions]
 
+    def update_session_state(self, username: str, session_id: str, state_data: Dict):
+        """Saves temporary state (like active quiz) to the session."""
+        data = self._load_sessions()
+        if username in data and session_id in data[username]:
+            # Merge new state with existing
+            current_state = data[username][session_id].get("state", {})
+            current_state.update(state_data)
+            data[username][session_id]["state"] = current_state
+            self._save_sessions(data)
+
+    def get_session_state(self, username: str, session_id: str) -> Dict:
+        data = self._load_sessions()
+        return data.get(username, {}).get(session_id, {}).get("state", {})
+    
     def get_session_details(self, username: str, session_id: str) -> Dict:
         """Returns full message history for a session."""
         data = self._load_sessions()
