@@ -685,14 +685,29 @@
     async function renderDiagrams(container) {
         const blocks = container.querySelectorAll('code');
         for (const block of blocks) {
-            if (block.textContent.trim().startsWith('graph ')) {
+            // Check if it's explicitly mermaid class OR starts with graph/flowchart
+            const txt = block.textContent.trim();
+            const isMermaid = block.classList.contains('language-mermaid') || 
+                              txt.startsWith('graph ') || 
+                              txt.startsWith('flowchart ');
+
+            if (isMermaid) {
                 try {
                     const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
-                    const { svg } = await window.mermaid.render(id, block.textContent);
+                    const { svg } = await window.mermaid.render(id, txt);
                     const div = document.createElement('div');
-                    div.innerHTML = svg; div.style.textAlign='center';
-                    block.replaceWith(div);
-                } catch (e) {}
+                    div.innerHTML = svg; 
+                    div.style.textAlign = 'center';
+                    
+                    // Replace the <pre> parent if it exists, otherwise just the <code>
+                    if (block.parentElement.tagName === 'PRE') {
+                        block.parentElement.replaceWith(div);
+                    } else {
+                        block.replaceWith(div);
+                    }
+                } catch (e) {
+                    console.error("Mermaid Render Error:", e);
+                }
             }
         }
     }

@@ -173,6 +173,33 @@ class ChainOfThoughtRAGAgent:
         
         return text
 
+    def _clean_guided_visual(self, text: str) -> str:
+        """
+        Simple sanitizer. 
+        Rely on the Prompt to format structure correctly. 
+        We just clean up wrappers and enforce quote safety.
+        """
+        if not text: return ""
+
+        # 1. Remove Markdown wrappers
+        text = text.replace("```mermaid", "").replace("```", "").strip()
+
+        # 2. Fix the specific error: "Node'Label'" -> "Node[Label]"
+        # If the LLM generates ID'Label', convert to ID[Label]
+        # This handles the case where it avoids quotes but uses single quotes as wrappers
+        text = re.sub(r"(\w+)'([^']+)'", r'\1[\2]', text)
+
+        # 3. Final Safety: If brackets contain quotes, strip them.
+        # Matches: [ "Content" ] -> [ Content ]
+        def strip_inner_quotes(match):
+            content = match.group(1)
+            clean_content = content.replace('"', '').replace("'", "")
+            return f"[{clean_content}]"
+            
+        text = re.sub(r'\[(.*?)\]', strip_inner_quotes, text)
+        
+        return text
+
     def _expand_query_using_graph(self, query: str, initial_entities: List[str]) -> List[str]:
         expanded_terms = []
         for entity in initial_entities:
@@ -362,10 +389,9 @@ class ChainOfThoughtRAGAgent:
         goal_section = ""
         if user_goal:
             goal_section = f"""
-            ## Connection to Your Goal
-            Explain explicitly how this concept helps achieve the goal: "{user_goal}".
+            6. **GOAL CONNECTION (CRITICAL):** The student's goal is: "{user_goal}". 
+               - You MUST explicitly explain how the current concept helps them achieve "{user_goal}".
             """
-
         return f"""
         You are an expert C Programming Tutor.
         
@@ -374,18 +400,28 @@ class ChainOfThoughtRAGAgent:
         Reference Material: {context}
 
         **MANDATORY RULES:**
-        1. **STRICT LIMITATION:** Check the Reference Material. If concept is missing, say "I don't have information..."
-        2. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences).
-        3. **VISUALIZATION (MANDATORY):** You MUST synthesize a Mermaid.js diagram (`graph TD`) to visualize the concept (e.g. data flow, memory layout, or logic), even if the text doesn't explicitly describe a diagram.
-           - **SANITIZATION:** No `()`, `[]`, or `"` in node labels. Use single quotes if needed.
-        4. **SOURCE GROUNDING:** Quote specific examples from text.
-        5. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
-
+        1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information..."
+        2. **PERSONALIZATION:** Acknowledge known concepts from USER CONTEXT.
+        3. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences). Use analogies.
+        4. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`).
+           - **CRITICAL SYNTAX:** 
+             - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
+             - ABSOLUTELY NO BRACKETS `[]` inside node labels.
+             - ABSOLUTELY NO QUOTES `"` inside node labels.
+             - **GOOD:** `A[Start] --> B[Declare Array]`
+        5. **SOURCE GROUNDING:** Quote specific examples from text.
+        6. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
+        
         **STRICT RESPONSE FORMAT:**
         
         ## Explanation
-        [Detailed text explanation...]
+        [Text explanation...]
+        
+        ## Use Cases
+        [Why use this...]
+
         {goal_section}
+
         ## Visual Model
         ```mermaid
         graph TD
@@ -547,6 +583,80 @@ class ChainOfThoughtRAGAgent:
         ## Guiding Question
         ...
         """
+
+    def _generate_step_by_step_plan(self, query: str, context: str) -> List[Dict[str, str]]:
+        prompt = f"""
+        You are a C Programming Curriculum Designer.
+        Problem: "{query}"
+        Context: {context}
+
+        **TASK:** Break this problem down into small, logical coding steps for a beginner.
+        DO NOT WRITE CODE. Just define the sub-goals.
+
+        **Requirements:**
+        1. 3 to 6 steps max.
+        2. Start with Data Structure/Variables.
+        3. End with Printing Output.
+        4. Each step must be a specific, verifiable task (e.g., "Write the function signature for Average").
+
+        **OUTPUT FORMAT:**
+        Strictly a JSON list of objects:
+        [
+            {{"goal": "Brief title of step", "description": "What the student needs to do now", "verification_criteria": "What to check for"}}
+        ]
+        """
+        response = self.llm_interface.generate_response(prompt)
+        try:
+            clean_json = response.replace("```json", "").replace("```", "").strip()
+            # Find first [ and last ]
+            start = clean_json.find('[')
+            end = clean_json.rfind(']') + 1
+            return json.loads(clean_json[start:end])
+        except Exception as e:
+            self.logger.error(f"Plan generation failed: {e}")
+            return [{"goal": "Solve the problem", "description": "Let's write the code together.", "verification_criteria": "Code validity"}]
+
+    def _evaluate_step_progress(self, user_input: str, current_step: Dict, context: str) -> Dict[str, Any]:
+        prompt = f"""
+        You are a C Tutor guiding a student.
+        
+        **Step Goal:** {current_step['goal']}
+        **Task:** {current_step['description']}
+        
+        **Student Input:** "{user_input}"
+        **Reference Material:** {context}
+
+        **TASK:** Evaluate the student's input.
+
+        **OUTPUT RULES:**
+        1. **STATUS:** "PASS" if correct. "FAIL" if wrong. "QUESTION" if they ask for help.
+        2. **FEEDBACK:** Be encouraging. If they failed, explain WHY based on the Criteria.
+        3. **VISUAL AID (CRITICAL):** 
+           - IF the student is confused, provide a MermaidJS graph string in `visual_aid`.
+           - **CRITICAL SANITIZATION RULES:** 
+             - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
+             - ABSOLUTELY NO BRACKETS `[]` inside node labels.
+             - ABSOLUTELY NO QUOTES `"` inside node labels.
+             - **BAD:** `A[sum(a,b)]` or `B{{arr[i]}}` or `C["Text"]`
+             - **GOOD:** `A[sum a b]` or `B{{arr index i}}` or `C[Text]`
+        4. **PSEUDOCODE:** Provide `pseudocode_hint` if stuck.
+
+        **OUTPUT JSON:**
+        {{
+            "status": "PASS" | "FAIL" | "QUESTION",
+            "feedback": "Encouraging response...",
+            "visual_aid": "graph TD...", 
+            "pseudocode_hint": "..."
+        }}
+        """
+        response = self.llm_interface.generate_response(prompt)
+        try:
+            clean_json = response.replace("```json", "").replace("```", "").strip()
+            start = clean_json.find('{')
+            end = clean_json.rfind('}') + 1
+            return json.loads(clean_json[start:end])
+        except:
+            return {"status": "FAIL", "feedback": "I couldn't verify that automatically."}
 
     def _build_review_prompt(self, query: str, context: str, user_goal: str = None) -> str:
         return f"""
@@ -769,394 +879,692 @@ class ChainOfThoughtRAGAgent:
         }
 
     # --- ASYNC STREAMING METHOD ---
-    async def run_stream(self, query: str, user_role: str = 'student', **kwargs):
-        import time
-        t_start = time.time()
-        profiler = {}
-        username = kwargs.get('username', 'anonymous')
-        user_goal = kwargs.get('user_goal')
-        session_id = kwargs.get('session_id')
+    # async def run_stream(self, query: str, user_role: str = 'student', **kwargs):
+    #     import time
+    #     t_start = time.time()
+    #     profiler = {}
+    #     username = kwargs.get('username', 'anonymous')
+    #     user_goal = kwargs.get('user_goal')
+    #     session_id = kwargs.get('session_id')
         
-        # 1. DETECT FORCED TEACHING (Button Click)
-        is_force_teach = "teach me" in query.lower() and "anyway" in query.lower()
+    #     # 1. DETECT FORCED TEACHING (Button Click)
+    #     is_force_teach = "teach me" in query.lower() and "anyway" in query.lower()
 
-        # 2. DETECT VERIFY REQUEST (Button Click)
-        is_verify_request = "verify" in query.lower() and "know" in query.lower()
-        verify_topic = ""
-        if is_verify_request:
-            match = re.search(r"know (.*?) \(verify\)", query.lower())
-            if match: verify_topic = match.group(1)
+    #     # 2. DETECT VERIFY REQUEST (Button Click)
+    #     is_verify_request = "verify" in query.lower() and "know" in query.lower()
+    #     verify_topic = ""
+    #     if is_verify_request:
+    #         match = re.search(r"know (.*?) \(verify\)", query.lower())
+    #         if match: verify_topic = match.group(1)
 
-        # 3. DETECT CONTEXTUAL STATE (Is user answering a check?)
-        # --- PASTE THE BLOCK HERE ---
-        is_answering_check = False
-        check_topic = ""
-        correct_vector = []
-        correct_vector_local = None # Initialize this
+    #     # 3. DETECT CONTEXTUAL STATE (Is user answering a check?)
+    #     # --- PASTE THE BLOCK HERE ---
+    #     is_answering_check = False
+    #     check_topic = ""
+    #     correct_vector = []
+    #     correct_vector_local = None # Initialize this
         
-        if session_id:
-            # Try loading state from DB first (Robust)
-            state = history_manager.get_session_state(username, session_id)
-            if state.get("awaiting_quiz_answer"):
-                is_answering_check = True
-                check_topic = state.get("quiz_topic")
+    #     if session_id:
+    #         # Try loading state from DB first (Robust)
+    #         state = history_manager.get_session_state(username, session_id)
+    #         if state.get("awaiting_quiz_answer"):
+    #             is_answering_check = True
+    #             check_topic = state.get("quiz_topic")
                 
-                # Load vectors from State
-                vectors = state.get("quiz_vector")
-                if isinstance(vectors, list):
-                    correct_vector = vectors
-                    correct_vector_local = None
-                elif isinstance(vectors, dict):
-                    correct_vector = vectors.get('google')
-                    correct_vector_local = vectors.get('local')
+    #             # Load vectors from State
+    #             vectors = state.get("quiz_vector")
+    #             if isinstance(vectors, list):
+    #                 correct_vector = vectors
+    #                 correct_vector_local = None
+    #             elif isinstance(vectors, dict):
+    #                 correct_vector = vectors.get('google')
+    #                 correct_vector_local = vectors.get('local')
                 
-                # Clear state immediately
-                history_manager.update_session_state(username, session_id, {"awaiting_quiz_answer": False})
+    #             # Clear state immediately
+    #             history_manager.update_session_state(username, session_id, {"awaiting_quiz_answer": False})
 
-            # Fallback: Parse Chat History (Legacy / UI safety)
-            elif not is_answering_check:
-                session_data = history_manager.get_session_details(username, session_id)
-                if session_data and session_data.get('messages'):
-                    last_msg = session_data['messages'][-1]
+    #         # Fallback: Parse Chat History (Legacy / UI safety)
+    #         elif not is_answering_check:
+    #             session_data = history_manager.get_session_details(username, session_id)
+    #             if session_data and session_data.get('messages'):
+    #                 last_msg = session_data['messages'][-1]
                     
-                    # --- PASTE START ---
-                    if last_msg['role'] == 'bot':
-                        # Regex for: [Check: Topic | {JSON}]
-                        match = re.search(r"\[Check: (.*?) \| (.*?)\]", last_msg['content'])
+    #                 # --- PASTE START ---
+    #                 if last_msg['role'] == 'bot':
+    #                     # Regex for: [Check: Topic | {JSON}]
+    #                     match = re.search(r"\[Check: (.*?) \| (.*?)\]", last_msg['content'])
                         
-                        if match:
-                            is_answering_check = True
-                            check_topic = match.group(1)
-                            try:
-                                # Parse the JSON vector data
-                                vectors = json.loads(match.group(2))
+    #                     if match:
+    #                         is_answering_check = True
+    #                         check_topic = match.group(1)
+    #                         try:
+    #                             # Parse the JSON vector data
+    #                             vectors = json.loads(match.group(2))
                                 
-                                # Handle Backward Compatibility
-                                if isinstance(vectors, list):
-                                    correct_vector = vectors # Old style (Google only)
-                                    correct_vector_local = None
-                                else:
-                                    # New data is a Dict
-                                    correct_vector = vectors.get('google')
-                                    correct_vector_local = vectors.get('local')
+    #                             # Handle Backward Compatibility
+    #                             if isinstance(vectors, list):
+    #                                 correct_vector = vectors # Old style (Google only)
+    #                                 correct_vector_local = None
+    #                             else:
+    #                                 # New data is a Dict
+    #                                 correct_vector = vectors.get('google')
+    #                                 correct_vector_local = vectors.get('local')
                                     
-                            except Exception as e:
-                                self.logger.error(f"Vector parse error: {e}")
-                                is_answering_check = False
+    #                         except Exception as e:
+    #                             self.logger.error(f"Vector parse error: {e}")
+    #                             is_answering_check = False
         
-        # =========================================================
-        # 0. CONTEXTUALIZATION (Session Context)
-        # =========================================================
-        yield {"type": "status", "message": "Understanding context...", "percent": 5}
-        t0 = time.time()
+    #     # =========================================================
+    #     # 0. CONTEXTUALIZATION (Session Context)
+    #     # =========================================================
+    #     yield {"type": "status", "message": "Understanding context...", "percent": 5}
+    #     t0 = time.time()
         
-        # Skip context rewrite if it's a button click (Teach me X / I know X)
-        if not is_force_teach and not is_verify_request:
-            search_query = await self._contextualize_query(query, username, session_id)
+    #     # Skip context rewrite if it's a button click (Teach me X / I know X)
+    #     if not is_force_teach and not is_verify_request:
+    #         search_query = await self._contextualize_query(query, username, session_id)
+    #     else:
+    #         search_query = query 
+
+    #     profiler["0_Context"] = time.time() - t0
+
+    #     # =========================================================
+    #     # 1 & 2. ANALYSIS
+    #     # =========================================================
+    #     yield {"type": "status", "message": "Analyzing query...", "percent": 15}
+    #     t0 = time.time()
+
+    #     intent = ""
+    #     entities = []
+
+    #     if is_answering_check:
+    #         self.logger.info(f"📝 User is answering a quiz about {check_topic}. Skipping classification.")
+    #         intent = "EVALUATION" # Dummy intent
+    #         # We don't need entities here because Path A handles it
+    #     elif config.INTENT_CLASSIFIER_MODE == "fast":
+    #         if is_force_teach:
+    #             # FIX: Regex extract strictly the topic from "Teach me [TOPIC] anyway"
+    #             match = re.search(r"teach me (.*?) anyway", query.lower())
+    #             if match:
+    #                 raw_topic = match.group(1).replace(".", "").replace("?", "").strip()
+    #                 entities = [raw_topic]
+    #             else:
+    #                 entities = [query]
+    #             intent = "CONCEPT" 
+    #         elif is_verify_request:
+    #             # Verify request doesn't need deep classification
+    #             entities = [verify_topic]
+    #             intent = "QUIZ"
+    #         else:
+    #             intent = fast_classifier.classify_intent(search_query) 
+    #             entities = fast_classifier.extract_entities(search_query)
+    #             # Fallback extraction
+    #             if not entities:
+    #                 words = re.findall(r'\b\w+\b', search_query.lower())
+    #                 stopwords_list = {'what', 'is', 'the', 'how', 'do', 'i', 'it', 'its', 'use', 'case', 'show', 'me', 'tell', 'explain', 'teach', 'anyway', 'does'}
+    #                 entities = [w for w in words if w not in stopwords_list and len(w) > 2]
+    #                 entities = entities[:3]
+    #     else:
+    #         intent = self._classify_intent(search_query)
+    #         entities = [search_query] 
+
+    #     # REWRITE FOR GENERATION (Existing Logic)
+    #     if is_force_teach:
+    #         main_topic = entities[0] if entities else "this concept"
+    #         search_query = f"Explain {main_topic} and its specific use cases in C programming."
+
+    #     profiler["1_Analysis"] = time.time() - t0
+    #     self.logger.info(f"Query: {query} | Rewritten: {search_query} | Entities: {entities}")
+
+    #     # --- SECURITY BLOCK (Existing) ---
+    #     if intent == "SECURITY_RISK":
+    #         msg = "⛔ **Security Alert**: This request violates safety policies."
+    #         yield {"type": "complete", "data": {
+    #             "answer": msg, "sources": [], "suggestions": [], "intent": intent
+    #         }}
+    #         return
+
+    #     # =========================================================
+    #     # ### NEW PATH A: FAST GRADING (Vector Similarity) ###
+    #     # =========================================================
+    #     if is_answering_check and correct_vector:
+    #         self.logger.info(f"📝 Grading answer for topic: {check_topic}")
+    #         yield {"type": "status", "message": "Verifying answer...", "percent": 30}
+            
+    #         # Fast Grade
+    #         result = self._fast_grade_answer(query, correct_vector, correct_vector_local)
+            
+    #         if result['is_correct']:
+    #             knowledge_manager.mark_concept_as_known(username, check_topic)
+    #             msg = f"✅ **{result['feedback']}**\n\nGreat! You've mastered **{check_topic}**. What's next?"
+    #             # Suggestions
+    #             yield {"type": "complete", "data": {
+    #                 "answer": msg, "sources": [], "suggestions": ["What should I learn next?", "Teach me the original topic"], "intent": "EVALUATION"
+    #             }}
+    #         else:
+    #             msg = f"❌ **{result['feedback']}**\n\nLet's review **{check_topic}** to make sure you have the basics down."
+    #             yield {"type": "complete", "data": {
+    #                 "answer": msg, "sources": [], "suggestions": [f"Explain {check_topic}"], "intent": "EVALUATION"
+    #             }}
+            
+    #         # CRITICAL: RETURN HERE so we don't run the rest of the function
+    #         return
+
+    #     # =========================================================
+    #     # ### NEW PATH B: FAST QUIZ FETCH (Neo4j) ###
+    #     # =========================================================
+    #     if is_verify_request and verify_topic:
+    #         yield {"type": "status", "message": "Fetching quiz...", "percent": 50}
+            
+    #         # Fetch Q&A data
+    #         cypher = "MATCH (n:Concept) WHERE toLower(n.name) CONTAINS toLower($topic) RETURN n.quiz_data as data LIMIT 1"
+    #         results = self.graph_db.execute_query(cypher, {"topic": verify_topic})
+            
+    #         qa_pair = None
+    #         if results and results[0]['data']:
+    #             try:
+    #                 pairs = json.loads(results[0]['data'])
+    #                 qa_pair = random.choice(pairs)
+    #             except: pass
+            
+    #         if qa_pair:
+    #             # Update Session State (Persistence)
+    #             # We save the full vector dict so we can use either
+    #             vector_data = {
+    #                 "google": qa_pair['a_vector'],
+    #                 "local": qa_pair.get('a_vector_local')
+    #             }
+                
+    #             history_manager.update_session_state(username, session_id, {
+    #                 "awaiting_quiz_answer": True,
+    #                 "quiz_topic": verify_topic,
+    #                 "quiz_vector": vector_data # Save dict
+    #             })
+                
+    #             # Embed vectors in hidden tag for Regex fallback
+    #             vec_str = json.dumps(vector_data)
+                
+    #             msg = f"🧐 **Quick Check:** {qa_pair['q']}\n\n👉 **Type your answer in the chat box below.**\n\n<span style='display:none'>[Check: {verify_topic} | {vec_str}]</span>"
+                
+    #             yield {"type": "complete", "data": {
+    #                 "answer": msg, 
+    #                 "sources": [], 
+    #                 "suggestions": ["I don't know"], 
+    #                 "intent": "QUIZ"
+    #             }}
+    #             return
+
+    #     # --- GATEKEEPER (Existing) ---
+    #     from app.core.settings_manager import settings_manager
+    #     topic_settings = settings_manager.get_settings()
+    #     for entity in entities:
+    #         for t, on in topic_settings.items():
+    #             if (entity.lower() in t.lower()) and not on:
+    #                 msg = f"🔒 Topic **{t}** is locked by the teacher."
+    #                 yield {"type": "complete", "data": {
+    #                     "answer": msg, "sources": [], "suggestions": [], "intent": intent
+    #                 }}
+    #                 return
+
+    #     # =========================================================
+    #     # 3. PREREQUISITE CHECK (Existing + Fixes)
+    #     # =========================================================
+    #     yield {"type": "status", "message": "Checking prerequisites...", "percent": 40}
+    #     t_graph = time.time()
+        
+    #     user_override = "anyway" in query.lower() or "i know" in query.lower()
+        
+    #     # Check if already mastered
+    #     target_already_known = False
+    #     if entities:
+    #         for ent in entities:
+    #             if knowledge_manager.has_mastered(username, ent):
+    #                 target_already_known = True
+    #                 self.logger.info(f"✅ User already mastered '{ent}'. Skipping prereq check.")
+    #                 break
+
+    #     should_check_prereqs = not user_override and not target_already_known
+        
+    #     if (intent == "CONCEPT" or intent == "PROBLEM") and should_check_prereqs:
+    #         all_prereqs = self._check_prerequisites(search_query, entities)
+            
+    #         current_topics_lower = [e.lower() for e in entities]
+    #         unknown = []
+    #         for p in all_prereqs:
+    #             is_self = False
+    #             for curr in current_topics_lower:
+    #                 if curr in p.lower() or p.lower() in curr:
+    #                     is_self = True
+    #                     break
+    #             if not is_self and not knowledge_manager.has_mastered(username, p):
+    #                 unknown.append(p)
+            
+    #         if unknown:
+    #             msg = f"## 🛑 Hold on!\n\nYou need to understand **{', '.join(unknown)}** before tackling **{entities[0]}**."
+    #             topic_label = entities[0] if entities else "this concept"
+                
+    #             # Dynamic Buttons
+    #             btns = []
+    #             for p in unknown:
+    #                 btns.append(f"Explain {p}")
+    #                 btns.append(f"I know {p} (Verify)") # <--- TRIGGERS PATH B
+    #             btns.append(f"Teach me {topic_label} anyway") 
+                
+    #             yield {"type": "complete", "data": {
+    #                 "answer": msg, 
+    #                 "sources": [], 
+    #                 "suggestions": btns, 
+    #                 "intent": "GUIDANCE"
+    #             }}
+    #             return
+        
+    #     profiler["3_Graph"] = time.time() - t_graph
+
+    #     # =========================================================
+    #     # ### NEW LOGIC: SOCRATIC INTERVENTION FOR PROBLEMS ###
+    #     # =========================================================
+    #     # If user asks "How to write a loop?", ask them to check understanding first.
+    #     if intent == "PROBLEM" and not is_force_teach and not target_already_known:
+    #          main_topic = entities[0] if entities else "this concept"
+             
+    #          # Fetch quiz data
+    #          cypher = "MATCH (n:Concept) WHERE toLower(n.name) CONTAINS toLower($topic) RETURN n.quiz_data as data LIMIT 1"
+    #          results = self.graph_db.execute_query(cypher, {"topic": main_topic})
+             
+    #          if results and results[0]['data']:
+    #             try:
+    #                  pairs = json.loads(results[0]['data'])
+    #                  qa_pair = random.choice(pairs)
+                     
+    #                  # Save State
+    #                  history_manager.update_session_state(username, session_id, {
+    #                     "awaiting_quiz_answer": True,
+    #                     "quiz_topic": main_topic,
+    #                     "quiz_vector": qa_pair['a_vector']
+    #                  })
+                     
+    #                  msg = f"I can help you with that! But first, to guide you best, tell me:\n\n**{qa_pair['q']}**"
+    #                  yield {"type": "complete", "data": {
+    #                      "answer": msg, "sources": [], "suggestions": ["I don't know", f"Teach me {main_topic} anyway"], "intent": "SOCRATIC"
+    #                  }}
+    #                  return
+    #             except: pass # Fallback to standard answer if json fails
+
+    #     # =========================================================
+    #     # 4. RETRIEVAL (Existing)
+    #     # =========================================================
+    #     yield {"type": "status", "message": "Searching knowledge base...", "percent": 60}
+    #     t0 = time.time()
+        
+    #     q_search = f"{' '.join(entities)} in C" if len(search_query.split()) > 5 else search_query
+        
+    #     # Use existing_entities optimization
+    #     chunks = self._execute_retrieval(q_search, intent, user_role, existing_entities=entities)
+    #     profiler["4_Retrieval"] = time.time() - t0
+        
+    #     if not chunks:
+    #          msg = f"I don't have specific info on {entities[0] if entities else 'that'}."
+    #          yield {"type": "complete", "data": {
+    #              "answer": msg, "sources": [], "suggestions": [], "intent": intent
+    #          }}
+    #          return
+
+    #     # =========================================================
+    #     # 5. GENERATION (Existing)
+    #     # =========================================================
+    #     yield {"type": "status", "message": "Drafting response...", "percent": 80}
+    #     t0 = time.time()
+
+    #     # 1. BUILD CONTEXT
+    #     known_concepts = knowledge_manager.get_known_concepts(username)
+    #     user_context_str = f"USER CONTEXT: The student already knows: {', '.join(known_concepts)}." if known_concepts else ""
+    #     context_text = f"{user_context_str}\n\n"
+    #     for c in chunks:
+    #         context_text += f"--- Source: {c.get('metadata', {}).get('document_name')} ---\n{c.get('text')}\n\n"
+
+    #     # 2. START SUGGESTIONS
+    #     suggest_task = asyncio.create_task(
+    #         asyncio.to_thread(self._generate_suggestions, search_query, context_text)
+    #     )
+
+    #     # 3. BUILD PROMPT STRING
+    #     final_prompt = ""
+    #     if intent == "REVIEW": 
+    #         final_prompt = self._build_review_prompt(search_query, context_text, user_goal)
+    #     elif intent == "PROBLEM": 
+    #         final_prompt = self._build_socratic_plan_prompt(search_query, context_text, user_goal)
+    #     else: 
+    #         final_prompt = self._build_concept_prompt(search_query, context_text, user_goal)
+
+    #     yield {"type": "status", "message": "Generating...", "percent": 100}
+        
+    #     full_answer = ""
+        
+    #     # 4. STREAMING CALL
+    #     async for token in self.llm_interface.stream_response_async(final_prompt):
+    #         full_answer += token
+    #         yield {"type": "token", "text": token}
+
+    #     suggestions = await suggest_task
+    #     profiler["5_Gen"] = time.time() - t0
+        
+    #     # 5. AUTO-UPDATE KNOWLEDGE
+    #     if intent == "CONCEPT":
+    #         for entity in entities:
+    #             if len(entity) > 2 and entity.lower() not in ["teach", "anyway", "me", "show", "tell", "explain"]:
+    #                 knowledge_manager.mark_concept_as_known(username, entity)
+    #                 self.logger.info(f"📚 Auto-Learned: {username} now knows {entity}")
+
+    #     full_answer = self._sanitize_mermaid(full_answer)
+    #     formatted_sources = [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks]
+
+    #     yield {
+    #         "type": "complete",
+    #         "data": {
+    #             "answer": full_answer,
+    #             "sources": formatted_sources,
+    #             "suggestions": suggestions,
+    #             "intent": intent,
+    #             "timings": profiler,
+    #             "session_id": session_id,
+    #             "detected_entity": entities[0] if entities else "General"
+    #         }
+    #     }
+
+    async def _handle_active_states(self, query, username, session_id, user_role):
+        """Checks if user is currently inside a Quiz or a Guided Plan."""
+        if not session_id: return None
+        
+        current_state = history_manager.get_session_state(username, session_id)
+        
+        # 1. Handle Active Guided Plan (NEW)
+        active_plan = current_state.get("active_plan")
+        if active_plan and active_plan.get("is_active"):
+            return self._continue_guided_plan(query, active_plan, username, session_id, user_role)
+
+        # 2. Handle Active Quiz/Check (Existing)
+        if current_state.get("awaiting_quiz_answer"):
+            return self._handle_quiz_response(query, current_state, username, session_id)
+            
+        return None
+
+    # -------------------------------------------------------
+    # LOGIC FOR GUIDED PLAN (NEW)
+    # -------------------------------------------------------
+    async def _trigger_guided_plan(self, query, intent, user_role, username, session_id):
+        yield {"type": "status", "message": "Deconstructing problem...", "percent": 50}
+        
+        # Retrieve context
+        chunks = self._execute_retrieval(query, intent, user_role)
+        context_text = "\n".join([c['text'] for c in chunks])
+
+        # Generate Plan
+        steps = self._generate_step_by_step_plan(query, context_text)
+        
+        # Save State
+        new_plan = {
+            "is_active": True,
+            "original_problem": query,
+            "steps": steps,
+            "current_step_index": 0
+        }
+        history_manager.update_session_state(username, session_id, {"active_plan": new_plan})
+        
+        # Present First Step
+        first_step = steps[0]
+        msg = f"This is a complex problem! 🧠\n\nTo ensure you really learn this, I've broken it down into **{len(steps)} manageable steps**.\n\n"
+        msg += f"### Step 1: {first_step['goal']}\n{first_step['description']}\n\n"
+        msg += "👉 *Reply with your code or logic for just this step.*"
+
+        yield {"type": "complete", "data": {
+            "answer": msg,
+            "sources": [],
+            "suggestions": ["Show me pseudocode", "I don't know where to start", "Stop guided mode"],
+            "intent": "PLANNING"
+        }}
+
+    async def _continue_guided_plan(self, query, active_plan, username, session_id, user_role):
+        # Exit Check
+        if any(w in query.lower() for w in ["stop", "cancel", "quit", "reset"]):
+            history_manager.update_session_state(username, session_id, {"active_plan": {"is_active": False}})
+            yield {"type": "complete", "data": {"answer": "Guided mode cancelled. What else can I help with?", "sources": [], "intent": "General"}}
+            return
+
+        yield {"type": "status", "message": "Checking your step...", "percent": 20}
+        
+        # Get Current Step Info
+        steps = active_plan['steps']
+        idx = active_plan['current_step_index']
+        current_step_obj = steps[idx]
+
+        # IMPROVED RETRIEVAL: Combine Step Goal + User Query
+        search_q = f"{current_step_obj['goal']} {query}"
+        retrieved_chunks = self._execute_retrieval(search_q, "DEBUG", user_role) 
+        context_text = "\n".join([c['text'] for c in retrieved_chunks])
+
+        # Evaluate
+        evaluation = self._evaluate_step_progress(query, current_step_obj, context_text)
+        
+        answer_text = evaluation['feedback']
+        
+        if evaluation['status'] == "PASS":
+            idx += 1
+            if idx >= len(steps):
+                answer_text += "\n\n🎉 **Problem Solved!** You've completed all steps. Excellent work."
+                history_manager.update_session_state(username, session_id, {"active_plan": {"is_active": False}})
+            else:
+                next_step = steps[idx]
+                answer_text += f"\n\n---\n### Next Step ({idx+1}/{len(steps)}): {next_step['goal']}\n{next_step['description']}"
+                active_plan['current_step_index'] = idx
+                history_manager.update_session_state(username, session_id, {"active_plan": active_plan})
         else:
-            search_query = query 
+            # --- FIX STARTS HERE: SANITIZE VISUAL AID ---
+            raw_visual = evaluation.get('visual_aid', '')
+            if raw_visual:
+                # Clean markdown
+                clean_visual = raw_visual.replace("```mermaid", "").replace("```", "").strip()
+                # Apply regex fix
+                clean_visual = self._clean_guided_visual(clean_visual)
+                answer_text += f"\n\nHere is a visual aid:\n```mermaid\n{clean_visual}\n```"
+            # --------------------------------------------
+            elif evaluation.get('pseudocode_hint'):
+                answer_text += f"\n\n💡 Hint:\n```text\n{evaluation['pseudocode_hint']}\n```"
 
-        profiler["0_Context"] = time.time() - t0
+        # Format sources
+        formatted_sources = [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in retrieved_chunks]
 
-        # =========================================================
-        # 1 & 2. ANALYSIS
-        # =========================================================
-        yield {"type": "status", "message": "Analyzing query...", "percent": 15}
-        t0 = time.time()
+        yield {"type": "complete", "data": {
+            "answer": answer_text, 
+            "sources": formatted_sources,
+            "suggestions": ["I'm stuck", "Stop guided mode"], 
+            "intent": "GUIDED_PRACTICE"
+        }}
 
+    # -------------------------------------------------------
+    # PHASE 2 HELPER: ANALYSIS
+    # -------------------------------------------------------
+    def _analyze_query(self, search_query, original_query, is_force_teach, is_verify_request):
         intent = ""
         entities = []
-
-        if is_answering_check:
-            self.logger.info(f"📝 User is answering a quiz about {check_topic}. Skipping classification.")
-            intent = "EVALUATION" # Dummy intent
-            # We don't need entities here because Path A handles it
-        elif config.INTENT_CLASSIFIER_MODE == "fast":
+        
+        if config.INTENT_CLASSIFIER_MODE == "fast":
             if is_force_teach:
-                # FIX: Regex extract strictly the topic from "Teach me [TOPIC] anyway"
-                match = re.search(r"teach me (.*?) anyway", query.lower())
-                if match:
-                    raw_topic = match.group(1).replace(".", "").replace("?", "").strip()
-                    entities = [raw_topic]
-                else:
-                    entities = [query]
-                intent = "CONCEPT" 
+                match = re.search(r"teach me (.*?) anyway", original_query.lower())
+                entities = [match.group(1).strip()] if match else [original_query]
+                intent = "CONCEPT"
             elif is_verify_request:
-                # Verify request doesn't need deep classification
-                entities = [verify_topic]
+                match = re.search(r"know (.*?) \(verify\)", original_query.lower())
+                entities = [match.group(1).strip()] if match else []
                 intent = "QUIZ"
             else:
-                intent = fast_classifier.classify_intent(search_query) 
+                # Fast Classify
+                intent = fast_classifier.classify_intent(search_query)
                 entities = fast_classifier.extract_entities(search_query)
-                # Fallback extraction
                 if not entities:
+                    # Fallback Regex
                     words = re.findall(r'\b\w+\b', search_query.lower())
-                    stopwords_list = {'what', 'is', 'the', 'how', 'do', 'i', 'it', 'its', 'use', 'case', 'show', 'me', 'tell', 'explain', 'teach', 'anyway', 'does'}
-                    entities = [w for w in words if w not in stopwords_list and len(w) > 2]
-                    entities = entities[:3]
+                    stop = {'what', 'is', 'how', 'to', 'c', 'programming', 'code'}
+                    entities = [w for w in words if w not in stop and len(w)>2][:3]
         else:
+            # Slow LLM Classify
             intent = self._classify_intent(search_query)
-            entities = [search_query] 
+            entities = [search_query] # Simple entity for slow mode
 
-        # REWRITE FOR GENERATION (Existing Logic)
-        if is_force_teach:
-            main_topic = entities[0] if entities else "this concept"
-            search_query = f"Explain {main_topic} and its specific use cases in C programming."
+        return intent, entities
 
-        profiler["1_Analysis"] = time.time() - t0
-        self.logger.info(f"Query: {query} | Rewritten: {search_query} | Entities: {entities}")
-
-        # --- SECURITY BLOCK (Existing) ---
-        if intent == "SECURITY_RISK":
-            msg = "⛔ **Security Alert**: This request violates safety policies."
-            yield {"type": "complete", "data": {
-                "answer": msg, "sources": [], "suggestions": [], "intent": intent
-            }}
-            return
-
-        # =========================================================
-        # ### NEW PATH A: FAST GRADING (Vector Similarity) ###
-        # =========================================================
-        if is_answering_check and correct_vector:
-            self.logger.info(f"📝 Grading answer for topic: {check_topic}")
-            yield {"type": "status", "message": "Verifying answer...", "percent": 30}
-            
-            # Fast Grade
-            result = self._fast_grade_answer(query, correct_vector, correct_vector_local)
-            
-            if result['is_correct']:
-                knowledge_manager.mark_concept_as_known(username, check_topic)
-                msg = f"✅ **{result['feedback']}**\n\nGreat! You've mastered **{check_topic}**. What's next?"
-                # Suggestions
-                yield {"type": "complete", "data": {
-                    "answer": msg, "sources": [], "suggestions": ["What should I learn next?", "Teach me the original topic"], "intent": "EVALUATION"
-                }}
-            else:
-                msg = f"❌ **{result['feedback']}**\n\nLet's review **{check_topic}** to make sure you have the basics down."
-                yield {"type": "complete", "data": {
-                    "answer": msg, "sources": [], "suggestions": [f"Explain {check_topic}"], "intent": "EVALUATION"
-                }}
-            
-            # CRITICAL: RETURN HERE so we don't run the rest of the function
-            return
-
-        # =========================================================
-        # ### NEW PATH B: FAST QUIZ FETCH (Neo4j) ###
-        # =========================================================
-        if is_verify_request and verify_topic:
-            yield {"type": "status", "message": "Fetching quiz...", "percent": 50}
-            
-            # Fetch Q&A data
-            cypher = "MATCH (n:Concept) WHERE toLower(n.name) CONTAINS toLower($topic) RETURN n.quiz_data as data LIMIT 1"
-            results = self.graph_db.execute_query(cypher, {"topic": verify_topic})
-            
-            qa_pair = None
-            if results and results[0]['data']:
-                try:
-                    pairs = json.loads(results[0]['data'])
-                    qa_pair = random.choice(pairs)
-                except: pass
-            
-            if qa_pair:
-                # Update Session State (Persistence)
-                # We save the full vector dict so we can use either
-                vector_data = {
-                    "google": qa_pair['a_vector'],
-                    "local": qa_pair.get('a_vector_local')
-                }
-                
-                history_manager.update_session_state(username, session_id, {
-                    "awaiting_quiz_answer": True,
-                    "quiz_topic": verify_topic,
-                    "quiz_vector": vector_data # Save dict
-                })
-                
-                # Embed vectors in hidden tag for Regex fallback
-                vec_str = json.dumps(vector_data)
-                
-                msg = f"🧐 **Quick Check:** {qa_pair['q']}\n\n👉 **Type your answer in the chat box below.**\n\n<span style='display:none'>[Check: {verify_topic} | {vec_str}]</span>"
-                
-                yield {"type": "complete", "data": {
-                    "answer": msg, 
-                    "sources": [], 
-                    "suggestions": ["I don't know"], 
-                    "intent": "QUIZ"
-                }}
-                return
-
-        # --- GATEKEEPER (Existing) ---
+    # -------------------------------------------------------
+    # PHASE 4 HELPER: GATEKEEPING
+    # -------------------------------------------------------
+    def _check_gatekeeping(self, query, intent, entities, username):
+        # 1. Teacher Lock Check
         from app.core.settings_manager import settings_manager
         topic_settings = settings_manager.get_settings()
         for entity in entities:
             for t, on in topic_settings.items():
                 if (entity.lower() in t.lower()) and not on:
-                    msg = f"🔒 Topic **{t}** is locked by the teacher."
-                    yield {"type": "complete", "data": {
-                        "answer": msg, "sources": [], "suggestions": [], "intent": intent
-                    }}
-                    return
+                    return {"answer": f"🔒 Topic **{t}** is locked by the teacher.", "sources": [], "intent": intent}
 
-        # =========================================================
-        # 3. PREREQUISITE CHECK (Existing + Fixes)
-        # =========================================================
-        yield {"type": "status", "message": "Checking prerequisites...", "percent": 40}
-        t_graph = time.time()
+        # 2. Prerequisite Check
+        if "anyway" in query.lower() or "i know" in query.lower(): return None # User Override
         
-        user_override = "anyway" in query.lower() or "i know" in query.lower()
+        # Don't check prereqs for simple greetings or non-concept intents
+        if intent not in ["CONCEPT", "PROBLEM"]: return None
         
-        # Check if already mastered
-        target_already_known = False
-        if entities:
-            for ent in entities:
-                if knowledge_manager.has_mastered(username, ent):
-                    target_already_known = True
-                    self.logger.info(f"✅ User already mastered '{ent}'. Skipping prereq check.")
-                    break
+        # Do the Graph Check
+        all_prereqs = self._check_prerequisites(query, entities)
+        unknown = [p for p in all_prereqs if not knowledge_manager.has_mastered(username, p) and p.lower() not in [e.lower() for e in entities]]
+        
+        if unknown:
+            btns = [f"Explain {p}" for p in unknown] + [f"I know {p} (Verify)" for p in unknown] + [f"Teach me {entities[0]} anyway"]
+            return {
+                "answer": f"## 🛑 Hold on!\n\nYou need to understand **{', '.join(unknown)}** before tackling **{entities[0] if entities else 'this'}**.",
+                "sources": [],
+                "suggestions": btns,
+                "intent": "GUIDANCE"
+            }
+        return None
 
-        should_check_prereqs = not user_override and not target_already_known
-        
-        if (intent == "CONCEPT" or intent == "PROBLEM") and should_check_prereqs:
-            all_prereqs = self._check_prerequisites(search_query, entities)
-            
-            current_topics_lower = [e.lower() for e in entities]
-            unknown = []
-            for p in all_prereqs:
-                is_self = False
-                for curr in current_topics_lower:
-                    if curr in p.lower() or p.lower() in curr:
-                        is_self = True
-                        break
-                if not is_self and not knowledge_manager.has_mastered(username, p):
-                    unknown.append(p)
-            
-            if unknown:
-                msg = f"## 🛑 Hold on!\n\nYou need to understand **{', '.join(unknown)}** before tackling **{entities[0]}**."
-                topic_label = entities[0] if entities else "this concept"
-                
-                # Dynamic Buttons
-                btns = []
-                for p in unknown:
-                    btns.append(f"Explain {p}")
-                    btns.append(f"I know {p} (Verify)") # <--- TRIGGERS PATH B
-                btns.append(f"Teach me {topic_label} anyway") 
-                
-                yield {"type": "complete", "data": {
-                    "answer": msg, 
-                    "sources": [], 
-                    "suggestions": btns, 
-                    "intent": "GUIDANCE"
-                }}
-                return
-        
-        profiler["3_Graph"] = time.time() - t_graph
-
-        # =========================================================
-        # ### NEW LOGIC: SOCRATIC INTERVENTION FOR PROBLEMS ###
-        # =========================================================
-        # If user asks "How to write a loop?", ask them to check understanding first.
-        if intent == "PROBLEM" and not is_force_teach and not target_already_known:
-             main_topic = entities[0] if entities else "this concept"
-             
-             # Fetch quiz data
-             cypher = "MATCH (n:Concept) WHERE toLower(n.name) CONTAINS toLower($topic) RETURN n.quiz_data as data LIMIT 1"
-             results = self.graph_db.execute_query(cypher, {"topic": main_topic})
-             
-             if results and results[0]['data']:
-                try:
-                     pairs = json.loads(results[0]['data'])
-                     qa_pair = random.choice(pairs)
-                     
-                     # Save State
-                     history_manager.update_session_state(username, session_id, {
-                        "awaiting_quiz_answer": True,
-                        "quiz_topic": main_topic,
-                        "quiz_vector": qa_pair['a_vector']
-                     })
-                     
-                     msg = f"I can help you with that! But first, to guide you best, tell me:\n\n**{qa_pair['q']}**"
-                     yield {"type": "complete", "data": {
-                         "answer": msg, "sources": [], "suggestions": ["I don't know", f"Teach me {main_topic} anyway"], "intent": "SOCRATIC"
-                     }}
-                     return
-                except: pass # Fallback to standard answer if json fails
-
-        # =========================================================
-        # 4. RETRIEVAL (Existing)
-        # =========================================================
+    # -------------------------------------------------------
+    # PHASE 5 HELPER: STANDARD RAG
+    # -------------------------------------------------------
+    async def _execute_standard_rag(self, query, intent, entities, user_role, username, user_goal, session_id):
         yield {"type": "status", "message": "Searching knowledge base...", "percent": 60}
-        t0 = time.time()
         
-        q_search = f"{' '.join(entities)} in C" if len(search_query.split()) > 5 else search_query
-        
-        # Use existing_entities optimization
+        # 1. Retrieval
+        q_search = f"{' '.join(entities)} in C" if len(query.split()) > 5 else query
         chunks = self._execute_retrieval(q_search, intent, user_role, existing_entities=entities)
-        profiler["4_Retrieval"] = time.time() - t0
         
         if not chunks:
-             msg = f"I don't have specific info on {entities[0] if entities else 'that'}."
-             yield {"type": "complete", "data": {
-                 "answer": msg, "sources": [], "suggestions": [], "intent": intent
-             }}
+             yield {"type": "complete", "data": {"answer": "I don't have information on that.", "sources": [], "intent": intent}}
              return
 
-        # =========================================================
-        # 5. GENERATION (Existing)
-        # =========================================================
+        # 2. Build Context
         yield {"type": "status", "message": "Drafting response...", "percent": 80}
-        t0 = time.time()
+        context_text = "\n\n".join([f"--- Source: {c['metadata']['document_name']} ---\n{c['text']}" for c in chunks])
 
-        # 1. BUILD CONTEXT
-        known_concepts = knowledge_manager.get_known_concepts(username)
-        user_context_str = f"USER CONTEXT: The student already knows: {', '.join(known_concepts)}." if known_concepts else ""
-        context_text = f"{user_context_str}\n\n"
-        for c in chunks:
-            context_text += f"--- Source: {c.get('metadata', {}).get('document_name')} ---\n{c.get('text')}\n\n"
+        # 3. Generate Suggestions
+        suggest_task = asyncio.create_task(asyncio.to_thread(self._generate_suggestions, query, context_text))
 
-        # 2. START SUGGESTIONS
-        suggest_task = asyncio.create_task(
-            asyncio.to_thread(self._generate_suggestions, search_query, context_text)
-        )
+        # 4. Select Prompt
+        if intent == "REVIEW": prompt = self._build_review_prompt(query, context_text, user_goal)
+        elif intent == "PROBLEM": prompt = self._build_socratic_plan_prompt(query, context_text, user_goal)
+        else: prompt = self._build_concept_prompt(query, context_text, user_goal)
 
-        # 3. BUILD PROMPT STRING
-        final_prompt = ""
-        if intent == "REVIEW": 
-            final_prompt = self._build_review_prompt(search_query, context_text, user_goal)
-        elif intent == "PROBLEM": 
-            final_prompt = self._build_socratic_plan_prompt(search_query, context_text, user_goal)
-        else: 
-            final_prompt = self._build_concept_prompt(search_query, context_text, user_goal)
-
+        # 5. Stream Answer
         yield {"type": "status", "message": "Generating...", "percent": 100}
-        
         full_answer = ""
-        
-        # 4. STREAMING CALL
-        async for token in self.llm_interface.stream_response_async(final_prompt):
+        async for token in self.llm_interface.stream_response_async(prompt):
             full_answer += token
             yield {"type": "token", "text": token}
 
-        suggestions = await suggest_task
-        profiler["5_Gen"] = time.time() - t0
-        
-        # 5. AUTO-UPDATE KNOWLEDGE
-        if intent == "CONCEPT":
-            for entity in entities:
-                if len(entity) > 2 and entity.lower() not in ["teach", "anyway", "me", "show", "tell", "explain"]:
-                    knowledge_manager.mark_concept_as_known(username, entity)
-                    self.logger.info(f"📚 Auto-Learned: {username} now knows {entity}")
-
-        full_answer = self._sanitize_mermaid(full_answer)
-        formatted_sources = [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks]
+        # 6. Auto-Learn Concept (If explanation provided)
+        if intent == "CONCEPT" and entities:
+             knowledge_manager.mark_concept_as_known(username, entities[0])
 
         yield {
             "type": "complete",
             "data": {
-                "answer": full_answer,
-                "sources": formatted_sources,
-                "suggestions": suggestions,
+                "answer": full_answer, #self._sanitize_mermaid(full_answer),
+                "sources": [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks],
+                "suggestions": await suggest_task,
                 "intent": intent,
-                "timings": profiler,
-                "session_id": session_id,
-                "detected_entity": entities[0] if entities else "General"
+                "session_id": session_id
             }
         }
+
+    async def run_stream(self, query: str, user_role: str = 'student', **kwargs):
+        import time
+        t_start = time.time()
+        
+        # Unpack Arguments
+        username = kwargs.get('username', 'anonymous')
+        user_goal = kwargs.get('user_goal')
+        session_id = kwargs.get('session_id')
+        
+        # 0. CONTEXTUALIZATION (Always run this)
+        yield {"type": "status", "message": "Understanding context...", "percent": 5}
+        
+        # Detect simple button clicks to skip rewriting
+        is_force_teach = "teach me" in query.lower() and "anyway" in query.lower()
+        is_verify_request = "verify" in query.lower() and "know" in query.lower()
+        
+        if not is_force_teach and not is_verify_request:
+            search_query = await self._contextualize_query(query, username, session_id)
+        else:
+            search_query = query
+
+        # =========================================================
+        # PHASE 1: CHECK ACTIVE STATES (Quizzes & Guided Plans)
+        # =========================================================
+        # This handles the "Loop" where the user is inside a specific mode
+        state_result = await self._handle_active_states(query, username, session_id, user_role)
+        if state_result:
+            # If the handler returns a generator/result, yield it and exit
+            async for item in state_result: yield item
+            return
+
+        # =========================================================
+        # PHASE 2: ANALYSIS & CLASSIFICATION
+        # =========================================================
+        yield {"type": "status", "message": "Analyzing query...", "percent": 15}
+        
+        intent, entities = self._analyze_query(search_query, query, is_force_teach, is_verify_request)
+        self.logger.info(f"Intent: {intent} | Entities: {entities}")
+
+        # Security Check
+        if intent == "SECURITY_RISK":
+            yield {"type": "complete", "data": {"answer": "⛔ **Security Alert**: Request blocked.", "sources": [], "intent": intent}}
+            return
+
+        # =========================================================
+        # PHASE 3: TRIGGER NEW MODES (Verify or Plan)
+        # =========================================================
+        
+        # A. Trigger Verify/Quiz Mode
+        if is_verify_request:
+            async for item in self._trigger_quiz_mode(query, username, session_id): yield item
+            return
+
+        # B. Trigger Guided Plan Mode (NEW LOGIC)
+        # If it's a complex problem, we start the plan here
+        is_complex = len(query.split()) > 10 or "write a program" in query.lower() or "exercise" in query.lower()
+        if intent == "PROBLEM" and is_complex and not is_force_teach:
+             async for item in self._trigger_guided_plan(search_query, intent, user_role, username, session_id): yield item
+             return
+
+        # =========================================================
+        # PHASE 4: GATEKEEPING & PREREQUISITES
+        # =========================================================
+        yield {"type": "status", "message": "Checking prerequisites...", "percent": 40}
+        
+        gatekeeper_result = self._check_gatekeeping(search_query, intent, entities, username)
+        if gatekeeper_result:
+            yield {"type": "complete", "data": gatekeeper_result}
+            return
+
+        # =========================================================
+        # PHASE 5: STANDARD RAG EXECUTION
+        # =========================================================
+        # If no special modes, run the standard Retrieval-Augmented Generation
+        async for item in self._execute_standard_rag(search_query, intent, entities, user_role, username, user_goal, session_id):
+            yield item
