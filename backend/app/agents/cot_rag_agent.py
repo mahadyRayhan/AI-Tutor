@@ -639,7 +639,9 @@ class ChainOfThoughtRAGAgent:
              - ABSOLUTELY NO QUOTES `"` inside node labels.
              - **BAD:** `A[sum(a,b)]` or `B{{arr[i]}}` or `C["Text"]`
              - **GOOD:** `A[sum a b]` or `B{{arr index i}}` or `C[Text]`
-        4. **PSEUDOCODE:** Provide `pseudocode_hint` if stuck.
+        4. **PSEUDOCODE:**
+            - IF the student is stuck on syntax or asks for "Logic/Pseudocode", fill the `pseudocode_hint` field.
+            - Format: Plain text algorithm (e.g., "FOR i FROM 0 TO N..."). Do not use C syntax.
 
         **OUTPUT JSON:**
         {{
@@ -1351,6 +1353,17 @@ class ChainOfThoughtRAGAgent:
             idx += 1
             if idx >= len(steps):
                 answer_text += "\n\n🎉 **Problem Solved!** You've completed all steps. Excellent work."
+                
+                # --- NEW: Award XP/Mastery ---
+                # 1. Identify the topic from the original problem text
+                topic_credit = active_plan.get('original_problem', 'General')
+                
+                # 2. Mark it as "Known" in the database
+                # This will increase their stats on the Dashboard
+                knowledge_manager.mark_concept_as_known(username, f"Solved: {topic_credit[:30]}...")
+                self.logger.info(f"🏆 Awarded completion credit to {username} for: {topic_credit}")
+                # -----------------------------
+
                 history_manager.update_session_state(username, session_id, {"active_plan": {"is_active": False}})
             else:
                 next_step = steps[idx]
@@ -1358,25 +1371,29 @@ class ChainOfThoughtRAGAgent:
                 active_plan['current_step_index'] = idx
                 history_manager.update_session_state(username, session_id, {"active_plan": active_plan})
         else:
-            # --- FIX STARTS HERE: SANITIZE VISUAL AID ---
+            # (Your existing visual aid logic is here...)
             raw_visual = evaluation.get('visual_aid', '')
             if raw_visual:
-                # Clean markdown
-                clean_visual = raw_visual.replace("```mermaid", "").replace("```", "").strip()
-                # Apply regex fix
-                clean_visual = self._clean_guided_visual(clean_visual)
+                clean_visual = self._clean_guided_visual(raw_visual)
                 answer_text += f"\n\nHere is a visual aid:\n```mermaid\n{clean_visual}\n```"
-            # --------------------------------------------
             elif evaluation.get('pseudocode_hint'):
-                answer_text += f"\n\n💡 Hint:\n```text\n{evaluation['pseudocode_hint']}\n```"
+                answer_text += f"\n\n💡 **Logic Hint:**\n```text\n{evaluation['pseudocode_hint']}\n```"
 
         # Format sources
         formatted_sources = [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in retrieved_chunks]
 
+        # --- NEW: Dynamic Suggestions ---
+        sugg_list = ["I'm stuck", "Stop guided mode"]
+        
+        # If they failed, offer specific help
+        if evaluation['status'] == "FAIL":
+            sugg_list.insert(0, "Show me Pseudocode")
+        # --------------------------------
+
         yield {"type": "complete", "data": {
             "answer": answer_text, 
             "sources": formatted_sources,
-            "suggestions": ["I'm stuck", "Stop guided mode"], 
+            "suggestions": sugg_list, # <--- Use the new list
             "intent": "GUIDED_PRACTICE"
         }}
 
@@ -1387,6 +1404,18 @@ class ChainOfThoughtRAGAgent:
         intent = ""
         entities = []
         
+        # ---------------------------------------------------------
+        # 1. FORCE 'PROBLEM' INTENT FOR EXERCISES (The Fix)
+        # ---------------------------------------------------------
+        # If user explicitly asks to write/create code, it is a PROBLEM.
+        # We check this BEFORE asking the AI model to avoid misclassification.
+        strong_problem_keywords = ["write a c program", "write a program", "create a program", "code for", "exercise"]
+        if any(k in original_query.lower() for k in strong_problem_keywords):
+            intent = "PROBLEM"
+            entities = [original_query] 
+            return intent, entities
+        # ---------------------------------------------------------
+
         if config.INTENT_CLASSIFIER_MODE == "fast":
             if is_force_teach:
                 match = re.search(r"teach me (.*?) anyway", original_query.lower())
@@ -1408,7 +1437,7 @@ class ChainOfThoughtRAGAgent:
         else:
             # Slow LLM Classify
             intent = self._classify_intent(search_query)
-            entities = [search_query] # Simple entity for slow mode
+            entities = [search_query] 
 
         return intent, entities
 
