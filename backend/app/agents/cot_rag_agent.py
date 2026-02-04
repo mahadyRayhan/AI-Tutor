@@ -1478,12 +1478,42 @@ class ChainOfThoughtRAGAgent:
         
         # Do the Graph Check
         all_prereqs = self._check_prerequisites(query, entities)
-        unknown = [p for p in all_prereqs if not knowledge_manager.has_mastered(username, p) and p.lower() not in [e.lower() for e in entities]]
+        
+        # --- BUG FIX START: Robust Filtering ---
+        target_concepts = [e.lower() for e in entities] # e.g. ['loop']
+        unknown = []
+        
+        for p in all_prereqs:
+            p_norm = p.lower() # e.g. 'loops'
+            
+            # A. Check Mastery
+            if knowledge_manager.has_mastered(username, p): 
+                continue
+                
+            # B. Check Self-Reference (The Bug Fix)
+            # If 'loop' is inside 'loops' (or vice versa), ignore it.
+            is_same_topic = False
+            for t in target_concepts:
+                # Check for substring match to handle plurals
+                if t in p_norm or p_norm in t: 
+                    is_same_topic = True
+                    break
+            
+            if not is_same_topic:
+                unknown.append(p)
+        # ---------------------------------------
         
         if unknown:
             btns = [f"Explain {p}" for p in unknown] + [f"I know {p} (Verify)" for p in unknown] + [f"Teach me {entities[0]} anyway"]
+            
+            # Friendly Message
+            topic_name = entities[0] if entities else 'this concept'
+            prereq_list = "**, **".join(unknown)
+            
+            msg = f"## 🧱 Let's build a foundation first!\n\n**{topic_name}** is an exciting topic, but it relies heavily on **{prereq_list}**.\n\nTo make learning {topic_name} much easier (and less frustrating!), I recommend we quickly review those basics first. What do you think?"
+
             return {
-                "answer": f"## 🛑 Hold on!\n\nYou need to understand **{', '.join(unknown)}** before tackling **{entities[0] if entities else 'this'}**.",
+                "answer": msg,
                 "sources": [],
                 "suggestions": btns,
                 "intent": "GUIDANCE"
@@ -1579,7 +1609,8 @@ class ChainOfThoughtRAGAgent:
 
         # Security Check
         if intent == "SECURITY_RISK":
-            yield {"type": "complete", "data": {"answer": "⛔ **Security Alert**: Request blocked.", "sources": [], "intent": intent}}
+            msg = "I can't help with that request. 😅\n\nI'm designed strictly as a **C Programming Tutor** to help you learn safely. Let's get back to coding! 💻"
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": intent}}
             return
 
         # =========================================================
