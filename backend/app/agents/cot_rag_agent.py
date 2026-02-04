@@ -1293,16 +1293,33 @@ class ChainOfThoughtRAGAgent:
     # -------------------------------------------------------
     # LOGIC FOR GUIDED PLAN (NEW)
     # -------------------------------------------------------
-    async def _trigger_guided_plan(self, query, intent, user_role, username, session_id):
-        yield {"type": "status", "message": "Deconstructing problem...", "percent": 50}
+    async def _trigger_guided_plan(self, query, intent, entities, user_role, username, session_id):
+        yield {"type": "status", "message": "Planning & Searching...", "percent": 30}
         
-        # Retrieve context
-        chunks = self._execute_retrieval(query, intent, user_role)
-        context_text = "\n".join([c['text'] for c in chunks])
+        # --- PARALLEL EXECUTION START ---
+        # We start both tasks simultaneously.
+        
+        # Task 1: Retrieve Documents (Fast due to Fix 1)
+        # Note: We wrap synchronous methods in to_thread
+        retrieval_task = asyncio.create_task(
+            asyncio.to_thread(self._execute_retrieval, query, intent, user_role, existing_entities=entities)
+        )
 
-        # Generate Plan
-        steps = self._generate_step_by_step_plan(query, context_text)
-        
+        # Task 2: Generate Plan (The slow 9s part)
+        # We pass a placeholder context initially because the LLM knows C programming basics without reading your specific docs.
+        # This sacrifice allows us to run this NOW rather than waiting for retrieval.
+        plan_task = asyncio.create_task(
+            asyncio.to_thread(self._generate_step_by_step_plan, query, context="Standard C Programming Context")
+        )
+
+        # Wait for both
+        chunks, steps = await asyncio.gather(retrieval_task, plan_task)
+        # --- PARALLEL EXECUTION END ---
+
+        # (Optional) If you really want context-aware planning, you can't parallelize fully,
+        # but usually, "Break down a problem" doesn't require reading the specific textbook files 
+        # unless your curriculum is very unique.
+
         # Save State
         new_plan = {
             "is_active": True,
@@ -1320,7 +1337,7 @@ class ChainOfThoughtRAGAgent:
 
         yield {"type": "complete", "data": {
             "answer": msg,
-            "sources": [],
+            "sources": [], # You can pass chunks here if you want: [{'document_name': c['metadata']['document_name']} for c in chunks]
             "suggestions": ["Show me pseudocode", "I don't know where to start", "Stop guided mode"],
             "intent": "PLANNING"
         }}
@@ -1578,7 +1595,7 @@ class ChainOfThoughtRAGAgent:
         # If it's a complex problem, we start the plan here
         is_complex = len(query.split()) > 10 or "write a program" in query.lower() or "exercise" in query.lower()
         if intent == "PROBLEM" and is_complex and not is_force_teach:
-             async for item in self._trigger_guided_plan(search_query, intent, user_role, username, session_id): yield item
+             async for item in self._trigger_guided_plan(search_query, intent, entities, user_role, username, session_id): yield item
              return
 
         # =========================================================
