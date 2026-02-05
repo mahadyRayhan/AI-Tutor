@@ -620,37 +620,102 @@ async def get_teacher_analytics():
 @app.get("/api/v1/analytics/teacher/detailed")
 async def get_teacher_detailed_analytics():
     """
-    Returns a matrix of all students and their mastery scores.
+    Returns calculated matrix with ANONYMIZED IDs.
     """
-    import csv
-    # 1. Get all students
-    users = []
-    # Read users.csv manually or via manager
-    with open(config.PROJECT_ROOT / "database" / "users.csv", 'r') as f:
-        reader = csv.DictReader(f)
-        users = [row['username'] for row in reader if row['role'] == 'student']
+    all_users = user_manager.get_all_users()
+    students = [u['username'] for u in all_users if u['role'] == 'student']
 
     class_matrix = []
+    current_time = datetime.now()
+
+    # Create consistent anonymous IDs based on sorting
+    students.sort() 
     
-    for student in users:
+    for idx, student in enumerate(students):
+        # Generate ID like "Student_01"
+        anon_id = f"Student_{idx + 1:02d}"
+        
         history = history_manager.get_student_history(student)
         mastery = _calculate_mastery(history)
         
-        # Determine "Risk Level"
-        avg_mastery = sum(mastery.values()) / len(mastery) if mastery else 0
-        risk = "Low"
-        if avg_mastery < 30 and len(history) > 5: risk = "High"
-        elif avg_mastery < 50: risk = "Medium"
+        # ... (Keep your existing Risk Logic here) ...
+        # [PASTE YOUR EXISTING RISK LOGIC FROM PREVIOUS STEP HERE]
+        # Recalculate risk/last_active variables...
         
+        # 1. Last Active
+        last_active_str = "Never"
+        days_inactive = 999
+        if history:
+            last_ts = history[-1]['timestamp']
+            last_date = datetime.fromisoformat(last_ts)
+            last_active_str = last_date.strftime("%Y-%m-%d")
+            days_inactive = (current_time - last_date).days
+
+        # 2. Risk Assessment
+        total_interactions = len(history)
+        debug_count = sum(1 for h in history if h.get('intent') == 'DEBUG')
+        avg_mastery = sum(mastery.values()) / len(mastery) if mastery else 0
+        
+        risk = "Low"
+        risk_reason = "Doing well"
+
+        if total_interactions == 0:
+            risk = "Inactive"
+            risk_reason = "No data yet"
+        elif days_inactive > 7:
+            risk = "High"
+            risk_reason = f"Absent for {days_inactive} days"
+        elif (debug_count / max(1, total_interactions)) > 0.6 and total_interactions > 5:
+            risk = "High"
+            risk_reason = "High error rate (Struggling)"
+        elif avg_mastery < 30:
+            risk = "Medium"
+            risk_reason = "Low topic mastery"
+            
+        sorted_topics = sorted(mastery.items(), key=lambda x: x[1], reverse=True)
+        strongest = sorted_topics[0][0] if sorted_topics else "-"
+        weakest = sorted_topics[-1][0] if sorted_topics else "-"
+
         class_matrix.append({
-            "username": student,
-            "mastery": mastery,
-            "total_interactions": len(history),
+            "hidden_username": student, # Kept for API calls, NOT for display
+            "display_id": anon_id,      # Show this to teacher
             "risk_level": risk,
-            "last_active": history[-1]['timestamp'] if history else "Never"
+            "risk_reason": risk_reason,
+            "strongest_topic": strongest,
+            "weakest_topic": weakest,
+            "last_active": last_active_str,
+            "mastery": mastery
         })
         
     return class_matrix
+
+@app.get("/api/v1/analytics/student_detail/{username}")
+async def get_student_detail_view(username: str):
+    """
+    Fetches deep-dive data: Full list of sessions + Full text of last 2.
+    """
+    # 1. Get All Sessions (Lightweight: ID, Title, Date)
+    sessions_list = history_manager.get_user_sessions_list(username)
+    
+    # Sort by date desc (Newest first)
+    sessions_list.sort(key=lambda x: x['date'], reverse=True)
+    
+    # 2. Get Details for ONLY the last 2 (Heavy)
+    recent_chats_details = []
+    for sess in sessions_list[:2]:
+        details = history_manager.get_session_details(username, sess['id'])
+        if details:
+            recent_chats_details.append({
+                "id": sess['id'],
+                "title": sess['title'],
+                "date": sess['date'],
+                "messages": details.get('messages', [])
+            })
+            
+    return {
+        "all_sessions_summary": sessions_list, # List of {id, title, date}
+        "recent_chats": recent_chats_details   # Full text
+    }
 
 @app.get("/api/v1/history/sessions")
 async def get_sessions(username: str):

@@ -53,7 +53,12 @@
         h2 { margin: 0 0 20px 0; color: var(--secondary); font-size: 1.3rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; }
 
         /* --- USER TABLE STYLES (Fixed) --- */
-        .table-responsive { width: 100%; overflow-x: auto; }
+        .table-responsive { 
+            width: 100%; 
+            overflow-x: auto; 
+            overflow-y: visible; /* CRITICAL: Allows vertical popup */
+            min-height: 200px;   /* Give it space */
+        }
         table { width: 100%; border-collapse: collapse; min-width: 600px; }
         th { background: #f8f9fa; color: #7f8c8d; font-weight: 700; text-transform: uppercase; font-size: 0.85rem; padding: 15px; text-align: left; }
         td { padding: 15px; border-bottom: 1px solid #eee; font-size: 0.95rem; vertical-align: middle; }
@@ -91,6 +96,73 @@
         .topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; }
         .topic-item { border: 1px solid #eee; padding: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; background: #fff; }
 
+        /* --- MODAL STYLES --- */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 1000;
+            display: none; justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background: white; width: 80%; max-width: 900px; height: 80%;
+            border-radius: 12px; display: flex; flex-direction: column;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2); overflow: hidden;
+        }
+        .modal-header {
+            padding: 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; background: #f8f9fa;
+        }
+        .modal-body {
+            padding: 20px; overflow-y: auto; display: flex; gap: 20px; flex: 1;
+        }
+        .close-modal {
+            background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #777;
+        }
+        
+        /* Chat Preview in Modal */
+        .chat-preview-box {
+            flex: 1; border: 1px solid #eee; border-radius: 8px; padding: 15px;
+            background: #fafafa; display: flex; flex-direction: column;
+        }
+        .chat-msg {
+            padding: 8px 12px; margin-bottom: 8px; border-radius: 8px; font-size: 0.9rem; max-width: 85%;
+        }
+        .chat-msg.user { background: #e3f2fd; align-self: flex-end; margin-left: auto; color: #2c3e50; }
+        .chat-msg.bot { background: white; border: 1px solid #ddd; align-self: flex-start; color: #333; }
+        
+        .clickable-row { cursor: pointer; transition: background 0.1s; }
+        .clickable-row:hover { background-color: #f1f2f6 !important; }
+
+        .msg-content {
+            transition: max-height 0.3s ease;
+        }
+        
+        .msg-content.collapsed {
+            max-height: 60px; /* Show only first ~3 lines */
+            overflow: hidden;
+            /* Create a fade-out effect at the bottom */
+            mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+        }
+
+        .msg-toggle-btn {
+            display: block;
+            width: 100%;
+            text-align: center;
+            background: #f8f9fa;
+            border: none;
+            border-top: 1px solid #eee;
+            color: #7f8c8d;
+            font-size: 0.75rem;
+            padding: 4px 0;
+            cursor: pointer;
+            border-radius: 0 0 8px 8px; /* Rounded bottom corners match chat bubble */
+            transition: background 0.2s;
+        }
+        
+        .msg-toggle-btn:hover {
+            background: #e9ecef;
+            color: #2c3e50;
+        }
+
         /* --- TOOLTIPS --- */
         .info-icon {
             display: inline-block;
@@ -110,37 +182,23 @@
 
         /* Tooltip Text (Hidden by default) */
         .info-icon .tooltip-text {
-            visibility: hidden;
-            width: 250px;
-            background-color: #333;
-            color: #fff;
-            text-align: left;
-            border-radius: 6px;
-            padding: 10px;
-            position: absolute;
-            z-index: 1;
-            bottom: 125%; /* Position above the icon */
-            left: 50%;
-            margin-left: -125px; /* Center it */
-            opacity: 0;
-            transition: opacity 0.3s;
-            font-family: 'Segoe UI', sans-serif;
-            font-size: 0.85rem;
-            font-weight: normal;
-            line-height: 1.4;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            visibility: hidden; width: 280px; 
+            background-color: #2c3e50; color: #fff; text-align: left;
+            border-radius: 8px; padding: 12px; position: absolute; z-index: 9999; /* High Z-Index */
+            
+            /* Position: To the right and down slightly */
+            top: 100%; left: 50%; margin-left: -140px; margin-top: 10px;
+            
+            opacity: 0; transition: opacity 0.3s;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+            font-weight: normal; line-height: 1.5; font-size: 0.85rem;
         }
 
         /* Little triangle arrow at the bottom of the tooltip */
         .info-icon .tooltip-text::after {
-            content: "";
-            position: absolute;
-            top: 100%;
-            left: 50%;
-            margin-left: -5px;
-            border-width: 5px;
-            border-style: solid;
-            border-color: #333 transparent transparent transparent;
+            content: ""; position: absolute; bottom: 100%; left: 50%; margin-left: -5px;
+            border-width: 5px; border-style: solid; 
+            border-color: transparent transparent #2c3e50 transparent;
         }
 
         /* Show on Hover */
@@ -263,20 +321,46 @@
     <!-- 4. STUDENT PERFORMANCE -->
     <div class="grid-container">
         <div class="card full-width">
-            <h2>🎓 Student Risk Matrix</h2>
+            <h2>🎓 Class Progress Monitor</h2>
             <div class="table-responsive">
                 <table id="riskTable">
                     <thead>
                         <tr>
                             <th>Student ID</th>
-                            <th>Risk Level</th>
-                            <th>Strongest Topic</th>
-                            <th>Weakest Topic</th>
+                            <th>Attention Needed</th>
+                            <th>Mastered Skill</th>
+                            <th>Growth Area</th>
                             <th>Last Active</th>
                         </tr>
                     </thead>
                     <tbody><!-- Loaded via JS --></tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- STUDENT DETAIL MODAL -->
+<div id="studentModal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 style="margin:0; font-size:1.4rem;">
+                👤 <span id="modalStudentId">Student_XX</span> 
+                <span id="modalRiskBadge" class="status-badge"></span>
+            </h2>
+            <button class="close-modal" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+            <!-- LEFT: Stats -->
+            <div style="width: 35%; border-right: 1px solid #eee; padding-right: 20px;">
+                <!-- <h3 style="margin-top:0;">📊 Mastery Profile</h3> -->
+                <div id="modalMasteryList"></div>
+            </div>
+            
+            <!-- RIGHT: Chats -->
+            <div style="width: 65%;">
+                <h3 style="margin-top:0;">💬 Last 2 Conversations</h3>
+                <div id="modalChatContainer" style="display:flex; flex-direction:column; gap:20px;"></div>
             </div>
         </div>
     </div>
@@ -503,26 +587,195 @@
     }
 
     function renderRiskTable(students) {
+        const thead = document.querySelector('#riskTable thead tr');
+        // Update Header with Info Icon (Requirement 1)
+        thead.innerHTML = `
+            <th>Student ID</th>
+            <th>
+                Attention Needed 
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        Risk Factors:<br>
+                        • 🔴 <b>High:</b> Inactive >7 days OR >60% Errors.<br>
+                        • 🟠 <b>Medium:</b> Topic Mastery < 30%.<br>
+                        • 🟢 <b>Low:</b> Active & Balanced.<br>
+                        • ⚪ <b>Inactive:</b> No data.
+                    </span>
+                </div>
+            </th>
+            <th>Mastered Skill</th>
+            <th>Growth Area</th>
+            <th>Last Active</th>
+        `;
+
         const tbody = document.querySelector('#riskTable tbody');
         tbody.innerHTML = '';
+        
         students.forEach(s => {
-            let riskColor = s.risk_level === 'High' ? 'red' : (s.risk_level === 'Medium' ? 'orange' : 'green');
-            
-            // Calculate strongest/weakest (simple sort)
-            const sortedTopics = Object.entries(s.mastery).sort((a,b) => b[1] - a[1]);
-            const strong = sortedTopics.length > 0 ? sortedTopics[0][0] : '-';
-            const weak = sortedTopics.length > 0 ? sortedTopics[sortedTopics.length-1][0] : '-';
+            let riskColor = s.risk_level === 'High' ? '#e74c3c' : (s.risk_level === 'Medium' ? '#f39c12' : '#27ae60');
+            if(s.risk_level === 'Inactive') riskColor = '#95a5a6';
 
+            const riskBadge = `
+                <div class="info-icon" style="background:${riskColor}; color:white; width:auto; padding:2px 10px; border-radius:12px; font-weight:bold; font-family:sans-serif;">
+                    ${s.risk_level}
+                    <span class="tooltip-text">${s.risk_reason}</span>
+                </div>
+            `;
+
+            // Row is clickable (Requirement 2 & 3)
+            // Note: We pass 'hidden_username' to the function, but display 'display_id'
+            // We escape the JSON for mastery to pass it to the modal without another fetch
+            const masteryStr = encodeURIComponent(JSON.stringify(s.mastery));
+            
             tbody.innerHTML += `
-                <tr>
-                    <td style="font-family:monospace;">${s.username}</td>
-                    <td style="color:${riskColor}; font-weight:bold;">${s.risk_level}</td>
-                    <td>${strong}</td>
-                    <td>${weak}</td>
-                    <td>${new Date(s.last_active).toLocaleDateString()}</td>
+                <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${s.risk_level}', '${masteryStr}')">
+                    <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
+                    <td>${riskBadge}</td>
+                    <td>${s.strongest_topic}</td>
+                    <td>${s.weakest_topic}</td>
+                    <td>${s.last_active}</td>
                 </tr>
             `;
         });
+    }
+
+    // --- MODAL LOGIC ---
+    async function openStudentModal(realUsername, displayId, riskLevel, masteryJson) {
+        // 1. Header setup
+        document.getElementById('modalStudentId').innerText = displayId;
+        const badge = document.getElementById('modalRiskBadge');
+        badge.innerText = riskLevel;
+        badge.className = `status-badge ${riskLevel === 'High' ? 'status-blocked' : 'status-active'}`;
+
+        // 2. Mastery Bar setup
+        const mastery = JSON.parse(decodeURIComponent(masteryJson));
+        const masteryDiv = document.getElementById('modalMasteryList');
+        masteryDiv.innerHTML = '<h4 style="margin:0 0 10px 0; border-bottom:1px solid #eee; padding-bottom:5px;">📊 Mastery Profile</h4>';
+        
+        Object.entries(mastery).forEach(([topic, score]) => {
+            masteryDiv.innerHTML += `
+                <div style="margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.8rem;">
+                        <span>${topic}</span>
+                        <strong>${Math.round(score)}%</strong>
+                    </div>
+                    <div style="height:5px; background:#eee; border-radius:3px; margin-top:2px;">
+                        <div style="height:100%; width:${Math.min(100, score)}%; background:${score > 50 ? '#27ae60' : '#e74c3c'}; border-radius:3px;"></div>
+                    </div>
+                </div>
+            `;
+        });
+
+        // 3. FETCH & RENDER CHATS
+        const chatDiv = document.getElementById('modalChatContainer');
+        chatDiv.innerHTML = '<div style="text-align:center; color:#999;">Loading data...</div>';
+        
+        document.getElementById('studentModal').style.display = 'flex';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/student_detail/${realUsername}`);
+            const data = await res.json();
+            
+            // --- NEW: RENDER SESSION LIST ON LEFT (Under Mastery) ---
+            masteryDiv.innerHTML += '<h4 style="margin:20px 0 10px 0; border-bottom:1px solid #eee; padding-bottom:5px;">🗂️ Interaction History</h4>';
+            masteryDiv.innerHTML += '<div style="max-height:300px; overflow-y:auto; font-size:0.85rem;">';
+            
+            if (data.all_sessions_summary.length === 0) {
+                masteryDiv.innerHTML += '<div style="color:#999;">No history.</div>';
+            }
+
+            data.all_sessions_summary.forEach((sess, index) => {
+                const dateStr = new Date(sess.date).toLocaleDateString();
+                // Highlight the ones shown on the right
+                const isRecent = index < 2;
+                const icon = isRecent ? '👁️' : '📄';
+                const style = isRecent ? 'font-weight:bold; color:#2980b9;' : 'color:#555;';
+                
+                masteryDiv.innerHTML += `
+                    <div style="padding:6px 0; border-bottom:1px solid #f9f9f9; ${style}">
+                        ${icon} ${dateStr}: ${sess.title.substring(0, 30)}...
+                    </div>`;
+            });
+            masteryDiv.innerHTML += '</div>';
+
+            // --- RENDER RECENT CHATS ON RIGHT ---
+            chatDiv.innerHTML = '';
+            
+            if (data.recent_chats.length === 0) {
+                chatDiv.innerHTML = '<div style="padding:20px; text-align:center;">No conversations yet.</div>';
+            } else {
+                data.recent_chats.forEach(chat => {
+                    let msgsHtml = '';
+                    // Show last 6 messages
+                    const displayMsgs = chat.messages.slice(-6); 
+                    
+                    displayMsgs.forEach((m, index) => {
+                        const isBot = m.role !== 'user';
+                        
+                        if (isBot) {
+                            // --- AI MESSAGE (Collapsible) ---
+                            // Generate a unique ID for this specific message div
+                            const msgId = `msg-${chat.id}-${index}`;
+                            
+                            msgsHtml += `
+                                <div class="chat-msg bot" style="padding-bottom:0;">
+                                    <b style="color:#8e44ad;">AI Tutor:</b>
+                                    <div id="${msgId}" class="msg-content collapsed" style="margin-top:4px;">
+                                        ${m.content.replace(/\n/g, '<br>')} 
+                                    </div>
+                                    <button class="msg-toggle-btn" onclick="toggleChatMsg('${msgId}', this)">
+                                        🔽 Expand Answer
+                                    </button>
+                                </div>
+                            `;
+                        } else {
+                            // --- STUDENT MESSAGE (Standard) ---
+                            msgsHtml += `
+                                <div class="chat-msg user">
+                                    <b>Student:</b> ${m.content.replace(/\n/g, '<br>')}
+                                </div>
+                            `;
+                        }
+                    });
+
+                    chatDiv.innerHTML += `
+                        <div class="chat-preview-box">
+                            <div style="border-bottom:1px solid #eee; padding-bottom:8px; margin-bottom:8px;">
+                                <strong>📅 ${new Date(chat.date).toLocaleString()}</strong>
+                                <br><small style="color:#777;">${chat.title}</small>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:5px;">${msgsHtml}</div>
+                        </div>
+                    `;
+                });
+            }
+
+        } catch (e) { console.error(e); }
+    }
+
+    function closeModal() {
+        document.getElementById('studentModal').style.display = 'none';
+    }
+
+    function toggleChatMsg(elementId, btn) {
+        const content = document.getElementById(elementId);
+        const isCollapsed = content.classList.contains('collapsed');
+        
+        if (isCollapsed) {
+            content.classList.remove('collapsed');
+            btn.innerText = "🔼 Collapse";
+        } else {
+            content.classList.add('collapsed');
+            btn.innerText = "🔽 Expand Answer";
+        }
+    }
+
+    // Close on click outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('studentModal');
+        if (event.target == modal) {
+            modal.style.display = "none";
+        }
     }
 
     let topicChart, struggleChart;
