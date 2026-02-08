@@ -228,6 +228,49 @@
         box-sizing: border-box;
         }
 
+        /* this adds an option to toggle the resources and context menu */
+        /* Header layout (so title + button can sit on one row) */
+        .res-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        }
+
+        /* Small icon button for collapsing panels */
+        .panel-toggle-btn {
+        background: transparent;
+        border: 1px solid rgba(255,255,255,0.15);
+        color: var(--text-secondary);
+        border-radius: 10px;
+        padding: 6px 10px;
+        cursor: pointer;
+        font-size: 14px;
+        }
+        .panel-toggle-btn:hover {
+        border-color: rgba(255,255,255,0.35);
+        color: #fff;
+        }
+
+        /* Collapse the right resources panel */
+        body.hide-resources .resources-section {
+        width: 0 !important;
+        min-width: 0 !important;
+        padding: 0 !important;
+        border-left: none !important;
+        overflow: hidden !important;
+        }
+
+        /* Optional: hide its contents to prevent tab focus / layout quirks */
+        body.hide-resources .resources-section * {
+        pointer-events: none;
+        }
+
+        /* Flip the arrow when hidden (optional polish) */
+        body.hide-resources .res-header .panel-toggle-btn {
+        transform: rotate(180deg);
+        }
+
+
         /* Progress Bar */
         .progress-step-container { background: #333; border-radius: 8px; padding: 10px; width: 250px; }
         .progress-step-text { display: flex; justify-content: space-between; font-size: 0.8rem; color: #aaa; }
@@ -430,10 +473,21 @@
         </div>
 
         <!-- RESOURCES -->
-        <div class="resources-section">
-            <div class="res-header">SOURCES & CONTEXT</div>
+        <!-- adds a toggle resources button-->
+        <div class="resources-section" id="resourcesPanel">
+
+            <!-- Header with toggle -->
+            <div class="res-header">
+                <span>SOURCES & CONTEXT</span>
+                <button class="panel-toggle-btn" onclick="toggleResources()" title="Hide sources">⟩</button>
+            </div>
+
+            <!-- Sources list -->
             <div class="sources-list" id="sourcesList"></div>
+
         </div>
+
+
 
     </div>
 </div>
@@ -842,6 +896,13 @@
     function toggleSidebar() {
         document.getElementById('sidebar').classList.toggle('collapsed');
     }
+
+    function toggleResources() {
+        document
+            .getElementById('resourcesPanel')
+            .classList.toggle('collapsed');
+    }
+
 
     async function loadChatHistory() {
         if (!currentUser) return;
