@@ -201,6 +201,33 @@
         .source-title { font-size: 0.85rem; color: #aaa; margin-bottom: 8px; }
         .source-content { font-size: 0.85rem; color: #ddd; }
 
+        /* --- Fix overflow inside source cards --- */
+        .source-card {
+        overflow: hidden;
+        }
+
+        .source-content {
+        max-width: 100%;
+        overflow-x: auto;
+        box-sizing: border-box;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        }
+
+        .source-content pre {
+        margin: 0;
+        max-width: 100%;
+        overflow-x: auto;
+        white-space: pre;
+        box-sizing: border-box;
+        }
+
+        .source-content code {
+        display: block;
+        max-width: 100%;
+        box-sizing: border-box;
+        }
+
         /* Progress Bar */
         .progress-step-container { background: #333; border-radius: 8px; padding: 10px; width: 250px; }
         .progress-step-text { display: flex; justify-content: space-between; font-size: 0.8rem; color: #aaa; }
