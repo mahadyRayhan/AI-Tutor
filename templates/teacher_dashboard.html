@@ -229,6 +229,14 @@
     <!-- 1. USER MANAGEMENT (New & Improved) -->
     <div class="grid-container">
         <div class="card full-width">
+            <h2>📬 Pending Reviews</h2>
+            <div id="inboxList" style="display:grid; gap:10px;">
+                <!-- Items go here -->
+            </div>
+        </div>
+    </div>
+    <div class="grid-container">
+        <div class="card full-width">
             <h2>🛠️ User Management</h2>
             <div class="table-responsive">
                 <table id="userTable">
@@ -355,6 +363,12 @@
             <div style="width: 35%; border-right: 1px solid #eee; padding-right: 20px;">
                 <!-- <h3 style="margin-top:0;">📊 Mastery Profile</h3> -->
                 <div id="modalMasteryList"></div>
+                <div style="margin-top:20px; border-top:1px solid #eee; padding-top:15px;">
+                    <h4 style="margin:0 0 10px 0;">🚀 Send Challenge</h4>
+                    <textarea id="challengeInput" style="width:100%; height:80px; border:1px solid #ddd; border-radius:6px; padding:8px; font-family:inherit;" placeholder="E.g., Write a function to sort an array..."></textarea>
+                    <button onclick="sendChallenge()" style="width:100%; background:#8e44ad; color:white; border:none; padding:8px; border-radius:6px; margin-top:5px; cursor:pointer; font-weight:bold;">Send to Student</button>
+                    <div id="challengeStatus" style="font-size:0.8rem; margin-top:5px;"></div>
+                </div>
             </div>
             
             <!-- RIGHT: Chats -->
@@ -368,6 +382,7 @@
 
 <script>
     const API_URL = "http://127.0.0.1:8000";
+    const USER_ID_MAP = {};
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
     const FILE_RULES = {
         'code': { 
@@ -486,6 +501,36 @@
             const riskData = await resMatrix.json();
             renderRiskTable(riskData);
 
+            // D. LOAD INBOX
+            const resInbox = await fetch(`${API_URL}/api/v1/assignments/teacher/pending?username=${currentUser.username}`);
+            const inbox = await resInbox.json();
+            const inboxDiv = document.getElementById('inboxList');
+            inboxDiv.innerHTML = '';
+
+            if(inbox.length === 0) inboxDiv.innerHTML = '<div style="color:#777">No pending reviews.</div>';
+
+            inbox.forEach(item => {
+                const safeName = USER_ID_MAP[item.student] || "Student-X";
+                inboxDiv.innerHTML += `
+                    <div style="border:1px solid #eee; padding:15px; border-radius:8px; background:#fff;">
+                        <div style="font-weight:bold; color:#2c3e50; margin-bottom:5px;">
+                            From: <span style="font-family:monospace">${safeName}</span>
+                        </div>
+                        <div style="font-size:0.9rem; margin-bottom:10px; color:#555;">
+                            <b>Q:</b> ${item.question}<br>
+                            <b>A:</b> ${item.student_answer}
+                        </div>
+                        
+                        <textarea id="feedback-${item.id}" placeholder="Write feedback here..." style="width:100%; margin-bottom:5px; padding:5px;"></textarea>
+                        
+                        <div style="display:flex; gap:10px;">
+                            <button onclick="aiCheck('${item.id}', '${escape(item.student_answer)}')" style="background:#f1c40f; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">🤖 Check with AI</button>
+                            <button onclick="submitGrade('${item.id}')" style="background:#27ae60; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">✅ Send Feedback</button>
+                        </div>
+                    </div>
+                `;
+            });
+
         } catch (e) { console.error("Error loading data:", e); }
     }
 
@@ -496,6 +541,63 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ topic: topic, enabled: enabled })
         });
+    }
+
+    async function aiCheck(id, answerEncoded) {
+        const answer = unescape(answerEncoded);
+        const box = document.getElementById(`feedback-${id}`);
+        box.value = "🤖 AI is analyzing...";
+        
+        const res = await fetch(`${API_URL}/api/v1/assignments/ai_check`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ assignment_id: id, answer: answer })
+        });
+        const data = await res.json();
+        box.value = data.ai_feedback; // AI fills the box!
+    }
+
+    async function submitGrade(id) {
+        const feedback = document.getElementById(`feedback-${id}`).value;
+        await fetch(`${API_URL}/api/v1/assignments/grade`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ assignment_id: id, feedback: feedback })
+        });
+        loadData(); // Refresh list
+    }
+
+    async function sendChallenge() {
+        // We stored the real username in the onclick event, but we need to access it here.
+        // A simple hack: store it in a hidden data attribute when opening modal.
+        // Update openStudentModal to: document.getElementById('studentModal').dataset.student = realUsername;
+        
+        const student = document.getElementById('studentModal').dataset.student;
+        const question = document.getElementById('challengeInput').value;
+        const status = document.getElementById('challengeStatus');
+        
+        if(!question) return;
+        
+        status.innerText = "Sending...";
+        
+        try {
+            await fetch(`${API_URL}/api/v1/assignments/create`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    teacher: currentUser.username,
+                    student: student,
+                    question: question
+                })
+            });
+            status.innerText = "✅ Sent!";
+            status.style.color = "green";
+            document.getElementById('challengeInput').value = "";
+            setTimeout(() => status.innerText = "", 3000);
+        } catch(e) {
+            status.innerText = "❌ Error sending.";
+            status.style.color = "red";
+        }
     }
 
     function updateUploadRules() {
@@ -612,6 +714,7 @@
         tbody.innerHTML = '';
         
         students.forEach(s => {
+            USER_ID_MAP[s.hidden_username] = s.display_id;
             let riskColor = s.risk_level === 'High' ? '#e74c3c' : (s.risk_level === 'Medium' ? '#f39c12' : '#27ae60');
             if(s.risk_level === 'Inactive') riskColor = '#95a5a6';
 
@@ -643,6 +746,7 @@
     async function openStudentModal(realUsername, displayId, riskLevel, masteryJson) {
         // 1. Header setup
         document.getElementById('modalStudentId').innerText = displayId;
+        document.getElementById('studentModal').dataset.student = realUsername;
         const badge = document.getElementById('modalRiskBadge');
         badge.innerText = riskLevel;
         badge.className = `status-badge ${riskLevel === 'High' ? 'status-blocked' : 'status-active'}`;

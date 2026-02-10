@@ -26,7 +26,8 @@ from app.agents.cot_rag_agent import ChainOfThoughtRAGAgent
 from app.core.settings_manager import settings_manager
 from app.core.user_manager import user_manager 
 from app.core.history_manager import history_manager
-from app.core.user_knowledge_manager import knowledge_manager 
+from app.core.user_knowledge_manager import knowledge_manager
+from app.core.assignment_manager import assignment_manager
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -43,7 +44,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -90,6 +91,21 @@ class FeedbackRequest(BaseModel):
     message_index: int  # Which message in the chat history is this for?
     feedback_type: str  # "up", "down", "simplify", "deep_dive"
     original_query: str # Needed for re-generation
+
+# --- ASSIGNMENT DATA MODELS ---
+class ChallengeRequest(BaseModel):
+    teacher: str
+    student: str
+    question: str
+
+class SubmissionRequest(BaseModel):
+    assignment_id: str
+    answer: str
+
+# RENAMED to avoid conflict
+class AssignmentGradeRequest(BaseModel):
+    assignment_id: str
+    feedback: str
 
 def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
     """
@@ -788,6 +804,59 @@ async def handle_feedback(req: FeedbackRequest):
         return {"action": "regenerate", "modified_query": modified_query}
 
     return {"status": "recorded"}
+
+@app.post("/api/v1/assignments/create")
+async def create_assignment(req: ChallengeRequest):
+    aid = assignment_manager.create_challenge(req.teacher, req.student, req.question)
+    return {"status": "success", "id": aid}
+
+@app.get("/api/v1/assignments/student/{username}")
+async def get_student_assignments(username: str):
+    return assignment_manager.get_by_student(username)
+
+@app.post("/api/v1/assignments/submit")
+async def submit_assignment(req: SubmissionRequest):
+    assignment_manager.submit_answer(req.assignment_id, req.answer)
+    return {"status": "success"}
+
+@app.get("/api/v1/assignments/teacher/pending")
+async def get_pending_reviews(username: str):
+    return assignment_manager.get_pending_reviews(username)
+
+@app.post("/api/v1/assignments/grade")
+async def grade_assignment(req: AssignmentGradeRequest):
+    assignment_manager.grade_assignment(req.assignment_id, req.feedback)
+    return {"status": "success"}
+
+# --- THE MAGIC: AI CHECKER ---
+@app.post("/api/v1/assignments/ai_check")
+async def ai_check_assignment(req: SubmissionRequest):
+    """
+    Teacher clicks 'Check with AI'. 
+    We send the student's code to the RAG Agent with intent='REVIEW'.
+    """
+    # 1. Get the original question (we need it for context)
+    # In a real app, fetch from DB. For now, assume passed or construct prompt
+    prompt = f"Teacher Question: [Hidden context]\nStudent Answer: {req.answer}\n\nTask: Review this code/answer. Be constructive."
+    
+    # Reuse your existing agent!
+    # We use run_stream or just internal generation logic
+    # For simplicity, let's use the llm_interface directly for a quick review
+    
+    review_prompt = f"""
+    You are a Teaching Assistant. 
+    Review this student submission.
+    
+    Student Answer:
+    {req.answer}
+    
+    Provide a short, constructive critique (3-4 sentences). 
+    Highlight 1 strength and 1 area for improvement.
+    Do NOT give a grade.
+    """
+    
+    feedback = llm_interface.generate_response(review_prompt)
+    return {"ai_feedback": feedback}
 
 if __name__ == "__main__":
     import uvicorn
