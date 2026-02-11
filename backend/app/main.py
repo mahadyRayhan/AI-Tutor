@@ -16,6 +16,10 @@ import csv
 
 from pyinstrument import Profiler
 from fastapi.staticfiles import StaticFiles # Needed to serve the reports
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+from fastapi import Request
+from pathlib import Path
 
 # Import components
 from app.core import config
@@ -47,6 +51,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+BASE_DIR = Path(__file__).resolve().parent  # Points to backend/app/
+TEMPLATES_DIR = BASE_DIR / "templates"      # Points to backend/app/templates/
+
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # --- Data Models ---
 class SignupRequest(BaseModel):
@@ -191,6 +200,25 @@ class ChatRequest(BaseModel):
     enable_cot: Optional[bool] = True
     enable_validation: Optional[bool] = True
     enable_correction: Optional[bool] = True
+
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+# 4. Dynamic Page Endpoint
+@app.get("/{page_name}.html", response_class=HTMLResponse)
+async def serve_specific_html(request: Request, page_name: str):
+    """
+    Dynamically serves teacher_dashboard.html, student_dashboard.html, etc.
+    """
+    file_name = f"{page_name}.html"
+    file_path = TEMPLATES_DIR / file_name
+
+    # Check if file exists using the Path object
+    if file_path.exists():
+        return templates.TemplateResponse(file_name, {"request": request})
+    
+    return HTMLResponse(content="Page Not Found", status_code=404)
 
 @app.get("/health")
 async def health():

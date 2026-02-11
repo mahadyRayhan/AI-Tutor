@@ -1,25 +1,33 @@
-version: '3.8'
-
 services:
-  # FastAPI Backend
   backend:
-    build: .
+    build:
+      context: ./backend
     ports:
       - "8000:8000"
     environment:
       - NEO4J_URI=bolt://graph-db:7687
-      - CHROMA_DB_PATH=/app/chroma_data
+      - NEO4J_PASSWORD=12345678
+      - GOOGLE_API_KEY=GOOGLE_API_KEY
+      - OPENAI_API_KEY=OPENAI_API_KEY
+      - PYTHONPATH=/app
     volumes:
-      - ./chroma_data:/app/chroma_data
+      # Maps host folder to the root (for absolute path code)
+      - ./database:/database
+      - ./resources:/resources
+      # Maps host folder to /app (for relative path code)
+      - ./database:/app/database
+      - ./resources:/app/resources
+      - ./scripts:/app/scripts
+      # Add logs to prevent permission crashes during logging
+      - ./logs:/app/logs
     depends_on:
-      - graph-db
-    # This command runs your ingestion scripts before starting uvicorn
+      graph-db:
+        condition: service_healthy
     command: >
-      sh -c "python scripts/ingest_data.py && 
-             python scripts/ingest_manual_graph.py && 
-             uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+      sh -c "python /app/scripts/ingest_data.py && 
+             python /app/scripts/ingest_manual_graph.py && 
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
-  # Knowledge Graph (Neo4j)
   graph-db:
     image: neo4j:latest
     ports:
@@ -27,6 +35,12 @@ services:
       - "7687:7687"
     environment:
       - NEO4J_AUTH=neo4j/12345678
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
     volumes:
       - neo4j_data:/data
 
