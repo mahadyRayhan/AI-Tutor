@@ -101,12 +101,17 @@ class ChainOfThoughtRAGAgent:
            - C keywords (int, float, void, return, printf)
            - Or asking "Is this right?"
         2. CONCEPT: Asking "what is...", "explain...", "definition of...", "how does X work?"
-        3. PROBLEM: Asking "how to...", "write a code...", "solve..."
-        4. DEBUG: Asking "why is this error...", "fix this..."
+        3. PROBLEM: Asking "how to...", "write a code...", "solve...", "create code..."
+        4. DEBUG: Asking "why is this error...", "fix this...", crashes
+        5. OFF_TOPIC: Anything NOT related to teaching/learning C Programming. Includes:
+           - Greetings ("hi", "how are you", "your name")
+           - General Knowledge ("what is the time", "who is the president", "capital of France")
+           - Other Languages ("python code", "java vs c++", "how to cook")
+           - Creative writing, math, or casual chat unrelated to coding.
 
         Query: "{query}"
         
-        Respond with ONE word: CONCEPT, PROBLEM, DEBUG, or REVIEW.
+        Respond with ONE word: CONCEPT, PROBLEM, DEBUG, REVIEW or OFF_TOPIC.
         """
         return self.llm_interface.generate_response(prompt).strip().upper()
     
@@ -1611,6 +1616,25 @@ class ChainOfThoughtRAGAgent:
         if intent == "SECURITY_RISK":
             msg = "I can't help with that request. 😅\n\nI'm designed strictly as a **C Programming Tutor** to help you learn safely. Let's get back to coding! 💻"
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": intent}}
+            return
+        
+        if intent == "OFF_TOPIC":
+            # Generic, polite refusal that reinforces the AI's purpose
+            msg = (
+                "👋 I am an AI Tutor specialized strictly in **C Programming**.\n\n"
+                "I can't help with general knowledge, personal questions, or other topics. "
+                "But I **can** help you with:\n\n"
+                "🔹 **Concepts** (Pointers, Arrays, Structs)\n"
+                "🔹 **Debugging** (Fixing errors, Segfaults)\n"
+                "🔹 **Writing Code** (Solving exercises)"
+            )
+            
+            yield {"type": "complete", "data": {
+                "answer": msg, 
+                "sources": [], 
+                "intent": intent,
+                "suggestions": ["What is a Pointer?", "How do loops work?", "Debug my code"]
+            }}
             return
 
         # =========================================================
