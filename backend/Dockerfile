@@ -2,22 +2,27 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Step 1: Install standard packages from default PyPI
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    pyinstrument \
+    gliner \
+    sentence-transformers
 
-# --- IMPORTANT: Copy scripts and application code ---
-# Copy the scripts folder from the root (relative to build context)
-COPY scripts/ ./scripts/
-# Copy everything inside the backend folder to /app
+# Step 2: Install PyTorch separately using the CPU-specific index
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Copy project structure
 COPY . .
 
-EXPOSE 8000
+# Ensure PYTHONPATH is /app
+ENV PYTHONPATH=/app
 
-# The startup command is now managed by docker-compose
+EXPOSE 8000
