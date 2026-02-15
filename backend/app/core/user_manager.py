@@ -2,10 +2,12 @@
 import json
 import os
 from typing import Optional, Dict, List
+from passlib.context import CryptContext
 
 # Using relative path logic
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 DB_PATH = os.path.join(BASE_DIR, "database", "users.json")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class UserManager:
     def __init__(self):
@@ -38,22 +40,26 @@ class UserManager:
             json.dump(data, f, indent=4)
 
     def authenticate(self, username, password) -> Optional[Dict]:
-        """Returns user info if credentials match and NOT blocked."""
         users = self._load_db()
         user = users.get(username)
         
-        if not user:
+        if not user: return None
+        if user.get('blocked', False): raise Exception("Account Blocked")
+
+        # VERIFY HASH
+        stored_pw = user.get('password')
+        # Handle backward compatibility (if you have old plain text passwords)
+        if not stored_pw.startswith('$2b$'): 
+            # If plain text matches, upgrade to hash immediately
+            if stored_pw == password:
+                user['password'] = pwd_context.hash(password)
+                self._save_db(users)
+                return self._sanitize_user(user, username)
             return None
+
+        if pwd_context.verify(password, stored_pw):
+            return self._sanitize_user(user, username)
             
-        if user.get('password') == password:
-            if user.get('blocked', False):
-                raise Exception("Account Blocked")
-            
-            return {
-                "username": username,
-                "role": user.get('role', 'student'),
-                "name": user.get('name', username)
-            }
         return None
 
     def create_user(self, username, password, role="student", **kwargs) -> bool:
@@ -62,8 +68,10 @@ class UserManager:
         if username in users:
             return False
         
+        # HASH THE PASSWORD BEFORE SAVING
+        hashed_pw = pwd_context.hash(password)
         users[username] = {
-            "password": password,
+            "password": hashed_pw,
             "role": role,
             "blocked": False,
             "name": kwargs.get("name", ""),
@@ -74,6 +82,15 @@ class UserManager:
         }
         self._save_db(users)
         return True
+
+    def _sanitize_user(self, user_data, username):
+        """Never return the password field to the API"""
+        return {
+            "username": username,
+            "role": user_data.get('role'),
+            "name": user_data.get('name'),
+            "email": user_data.get('email')
+        }
 
     def get_all_users(self) -> List[Dict]:
         """Returns list of all users for Admin Panel."""

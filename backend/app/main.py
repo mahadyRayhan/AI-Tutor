@@ -18,6 +18,7 @@ from pyinstrument import Profiler
 from fastapi.staticfiles import StaticFiles # Needed to serve the reports
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
+from fastapi import Header, HTTPException, Depends
 from fastapi import Request
 from pathlib import Path
 
@@ -154,6 +155,15 @@ def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
         final_scores[t] = normalized
         
     return final_scores
+async def verify_teacher(x_user_role: str = Header(None, alias="X-User-Role")):
+    """
+    Simple header check. In a real app, use JWT tokens.
+    For this prototype, the Frontend must send 'X-User-Role: teacher' 
+    and the Backend trusts it (weak security) OR we validate session.
+    """
+    # Since we are stateless, this is a basic check.
+    if x_user_role != "teacher":
+        raise HTTPException(status_code=403, detail="Not authorized")
 
 @app.on_event("startup")
 async def startup_event():
@@ -465,9 +475,8 @@ async def signup(req: SignupRequest):
     else:
         raise HTTPException(status_code=400, detail="Username already exists")
 
-@app.get("/api/v1/admin/users")
+@app.get("/api/v1/admin/users", dependencies=[Depends(verify_teacher)])
 async def get_all_users():
-    # In a real app, verify the caller is an admin here via token/session
     return user_manager.get_all_users()
 
 @app.post("/api/v1/admin/users/update")
