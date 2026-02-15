@@ -1278,6 +1278,99 @@ class ChainOfThoughtRAGAgent:
     #         }
     #     }
 
+    async def _trigger_quiz_mode(self, query, username, session_id):
+        """
+        Fetches a pre-calculated quiz from the Knowledge Graph and serves it to the user.
+        """
+        # Extract topic from "I know X (Verify)"
+        match = re.search(r"know (.*?) \(verify\)", query.lower())
+        verify_topic = match.group(1).strip() if match else "this concept"
+
+        yield {"type": "status", "message": "Fetching quiz...", "percent": 50}
+
+        # Fetch Q&A data from Neo4j
+        cypher = "MATCH (n:Concept) WHERE toLower(n.name) CONTAINS toLower($topic) RETURN n.quiz_data as data LIMIT 1"
+        results = self.graph_db.execute_query(cypher, {"topic": verify_topic})
+
+        qa_pair = None
+        if results and results[0]['data']:
+            try:
+                pairs = json.loads(results[0]['data'])
+                qa_pair = random.choice(pairs)
+            except: pass
+
+        if qa_pair:
+            # Update Session State (Persistence)
+            vector_data = {
+                "google": qa_pair['a_vector'],
+                "local": qa_pair.get('a_vector_local')
+            }
+
+            history_manager.update_session_state(username, session_id, {
+                "awaiting_quiz_answer": True,
+                "quiz_topic": verify_topic,
+                "quiz_vector": vector_data
+            })
+
+            msg = f"🧐 **Quick Check:** {qa_pair['q']}\n\n👉 **Type your answer in the chat box below.**"
+
+            yield {"type": "complete", "data": {
+                "answer": msg,
+                "sources": [],
+                "suggestions": ["I don't know"],
+                "intent": "QUIZ"
+            }}
+        else:
+            # Fallback if no quiz exists for this topic
+            yield {"type": "complete", "data": {
+                "answer": f"I don't have a specific quiz for **{verify_topic}** yet. Would you like me to explain it instead?",
+                "sources": [],
+                "suggestions": [f"Explain {verify_topic}"],
+                "intent": "QUIZ"
+            }}
+
+    async def _handle_quiz_response(self, query, current_state, username, session_id):
+        """
+        Grades the user's answer to the active quiz using Vector Similarity.
+        """
+        check_topic = current_state.get("quiz_topic")
+        vectors = current_state.get("quiz_vector")
+
+        correct_vector = []
+        correct_vector_local = None
+
+        if isinstance(vectors, list):
+            correct_vector = vectors
+        elif isinstance(vectors, dict):
+            correct_vector = vectors.get('google')
+            correct_vector_local = vectors.get('local')
+
+        # Clear state immediately (so they don't get stuck in quiz mode)
+        history_manager.update_session_state(username, session_id, {"awaiting_quiz_answer": False})
+
+        if correct_vector:
+            self.logger.info(f"📝 Grading answer for topic: {check_topic}")
+            yield {"type": "status", "message": "Verifying answer...", "percent": 30}
+
+            # Fast Grade
+            result = self._fast_grade_answer(query, correct_vector, correct_vector_local)
+
+            if result['is_correct']:
+                knowledge_manager.mark_concept_as_known(username, check_topic)
+                msg = f"✅ **{result['feedback']}**\n\nGreat! You've mastered **{check_topic}**. What's next?"
+                yield {"type": "complete", "data": {
+                    "answer": msg, "sources": [], "suggestions": ["What should I learn next?", f"Teach me {check_topic} anyway"], "intent": "EVALUATION"
+                }}
+            else:
+                msg = f"❌ **{result['feedback']}**\n\nLet's review **{check_topic}** to make sure you have the basics down."
+                yield {"type": "complete", "data": {
+                    "answer": msg, "sources": [], "suggestions": [f"Explain {check_topic}"], "intent": "EVALUATION"
+                }}
+        else:
+             yield {"type": "complete", "data": {
+                "answer": "Error retrieving quiz data. Let's move on.", "sources": [], "intent": "ERROR"
+            }}
+    
     async def _handle_active_states(self, query, username, session_id, user_role):
         """Checks if user is currently inside a Quiz or a Guided Plan."""
         if not session_id: return None
