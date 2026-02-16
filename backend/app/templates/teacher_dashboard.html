@@ -435,8 +435,16 @@
     // --- 2. DATA LOADING ---
     async function loadData() {
         try {
-            // A. LOAD USERS
-            const resUsers = await fetch(`${API_URL}/api/v1/admin/users`);
+            // A. LOAD USERS (Updated with Security Headers)
+            const resUsers = await fetch(`${API_URL}/api/v1/admin/users`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    // PASS THE ROLE HEADER SO BACKEND ALLOWS ACCESS
+                    'X-User-Role': currentUser.role 
+                }
+            });
+
             if (resUsers.ok) {
                 const users = await resUsers.json();
                 const tbody = document.querySelector('#userTable tbody');
@@ -458,7 +466,7 @@
                         `<span class="status-badge status-active">Active</span>` :
                         `<label class="switch">
                             <input type="checkbox" ${!u.blocked ? 'checked' : ''} onchange="toggleBlockUser('${u.username}', !this.checked)">
-                            <span class="slider"></span>
+                            <span class="slider ${!u.blocked ? '' : 'danger'}"></span>
                         </label>
                         <span style="font-size:0.8rem; margin-left:8px; color:${u.blocked ? 'red' : 'green'}">
                             ${u.blocked ? 'Blocked' : 'Active'}
@@ -474,6 +482,8 @@
                         </tr>
                     `;
                 });
+            } else {
+                console.error("Access Denied to User List (Check your Role/Headers)");
             }
 
             // B. LOAD TOPICS
@@ -510,18 +520,20 @@
             if(inbox.length === 0) inboxDiv.innerHTML = '<div style="color:#777">No pending reviews.</div>';
 
             inbox.forEach(item => {
+                // Ensure USER_ID_MAP is populated by renderRiskTable before this runs
                 const safeName = USER_ID_MAP[item.student] || "Student-X";
+                
                 inboxDiv.innerHTML += `
                     <div style="border:1px solid #eee; padding:15px; border-radius:8px; background:#fff;">
                         <div style="font-weight:bold; color:#2c3e50; margin-bottom:5px;">
-                            From: <span style="font-family:monospace">${safeName}</span>
+                            From: <span style="font-family:monospace; color:#8e44ad;">${safeName}</span>
                         </div>
                         <div style="font-size:0.9rem; margin-bottom:10px; color:#555;">
                             <b>Q:</b> ${item.question}<br>
                             <b>A:</b> ${item.student_answer}
                         </div>
                         
-                        <textarea id="feedback-${item.id}" placeholder="Write feedback here..." style="width:100%; margin-bottom:5px; padding:5px;"></textarea>
+                        <textarea id="feedback-${item.id}" placeholder="Write feedback here..." style="width:100%; margin-bottom:5px; padding:5px; border:1px solid #ddd; border-radius:4px; font-family:inherit;"></textarea>
                         
                         <div style="display:flex; gap:10px;">
                             <button onclick="aiCheck('${item.id}', '${escape(item.student_answer)}')" style="background:#f1c40f; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">🤖 Check with AI</button>
