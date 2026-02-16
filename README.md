@@ -19,6 +19,30 @@ AI-Tutor is an advanced, intelligent tutoring system designed to help students m
 *   **Resource Management Pipeline:** Provides automated ingestion scripts for code samples and conceptual documents, ensuring the knowledge base remains current and expansive.
 *   **Performance Monitoring:** Includes built-in profiling tools to track agent latency and system performance, ensuring a responsive user experience.
 
+
+## System Agents
+
+| # | Agent Name                             | File             | Role               | Tools Used            | Purpose of Tools                                                      |
+| - | -------------------------------------- | ---------------- | ------------------ | --------------------- | --------------------------------------------------------------------- |
+| 1 | 🛡️ **The Sentinel**                   | `sentinel.py`    | The Bouncer        | **FastClassifier**    | Detects `SECURITY_RISK` intents                                       |
+|   |                                        |                  |                    | **SettingsManager**   | Checks if a topic (e.g., “Pointers”) is locked by the teacher         |
+|   |                                        |                  |                    | **Regex**             | Detects prompt injection patterns like “Ignore previous instructions” |
+| 2 | 🏗️ **Scaffolding Agent**              | `scaffolding.py` | The Lab Instructor | **HistoryManager**    | Reads/writes `active_plan` state (persistence)                        |
+|   |                                        |                  |                    | **VectorStore**       | Retrieves contextual information about coding problems                |
+|   |                                        |                  |                    | **KnowledgeManager**  | Awards XP when a plan is completed                                    |
+| 3 | 🧐 **The Examiner**                    | `examiner.py`    | The Quiz Master    | **Neo4jGraphDB**      | Fetches pre-generated Q&A pairs linked to concepts                    |
+|   |                                        |                  |                    | **HistoryManager**    | Tracks `awaiting_quiz_answer` state                                   |
+|   |                                        |                  |                    | **KnowledgeManager**  | Marks topic as “Mastered” if student passes                           |
+| 4 | 📝 **Code Reviewer**                   | `reviewer.py`    | The TA             | **VectorStore**       | Retrieves reference `.c` files for comparison                         |
+|   |                                        |                  |                    | **LLMInterface**      | Generates “Sandwich Feedback” (Good → Issue → Hint)                   |
+| 5 | 🎓 **Socratic Tutor**                  | `socratic.py`    | The Lecturer       | **VectorStore**       | Retrieves `.md` concept files                                         |
+|   |                                        |                  |                    | **Neo4jGraphDB**      | Checks prerequisite knowledge (e.g., arrays before pointers)          |
+|   |                                        |                  |                    | **KnowledgeManager**  | Personalizes explanations based on user mastery                       |
+| 6 | 📊 **The Analyst** (Background)        | —                | Data Scientist     | **HistoryManager**    | Aggregates chat logs                                                  |
+|   |                                        |                  |                    | **Risk Algorithm**    | Calculates “High Risk” based on errors & inactivity                   |
+| 7 | 🤖 **Teaching Assistant** (Background) | —                | The Grader         | **AssignmentManager** | Retrieves pending submissions                                         |
+|   |                                        |                  |                    | **LLMInterface**      | Auto-grades when teacher selects “Check with AI”                      |
+
 ---
 
 # AI-Tutor Deployment Guide
@@ -97,3 +121,4 @@ sudo docker-compose logs -f backend
 *   **Rollback:** If the deployment fails, stop the containers, delete the failed `AI-Tutor` folder, and rename your latest `AI-Tutor_backup_...` folder back to `AI-Tutor`.
 *   **Docker Cleanup:** If the disk space on the server runs low due to multiple builds, run `sudo docker system prune -f` to remove unused data.
 *   **Vector DB:** Note that `database/chroma_db/` is excluded from the zip. Ensure the remote database is persisted via Docker volumes or handled separately if schema changes occur.
+
