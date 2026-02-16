@@ -11,6 +11,15 @@ from app.db.graph_db import Neo4jGraphDB
 from app.core.user_knowledge_manager import knowledge_manager
 
 class SocraticTutorAgent(BaseAgent):
+    """
+    The Socratic Tutor Agent is the primary "Teacher" in the system.
+    
+    It is responsible for:
+    1. Handling general concept questions (e.g., "What is a pointer?").
+    2. Retrieval-Augmented Generation (RAG) using both Vector Search and Knowledge Graph.
+    3. Generating Socratic explanations that guide students rather than just giving answers.
+    4. Auto-marking concepts as "Known" when a student asks about them (passive learning tracking).
+    """
     def __init__(self, llm, logger, vector_store: VectorStore, graph_db: Neo4jGraphDB):
         super().__init__(llm, logger)
         self.vector_store = vector_store
@@ -18,12 +27,22 @@ class SocraticTutorAgent(BaseAgent):
         self.llm_interface = llm
 
     async def process(self, state: AgentState) -> AsyncGenerator[dict, None]:
+        """
+        Main processing loop for the Socratic Agent.
+        
+        Args:
+            state (AgentState): The current state of the agent workflow.
+            
+        Yields:
+            dict: Workflow events.
+        """
         # This is the "Catch-All" agent, so it runs if no one else stopped processing.
         
         yield {"type": "status", "message": "Searching knowledge base...", "percent": 60}
         
         # 1. Retrieval
-        # Uses entities if available, otherwise query
+        # Uses entities if available, otherwise query.
+        # If query is long (>5 words), we use the entities string for better search results.
         q_search = f"{' '.join(state.entities)} in C" if len(state.query.split()) > 5 else state.query
         chunks = self._execute_retrieval(q_search, state.intent, state.user_role, state.entities)
         
@@ -36,17 +55,18 @@ class SocraticTutorAgent(BaseAgent):
         # 2. Build Context
         yield {"type": "status", "message": "Drafting response...", "percent": 80}
         
-        # Add User Context (Known concepts)
+        # Add User Context (Known concepts) to help LLM personalize
         known = knowledge_manager.get_known_concepts(state.user_id)
         user_context = f"USER CONTEXT: Student knows: {', '.join(known)}." if known else ""
         context_text = f"{user_context}\n\n" + "\n".join([f"--- Source: {c['metadata']['document_name']} ---\n{c['text']}" for c in chunks])
 
         # 3. Generate Suggestions (Parallel)
+        # We start this task early so it runs while the main answer is streaming.
         suggest_task = asyncio.create_task(asyncio.to_thread(self._generate_suggestions, state.query, context_text))
 
         # 4. Select Prompt based on Intent
         if state.intent == "DEBUG": 
-            # Reuse Socratic Plan prompt for debugging logic
+            # Reuse Socratic Plan prompt for debugging logic as it encourages step-by-step thinking
             prompt = self._build_socratic_plan_prompt(state.query, context_text, state.user_goal)
         else: 
             # Default to Concept Explanation
@@ -60,6 +80,7 @@ class SocraticTutorAgent(BaseAgent):
             yield {"type": "token", "text": token}
 
         # 6. Auto-Learn (If Concept)
+        # If the user asked about a specific concept, we assume they are learning it now.
         if state.intent == "CONCEPT" and state.entities:
              knowledge_manager.mark_concept_as_known(state.user_id, state.entities[0])
 
@@ -80,6 +101,10 @@ class SocraticTutorAgent(BaseAgent):
     # --- HELPERS (Moved from main file) ---
     
     def _expand_query_using_graph(self, query: str, initial_entities: List[str]) -> List[str]:
+        """
+        Uses Neo4j Knowledge Graph to find related concepts or prerequisites.
+        Result is used to expand the vector search query.
+        """
         expanded_terms = []
         if not initial_entities:
             return []
@@ -98,15 +123,28 @@ class SocraticTutorAgent(BaseAgent):
         return list(set(expanded_terms))
         
     def _execute_retrieval(self, query: str, intent: str, user_role: str = 'student', existing_entities: List[str] = None) -> List[Dict[str, Any]]:
+        """
+        Executes the Hybrid Retrieval Strategy:
+        1. Extract Entities (if not provided).
+        2. Expand Query using Knowledge Graph (Graph Retrieval).
+        3. Search Vector Database (Vector Retrieval).
+        4. Apply Gatekeeping (Topic Locks & Access Levels).
+        """
         if existing_entities:
             entities = existing_entities
         else:
             extract_prompt = f"Extract C terms: '{query}'. Return CSV."
             entities_str = self.llm_interface.generate_response(extract_prompt)
             entities = [e.strip() for e in entities_str.split(',') if e.strip()]
+            
+        # Graph Expansion
         related_terms = self._expand_query_using_graph(query, entities)
+        
+        # Vector Search (Primary)
         query_embedding = self.llm_interface.get_embedding(query)
         raw_chunks = self.vector_store.query(query_embedding, top_k=8)
+        
+        # Vector Search (Expanded)
         if related_terms:
             exp_emb = self.llm_interface.get_embedding(" ".join(related_terms))
             raw_chunks.extend(self.vector_store.query(exp_emb, top_k=3))
@@ -115,22 +153,33 @@ class SocraticTutorAgent(BaseAgent):
         from app.core.settings_manager import settings_manager
         topic_settings = settings_manager.get_settings()
         SCORE_THRESHOLD = 0.22 
+        
         valid_chunks = []
         seen_ids = set()
+        
         for chunk in raw_chunks:
             cid = chunk.get('metadata', {}).get('chunk_id')
             if cid in seen_ids: continue
             seen_ids.add(cid)
+            
             meta = chunk.get('metadata', {})
+            
+            # Filter low relevance
             if chunk.get('score', 0) <= SCORE_THRESHOLD: continue
+            
+            # Filter Teacher-Only content
             if user_role == 'student' and meta.get('access_level') == 'teacher': continue
+            
+            # Filter Locked Topics
             topic = meta.get('topic', 'General')
-            if not topic_settings.get(topic, True): continue
+            if not topic_settings.get(topic, True): continue # Skip if topic is disabled
+            
             valid_chunks.append(chunk)
+            
         return valid_chunks
 
     def _generate_suggestions(self, query: str, context: str) -> List[str]:
-        # Same as before
+        """Generates 3 follow-up suggestions based on the context."""
         prompt = f"Based on the student's query and the Reference Material below, generate 3 short follow-up options.\nQuery: \"{query}\"\nReference Material: \"{context}\"\nRULES: 1. STRICT GROUNDING. 2. Option 1 (Curiosity). 3. Option 2 (Next Step). 4. Option 3 (Challenge).\nOUTPUT: Return ONLY a JSON list of 3 strings."
         response = self.llm_interface.generate_response(prompt)
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())

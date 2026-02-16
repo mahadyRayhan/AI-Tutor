@@ -13,6 +13,16 @@ from app.db.vector_store import VectorStore
 from app.db.graph_db import Neo4jGraphDB
 
 class ScaffoldingAgent(BaseAgent):
+    """
+    The Scaffolding Agent is responsible for breaking down complex problems into manageable steps (Scaffolding).
+    
+    It handles:
+    1. Detecting complex problem-solving requests (e.g., "Write a program to...").
+    2. Generating a step-by-step implementation plan using the LLM.
+    3. storing the plan in the session state.
+    4. Guiding the student through each step, validating their progress.
+    5. Awarding XP/Mastery upon completion of the entire plan.
+    """
     def __init__(self, llm, logger, vector_store: VectorStore, graph_db: Neo4jGraphDB):
         super().__init__(llm, logger)
         self.vector_store = vector_store
@@ -20,30 +30,39 @@ class ScaffoldingAgent(BaseAgent):
 
     async def process(self, state: AgentState) -> AsyncGenerator[dict, None]:
         """
-        Handles both CREATING a new plan and CONTINUING an active plan.
+        Main processing loop for the Scaffolding Agent.
+        
+        Args:
+            state (AgentState): The current state of the agent workflow.
+            
+        Yields:
+            dict: Workflow events.
         """
         # 1. Check if a plan is already active for this user/session
         current_session_state = history_manager.get_session_state(state.user_id, state.session_id)
         active_plan = current_session_state.get("active_plan")
 
         if active_plan and active_plan.get("is_active"):
+            # If so, continue the existing plan
             async for event in self._continue_plan(state, active_plan):
                 yield event
             state.stop_processing = True
             return
 
         # 2. Check for NEW Plan Trigger
-        # We look for explicit "Write a program" requests OR "PROBLEM" intent with complexity
+        # We look for explicit "Write a program" requests OR "PROBLEM" intent with sufficient complexity
         strong_keywords = ["write a program", "write a c program", "create a program", "exercise", "code for", "solve"]
         is_explicit_problem = any(k in state.query.lower() for k in strong_keywords)
         
-        is_complex = len(state.query.split()) > 8 # Simple heuristic for complexity
+        # Simple heuristic: If query is long (>8 words), it might need breakdown
+        is_complex = len(state.query.split()) > 8 
         
         should_trigger = (state.intent == "PROBLEM" and is_complex) or is_explicit_problem
 
         if should_trigger:
-            # Force intent to PROBLEM in case it was misclassified
+            # Force intent to PROBLEM for consistency
             state.intent = "PROBLEM"
+            # Start a new guided plan
             async for event in self._start_new_plan(state):
                 yield event
             state.stop_processing = True
@@ -51,6 +70,14 @@ class ScaffoldingAgent(BaseAgent):
 
     # --- INTERNAL LOGIC: START PLAN ---
     async def _start_new_plan(self, state: AgentState):
+        """
+        Initiates a new guided learning plan.
+        
+        1. Searches for context about the problem.
+        2. Generates a breakdown of steps using the LLM.
+        3. Saves the plan to the persistent session state.
+        4. Presents the first step to the user.
+        """
         yield {"type": "status", "message": "Planning & Searching...", "percent": 30}
         
         # Parallel Execution: Retrieve Context + Generate Steps
@@ -59,7 +86,7 @@ class ScaffoldingAgent(BaseAgent):
             asyncio.to_thread(self._internal_retrieval, state.query, state.intent, state.user_role, state.entities)
         )
         
-        # 2. Planning Task
+        # 2. Planning Task (The "Brain" of the operation)
         plan_task = asyncio.create_task(
             asyncio.to_thread(self._generate_step_by_step_plan, state.query, "Standard C Programming Context")
         )
@@ -90,7 +117,10 @@ class ScaffoldingAgent(BaseAgent):
 
     # --- INTERNAL LOGIC: CONTINUE PLAN ---
     async def _continue_plan(self, state: AgentState, active_plan):
-        # Exit Check
+        """
+        Evaluates the user's response to the current step and moves to the next one if valid.
+        """
+        # Exit Check (User wants to bail out)
         if any(w in state.query.lower() for w in ["stop", "cancel", "quit", "reset"]):
             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
             yield {"type": "complete", "data": {"answer": "Guided mode cancelled.", "sources": [], "intent": "General"}}
@@ -107,7 +137,7 @@ class ScaffoldingAgent(BaseAgent):
         chunks = self._internal_retrieval(search_q, "DEBUG", state.user_role, [])
         context_text = "\n".join([c['text'] for c in chunks])
 
-        # LLM Evaluation
+        # LLM Evaluation of the student's work
         evaluation = self._evaluate_step_progress(state.query, current_step, context_text)
         answer_text = evaluation['feedback']
         
@@ -117,7 +147,7 @@ class ScaffoldingAgent(BaseAgent):
         if evaluation['status'] == "PASS":
             idx += 1
             if idx >= len(steps):
-                # ALL STEPS DONE
+                # ALL STEPS DONE - Victory Lap
                 answer_text += "\n\n🎉 **Problem Solved!** You've completed all steps. Excellent work."
                 
                 # Award XP
@@ -129,13 +159,13 @@ class ScaffoldingAgent(BaseAgent):
                 # Clear State
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
             else:
-                # NEXT STEP
+                # MOVE TO NEXT STEP
                 next_step = steps[idx]
                 answer_text += f"\n\n---\n### Next Step ({idx+1}/{len(steps)}): {next_step['goal']}\n{next_step['description']}"
                 active_plan['current_step_index'] = idx
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
         else:
-            # FAILURE / HINT
+            # FAILURE / HINT - Provide help
             if evaluation.get('visual_aid'):
                 clean_visual = self._clean_guided_visual(evaluation['visual_aid'])
                 answer_text += f"\n\nHere is a visual aid:\n```mermaid\n{clean_visual}\n```"
@@ -156,6 +186,7 @@ class ScaffoldingAgent(BaseAgent):
     # --- PROMPTS AND HELPERS ---
 
     def _generate_step_by_step_plan(self, query: str, context: str) -> List[Dict[str, str]]:
+        """Generates a JSON plan of 3-6 steps."""
         prompt = f"""
         You are a C Programming Curriculum Designer.
         Problem: "{query}"
@@ -187,6 +218,7 @@ class ScaffoldingAgent(BaseAgent):
             return [{"goal": "Solve the problem", "description": "Let's write the code together.", "verification_criteria": "Code validity"}]
 
     def _evaluate_step_progress(self, user_input: str, current_step: Dict, context: str) -> Dict[str, Any]:
+        """Evaluates student progress on the current step."""
         prompt = f"""
         You are a C Tutor guiding a student.
         
