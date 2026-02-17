@@ -24,6 +24,7 @@ from app.agents.scaffolding import ScaffoldingAgent
 from app.agents.examiner import ExaminerAgent
 from app.agents.reviewer import CodeReviewerAgent
 from app.agents.socratic import SocraticTutorAgent
+from app.db.sqlite_db import db
 
 import nltk
 from nltk.corpus import stopwords
@@ -656,13 +657,17 @@ class ChainOfThoughtRAGAgent:
         else:
             search_query = query
 
+        user_row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
+        learning_profile = json.loads(user_row['learning_profile']) if user_row and user_row['learning_profile'] else {}
+
         # INITIALIZE SHARED STATE
         state = AgentState(
             query=search_query,
             user_id=username,
             session_id=session_id,
             user_role=user_role,
-            user_goal=user_goal
+            user_goal=user_goal,
+            profile=learning_profile
         )
 
         # ---------------------------------------------------------
@@ -708,3 +713,14 @@ class ChainOfThoughtRAGAgent:
         # If no other agent handled it, the Socratic Tutor explains the concept.
         async for event in self.socratic.process(state):
             yield event
+
+        # Fire-and-forget sentiment analysis
+        asyncio.create_task(
+            self.profiler.analyze_sentiment(username, query)
+        )
+        
+        # Occasional deep profiling (e.g., 10% chance or every N messages)
+        if random.random() < 0.1:
+            asyncio.create_task(
+                self.profiler.update_learning_profile(username)
+            )

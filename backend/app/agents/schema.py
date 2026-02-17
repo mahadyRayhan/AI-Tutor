@@ -7,6 +7,7 @@ class AgentState(BaseModel):
     session_id: str
     user_role: str = "student"
     user_goal: Optional[str] = None
+    profile: Dict[str, Any] = {} # e.g. {"attention_span": "short"}
     
     # Internal State (Passed between agents)
     intent: Optional[str] = None

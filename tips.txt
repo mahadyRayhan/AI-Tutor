@@ -287,3 +287,134 @@ The system currently tracks *what* they ask. It should track *how often they fai
 1.  **Immediate (Software):** Implement **Feature 3 (Personalization)**. It requires minimal code but drastically changes the "vibe" of the chat.
 2.  **Short Term (Logic):** Implement **Feature 2 (Spaced Repetition)**. Add a timestamp to your `user_knowledge.json` entries (`{"topic": "Arrays", "date": "2023-10-27"}`) and check it on login.
 3.  **Long Term (Frontend):** Build **Feature 1 (The Graph UI)**. This is the "Killer Feature" for the Student Dashboard.
+
+### DB
+You are asking the right question. The "Saving" part (INSERT) is easy. The **"Retrieval"** part (SELECT) is where the complexity lies, especially for your Dashboards.
+
+Currently, your `main.py` does a lot of **"Python Loop Filtering"** (e.g., loading a huge JSON list and looping through it to count "DEBUG" intents).
+
+When you switch to SQLite, you have two choices:
+1.  **The Lazy Way:** Fetch all rows into Python and loop through them (same logic as JSON, just different loading).
+2.  **The Efficient Way:** Let SQL do the filtering (using `WHERE`, `COUNT`, etc.).
+
+Here is how you specifically handle the **Retrieval Logic** for your Dashboards in `sqlite_db`.
+
+---
+
+### **1. Updating `HistoryManager` for Dashboards**
+
+Your dashboards rely heavily on `get_student_history` and `get_user_sessions_list`.
+
+**Old (JSON):**
+```python
+def get_student_history(self, username):
+    # Loads entire file into RAM, filters via list comprehension
+    with open(ANALYTICS_FILE, 'r') as f:
+        history = json.load(f)
+    return [h for h in history if h['username'] == username]
+```
+
+**New (SQLite):**
+You need to join the `sessions` table with the `messages` table to get a flat list for analytics.
+
+```python
+class HistoryManager:
+    # ... (insert methods) ...
+
+    def get_student_history(self, username: str) -> List[Dict]:
+        """
+        Used by Analytics/Risk Matrix. 
+        Reconstructs the flat list of interactions from SQL tables.
+        """
+        query = """
+            SELECT 
+                m.content as query,
+                m.timestamp,
+                m.intent, -- You need to ensure you save 'intent' in messages table
+                m.role
+            FROM messages m
+            JOIN sessions s ON m.session_id = s.session_id
+            WHERE s.user_id = ? AND m.role = 'user'
+            ORDER BY m.timestamp ASC
+        """
+        rows = db.fetch_all(query, (username,))
+        
+        # Convert SQL Row objects to Dictionaries so main.py logic still works
+        return [dict(row) for row in rows]
+
+    def get_user_sessions_list(self, username: str) -> List[Dict]:
+        """
+        Used by Student Sidebar.
+        """
+        query = """
+            SELECT session_id as id, title, created_at as date 
+            FROM sessions 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC
+        """
+        rows = db.fetch_all(query, (username,))
+        return [dict(row) for row in rows]
+```
+
+---
+
+### **2. Updating `AssignmentManager` for Teacher Inbox**
+
+The teacher inbox expects a specific dictionary structure. You must manually reconstruct the JSON fields.
+
+**New (SQLite):**
+```python
+class AssignmentManager:
+    # ... (create methods) ...
+
+    def get_pending_reviews(self, teacher: str):
+        query = """
+            SELECT * FROM assignments 
+            WHERE teacher_id = ? AND status = 'SUBMITTED'
+        """
+        rows = db.fetch_all(query, (teacher,))
+        
+        results = []
+        for row in rows:
+            item = dict(row)
+            # Map SQL column names to what your Frontend expects
+            results.append({
+                "id": item['id'],
+                "student": item['student_id'],
+                "question": item['question'],
+                "student_answer": item['answer'],
+                "status": item['status']
+            })
+        return results
+```
+
+---
+
+### **3. The "Gotcha" (JSON Columns)**
+
+SQLite stores JSON (like `metadata`, `sources`, or `active_plan`) as **Text strings**.
+
+When you retrieve them, you **MUST** convert them back to Python Dictionaries, or your code will crash trying to access `active_plan['steps']`.
+
+**Example: Retrieving Session State**
+```python
+    def get_session_state(self, username, session_id):
+        row = db.fetch_one("SELECT state FROM sessions WHERE session_id = ?", (session_id,))
+        
+        if row and row['state']:
+            # CRITICAL: Convert String back to Dict
+            return json.loads(row['state']) 
+            
+        return {} # Return empty dict if null
+```
+
+### **Summary of the Work Required**
+
+1.  **`db/sqlite_db.py`**: Create the Table definitions (Code provided in previous step).
+2.  **`core/user_manager.py`**: Change `json.load/dump` to `INSERT/SELECT`.
+3.  **`core/assignment_manager.py`**: Change to `INSERT/SELECT`.
+4.  **`core/history_manager.py`**: This is the hardest one. You need to ensure you are saving `intent` and `topic` into the `messages` table if you want the "Risk Matrix" to calculate correctly.
+
+**Recommendation:**
+If you are close to the paper deadline, **stick with JSON**. It is working.
+If you have 2-3 days, **switch to SQLite**. It makes the "System Implementation" section of your paper much stronger because you can talk about "Relational Data Modeling" and "ACID Compliance."

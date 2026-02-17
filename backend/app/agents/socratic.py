@@ -185,19 +185,31 @@ class SocraticTutorAgent(BaseAgent):
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())
         except: return ["Tell me more", "Example code", "Challenge: Write it"]
 
-    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}) -> str:
         goal_section = ""
         if user_goal:
             goal_section = f"""
             6. **GOAL CONNECTION (CRITICAL):** The student's goal is: "{user_goal}". 
                - You MUST explicitly explain how the current concept helps them achieve "{user_goal}".
             """
+        # Dynamic Style Injection
+        style_instruction = "Standard academic tone."
+        if profile.get("attention_span") == "short":
+            style_instruction = "EXTREMELY CONCISE. Use bullet points. No paragraphs longer than 2 sentences. The user loses focus easily."
+        
+        if profile.get("preferred_modality") == "visual":
+            style_instruction += " PRIORITY: Generate a Mermaid Diagram FIRST, then explain textually."
+            
+        if profile.get("frustration_level") == "high":
+            style_instruction += " TONE: Highly encouraging, patient, and gentle. Validate their effort."
+
         return f"""
         You are an expert C Programming Tutor.
         
         Student Query: "{query}"
         User's Goal: "{user_goal if user_goal else 'None'}"
         Reference Material: {context}
+        **ADAPTIVE STYLE INSTRUCTIONS:**{style_instruction}
 
         **MANDATORY RULES:**
         1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information..."

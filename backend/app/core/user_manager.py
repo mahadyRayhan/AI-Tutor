@@ -1,122 +1,68 @@
 # backend/app/core/user_manager.py
-import json
-import os
+
+from datetime import datetime
 from typing import Optional, Dict, List
 from passlib.context import CryptContext
+from app.db.sqlite_db import db # Import our new DB logic
 
-# Using relative path logic
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-DB_PATH = os.path.join(BASE_DIR, "database", "users.json")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class UserManager:
     def __init__(self):
-        self.db_path = DB_PATH
-        self._ensure_db_exists()
+        # Create default admin if not exists
+        self._ensure_admin_exists()
 
-    def _ensure_db_exists(self):
-        if not os.path.exists(self.db_path):
-            # Create default admin if file doesn't exist
-            default_data = {
-                "teacher1": {
-                    "password": "admin123",
-                    "role": "teacher",
-                    "blocked": False,
-                    "name": "Default Teacher",
-                    "email": "teacher@university.edu"
-                }
-            }
-            self._save_db(default_data)
-
-    def _load_db(self) -> Dict:
+    def _ensure_admin_exists(self):
         try:
-            with open(self.db_path, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-
-    def _save_db(self, data: Dict):
-        with open(self.db_path, 'w') as f:
-            json.dump(data, f, indent=4)
+            hashed = pwd_context.hash("admin123")
+            # INSERT OR IGNORE means "do nothing if teacher1 exists"
+            db.execute("""
+                INSERT OR IGNORE INTO users (username, password_hash, role, name, email, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, ("teacher1", hashed, "teacher", "Default Teacher", "teacher@edu.com", datetime.now()))
+        except Exception as e:
+            print(f"Error creating default admin: {e}")
 
     def authenticate(self, username, password) -> Optional[Dict]:
-        users = self._load_db()
-        user = users.get(username)
+        row = db.fetch_one("SELECT * FROM users WHERE username = ?", (username,))
         
-        if not user: return None
-        if user.get('blocked', False): raise Exception("Account Blocked")
+        if not row: return None
+        if row['is_blocked']: raise Exception("Account Blocked")
 
-        # VERIFY HASH
-        stored_pw = user.get('password')
-        # Handle backward compatibility (if you have old plain text passwords)
-        if not stored_pw.startswith('$2b$'): 
-            # If plain text matches, upgrade to hash immediately
-            if stored_pw == password:
-                user['password'] = pwd_context.hash(password)
-                self._save_db(users)
-                return self._sanitize_user(user, username)
-            return None
-
-        if pwd_context.verify(password, stored_pw):
-            return self._sanitize_user(user, username)
-            
+        if pwd_context.verify(password, row['password_hash']):
+            return {
+                "username": row['username'],
+                "role": row['role'],
+                "name": row['name']
+            }
         return None
 
     def create_user(self, username, password, role="student", **kwargs) -> bool:
-        """Creates a new user. Returns False if username exists."""
-        users = self._load_db()
-        if username in users:
-            return False
+        # Check if exists
+        exists = db.fetch_one("SELECT 1 FROM users WHERE username = ?", (username,))
+        if exists: return False
         
-        # HASH THE PASSWORD BEFORE SAVING
         hashed_pw = pwd_context.hash(password)
-        users[username] = {
-            "password": hashed_pw,
-            "role": role,
-            "blocked": False,
-            "name": kwargs.get("name", ""),
-            "email": kwargs.get("email", ""),
-            "university": kwargs.get("university", ""),
-            "department": kwargs.get("department", ""),
-            "interest": kwargs.get("interest", "")
-        }
-        self._save_db(users)
-        return True
-
-    def _sanitize_user(self, user_data, username):
-        """Never return the password field to the API"""
-        return {
-            "username": username,
-            "role": user_data.get('role'),
-            "name": user_data.get('name'),
-            "email": user_data.get('email')
-        }
+        
+        try:
+            db.execute("""
+                INSERT INTO users (username, password_hash, role, name, email, university, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (username, hashed_pw, role, kwargs.get("name"), kwargs.get("email"), kwargs.get("university"), datetime.now()))
+            return True
+        except Exception as e:
+            print(f"Signup error: {e}")
+            return False
 
     def get_all_users(self) -> List[Dict]:
-        """Returns list of all users for Admin Panel."""
-        users = self._load_db()
-        result = []
-        for uname, data in users.items():
-            result.append({
-                "username": uname,
-                "role": data.get("role", "student"),
-                "blocked": data.get("blocked", False),
-                "name": data.get("name", ""),
-                "email": data.get("email", ""),
-                "university": data.get("university", "")
-            })
-        return result
+        rows = db.fetch_all("SELECT username, role, name, email, university, is_blocked FROM users")
+        return [dict(row) for row in rows]
 
     def update_user_status(self, username: str, role: str = None, blocked: bool = None):
-        """Admin function to change role or block status."""
-        users = self._load_db()
-        if username in users:
-            if role:
-                users[username]['role'] = role
-            if blocked is not None:
-                users[username]['blocked'] = blocked
-            self._save_db(users)
-            return True
-        return False
+        if role:
+            db.execute("UPDATE users SET role = ? WHERE username = ?", (role, username))
+        if blocked is not None:
+            db.execute("UPDATE users SET is_blocked = ? WHERE username = ?", (blocked, username))
+        return True
 
 user_manager = UserManager()

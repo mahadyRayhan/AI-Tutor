@@ -33,6 +33,7 @@ from app.core.user_manager import user_manager
 from app.core.history_manager import history_manager
 from app.core.user_knowledge_manager import knowledge_manager
 from app.core.assignment_manager import assignment_manager
+from app.db.sqlite_db import db
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -635,39 +636,31 @@ async def upload_resource(
 @app.get("/api/v1/analytics/teacher/overview")
 async def get_teacher_analytics():
     """
-    Returns global class stats.
+    Returns global class stats using SQL aggregation.
     """
-    # Load all history
-    import json
-    from app.core import config
-    history_path = config.PROJECT_ROOT / "database" / "chat_history.json"
+    # 1. Fetch all analytics data (Intent and Topic)
+    # We only care about messages where intent/topic were actually logged
+    rows = db.fetch_all("SELECT topic, intent FROM messages WHERE topic IS NOT NULL")
     
-    if not history_path.exists():
-        return {"topics": {}, "struggles": []}
-        
-    with open(history_path, 'r') as f:
-        history = json.load(f)
-        
-    # 1. Topic Popularity
+    # 2. Process in Python (keeping your existing logic logic)
     topic_counts = {}
-    # 2. Struggle Detection (Intent = REVIEW or DEBUG)
     struggle_counts = {}
     
-    for h in history:
-        topic = h.get('topic', 'General')
-        intent = h.get('intent', 'UNKNOWN')
+    for r in rows:
+        topic = r['topic'] or 'General'
+        intent = r['intent'] or 'UNKNOWN'
         
         # Count Topics
         topic_counts[topic] = topic_counts.get(topic, 0) + 1
         
-        # Count Struggles
+        # Count Struggles (DEBUG or REVIEW)
         if intent in ['REVIEW', 'DEBUG']:
             struggle_counts[topic] = struggle_counts.get(topic, 0) + 1
 
     return {
         "popular_topics": topic_counts,
         "struggle_areas": struggle_counts,
-        "total_interactions": len(history)
+        "total_interactions": len(rows)
     }
     
 @app.get("/api/v1/analytics/teacher/detailed")

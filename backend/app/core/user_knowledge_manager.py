@@ -1,95 +1,42 @@
 # backend/app/core/user_knowledge_manager.py
-import json
-import os
-from typing import List, Set
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-KNOWLEDGE_FILE = os.path.join(BASE_DIR, "database", "user_knowledge.json")
+from datetime import datetime
+from typing import List
+from app.db.sqlite_db import db
 
 class UserKnowledgeManager:
-    def __init__(self):
-        self.file_path = KNOWLEDGE_FILE
-        self._ensure_file_exists()
-
-    def _ensure_file_exists(self):
-        if not os.path.exists(self.file_path):
-            with open(self.file_path, 'w') as f:
-                json.dump({}, f)
-
-    def _load_db(self) -> dict:
-        try:
-            with open(self.file_path, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-
-    def _save_db(self, data: dict):
-        with open(self.file_path, 'w') as f:
-            json.dump(data, f, indent=2)
-
     def get_known_concepts(self, username: str) -> List[str]:
-        data = self._load_db()
-        return data.get(username, [])
+        """Returns list of concepts the user has mastered."""
+        rows = db.fetch_all("SELECT concept FROM user_knowledge WHERE username = ?", (username,))
+        return [r['concept'] for r in rows]
 
     def mark_concept_as_known(self, username: str, concept: str):
-        """Adds a concept to the user's known list."""
-        data = self._load_db()
-        user_knowledge = set(data.get(username, []))
-        
-        # Normalize string (simple lowercase check)
-        user_knowledge.add(concept)
-        
-        data[username] = list(user_knowledge)
-        self._save_db(data)
+        """Adds a concept to the DB (Ignores duplicates)."""
+        # INSERT OR IGNORE handles deduplication automatically based on PRIMARY KEY
+        db.execute("""
+            INSERT OR IGNORE INTO user_knowledge (username, concept, timestamp)
+            VALUES (?, ?, ?)
+        """, (username, concept, datetime.now()))
 
     def has_mastered(self, username: str, concept: str) -> bool:
+        """Checks if a concept is known (Fuzzy match)."""
+        # Get all known concepts
         known = self.get_known_concepts(username)
-        # Simple fuzzy match
-        return any(concept.lower() in k.lower() for k in known)
+        # Check for partial match (e.g. "Arrays" matches "Array Declaration")
+        concept_lower = concept.lower()
+        return any(concept_lower in k.lower() or k.lower() in concept_lower for k in known)
     
     def set_goal(self, username: str, goal: str):
-        data = self._load_db()
-        # Initialize user dict if new
-        if username not in data: 
-            # Note: Changing structure slightly. 
-            # Old: data[username] = ["concept1"]
-            # New: data[username] = {"known": ["concept1"], "goal": "Master Loops"}
-            # We need to migrate gracefully.
-            data[username] = {"known": [], "goal": goal}
-        elif isinstance(data[username], list):
-            # Migration logic for existing users
-            data[username] = {"known": data[username], "goal": goal}
+        """Upsert user goal."""
+        # Check if exists
+        exists = db.fetch_one("SELECT 1 FROM user_goals WHERE username = ?", (username,))
+        if exists:
+            db.execute("UPDATE user_goals SET goal_text = ?, updated_at = ? WHERE username = ?", (goal, datetime.now(), username))
         else:
-            data[username]["goal"] = goal
-            
-        self._save_db(data)
+            db.execute("INSERT INTO user_goals (username, goal_text, updated_at) VALUES (?, ?, ?)", (username, goal, datetime.now()))
 
     def get_goal(self, username: str) -> str:
-        data = self._load_db()
-        user_data = data.get(username, {})
-        if isinstance(user_data, list): return None # Legacy format
-        return user_data.get("goal")
-
-    # UPDATE get/mark methods to handle the new dict structure
-    def get_known_concepts(self, username: str) -> List[str]:
-        data = self._load_db()
-        user_data = data.get(username, [])
-        if isinstance(user_data, list): return user_data
-        return user_data.get("known", [])
-
-    def mark_concept_as_known(self, username: str, concept: str):
-        data = self._load_db()
-        user_data = data.get(username, {"known": [], "goal": None})
-        
-        # Handle legacy list format
-        if isinstance(user_data, list): 
-            user_data = {"known": user_data, "goal": None}
-            
-        known_set = set(user_data["known"])
-        known_set.add(concept)
-        user_data["known"] = list(known_set)
-        
-        data[username] = user_data
-        self._save_db(data)
+        row = db.fetch_one("SELECT goal_text FROM user_goals WHERE username = ?", (username,))
+        return row['goal_text'] if row else None
 
 knowledge_manager = UserKnowledgeManager()
