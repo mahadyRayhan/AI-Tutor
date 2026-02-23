@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 
 class AgentState(BaseModel):
     query: str
+    original_query: str = ""
     user_id: str
     session_id: str
     user_role: str = "student"

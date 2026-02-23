@@ -25,6 +25,7 @@ from app.agents.examiner import ExaminerAgent
 from app.agents.reviewer import CodeReviewerAgent
 from app.agents.socratic import SocraticTutorAgent
 from app.db.sqlite_db import db
+from app.agents.profiler import ProfilerAgent
 
 import nltk
 from nltk.corpus import stopwords
@@ -46,62 +47,126 @@ class CoTStep:
     confidence: float
 
 class ChainOfThoughtRAGAgent:
-    def __init__(self, llm_interface: LLMInterface, vector_store: VectorStore, graph_db: Neo4jGraphDB, logger: logging.Logger):
-        self.llm_interface = llm_interface
+    # def __init__(self, llm_interface: LLMInterface, vector_store: VectorStore, graph_db: Neo4jGraphDB, logger: logging.Logger):
+    def __init__(self, llm_fast: LLMInterface, llm_smart: LLMInterface, vector_store: VectorStore, graph_db: Neo4jGraphDB, logger: logging.Logger):
+        self.llm_fast = llm_fast
+        self.llm_smart = llm_smart
         self.vector_store = vector_store
         self.graph_db = graph_db
         self.logger = logger
-        self.sentinel = SentinelAgent(llm_interface, logger)
-        self.scaffolding = ScaffoldingAgent(llm_interface, logger, vector_store, graph_db)
-        self.examiner = ExaminerAgent(llm_interface, logger, graph_db)
-        self.reviewer = CodeReviewerAgent(llm_interface, logger, vector_store)
-        self.socratic = SocraticTutorAgent(llm_interface, logger, vector_store, graph_db)
+        self.sentinel = SentinelAgent(llm_fast, logger)
+        self.scaffolding = ScaffoldingAgent(llm_smart, logger, vector_store, graph_db)
+        self.examiner = ExaminerAgent(llm_fast, logger, graph_db)
+        self.reviewer = CodeReviewerAgent(llm_smart, logger, vector_store)
+        self.socratic = SocraticTutorAgent(llm_fast, logger, vector_store, graph_db)
+        self.profiler = ProfilerAgent(llm_fast, logger)
 
-    async def _contextualize_query(self, current_query: str, username: str, session_id: str) -> str:
-        """
-        Rewrites the query to include context.
-        """
+    # async def _contextualize_query(self, current_query: str, username: str, session_id: str) -> str:
+    #     """
+    #     Rewrites the query to include context.
+    #     """
+    #     if not session_id: return current_query
+
+    #     session_data = history_manager.get_session_details(username, session_id)
+    #     if not session_data or not session_data.get('messages'): return current_query
+
+    #     # Get last 4 messages
+    #     msgs = session_data['messages'][-4:] 
+    #     history_str = ""
+    #     for m in msgs:
+    #         role = "Student" if m['role'] == 'user' else "Tutor"
+    #         history_str += f"{role}: {m['content']}\n"
+
+    #     self.logger.info(f"📜 Context History Length: {len(msgs)}")
+    #     if msgs:
+    #         self.logger.info(f"📜 Last Message: {msgs[-1]['content'][:500]}...")
+
+    #     # --- FIX: STRICTER CONTEXT PROMPT ---
+    #     prompt = f"""
+    #     Chat History:
+    #     {history_str}
+        
+    #     Latest Student Question: {current_query}
+        
+    #     Task: Rewrite the "Latest Student Question" into a standalone sentence.
+        
+    #     CRITICAL RULES:
+    #     1. If the student uses pronouns (it, this, that), refer back to the *STUDENT'S* previous topic, NOT the Tutor's technical explanation.
+    #        - Example History: 
+    #          Student: What is a loop? 
+    #          Tutor: A loop is Control Flow...
+    #          Student: What is its use case?
+    #        - CORRECT Rewrite: "What is the use case of a loop?"
+    #        - WRONG Rewrite: "What is the use case of Control Flow?"
+    #     2. Keep the original intent exactly.
+    #     3. Do NOT answer the question.
+        
+    #     Rewritten Question:
+    #     """
+        
+    #     try:
+    #         rewritten = await asyncio.to_thread(self.llm_interface.generate_response, prompt)
+    #         rewritten = rewritten.strip().replace('"', '')
+    #         # --- ADD THIS PRINT STATEMENT ---
+    #         print(f"\n🔍 [CONTEXTUALIZER] Input: '{current_query}' -> Rewritten: '{rewritten}'\n")
+    #         # --------------------------------
+    #         self.logger.info(f"🔄 Contextualized: '{current_query}' -> '{rewritten}'")
+    #         return rewritten
+    #     except Exception as e:
+    #         return current_query
+
+    async def _contextualize_query(self, current_query, username, session_id):
         if not session_id: return current_query
 
         session_data = history_manager.get_session_details(username, session_id)
         if not session_data or not session_data.get('messages'): return current_query
 
-        # Get last 4 messages
-        msgs = session_data['messages'][-4:] 
+        # --- FIX 1: EXCLUDE CURRENT MESSAGE ---
+        # main.py adds the user message BEFORE calling this. 
+        # We want history to be everything BEFORE that message.
+        all_msgs = session_data['messages']
+        
+        # Take the last 5 messages, EXCLUDING the very last one (which is current_query)
+        # format: [..., Bot, User, Bot, (Current_User_Msg)] -> we want up to the last Bot
+        relevant_msgs = all_msgs[:-1][-5:] 
+        
         history_str = ""
-        for m in msgs:
+        for m in relevant_msgs:
             role = "Student" if m['role'] == 'user' else "Tutor"
             history_str += f"{role}: {m['content']}\n"
+        # --------------------------------------
 
-        # --- FIX: STRICTER CONTEXT PROMPT ---
+        # LOGGING (Keep this for debugging)
+        # self.logger.info(f"📜 Context History ({len(relevant_msgs)} items): \n{history_str}")
+
+        # --- FIX 2: STRONGER PROMPT ---
         prompt = f"""
         Chat History:
         {history_str}
         
-        Latest Student Question: {current_query}
+        Latest User Input: "{current_query}"
         
-        Task: Rewrite the "Latest Student Question" into a standalone sentence.
+        **TASK:**
+        Rewrite the "Latest User Input" into a complete, standalone question.
         
-        CRITICAL RULES:
-        1. If the student uses pronouns (it, this, that), refer back to the *STUDENT'S* previous topic, NOT the Tutor's technical explanation.
-           - Example History: 
-             Student: What is a loop? 
-             Tutor: A loop is Control Flow...
-             Student: What is its use case?
-           - CORRECT Rewrite: "What is the use case of a loop?"
-           - WRONG Rewrite: "What is the use case of Control Flow?"
-        2. Keep the original intent exactly.
-        3. Do NOT answer the question.
+        **CRITICAL RULE:**
+        Look at the **LAST TUTOR MESSAGE** in the history.
+        If the user refers to "it", "this", or "the syntax", substitute it with the **Topic** of that Tutor message.
         
-        Rewritten Question:
+        **Examples:**
+        - History: [Tutor: "Arrays are lists..."] -> Input: "How do I declare it?" -> Rewrite: "How do I declare an **Array**?"
+        - History: [Tutor: "Variables store data..."] -> Input: "Give syntax" -> Rewrite: "Give syntax for **Variables**."
+
+        **Rewritten Question:**
         """
         
         try:
-            rewritten = await asyncio.to_thread(self.llm_interface.generate_response, prompt)
+            rewritten = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
             rewritten = rewritten.strip().replace('"', '')
             self.logger.info(f"🔄 Contextualized: '{current_query}' -> '{rewritten}'")
             return rewritten
         except Exception as e:
+            self.logger.error(f"Contextualization failed: {e}")
             return current_query
 
     def _classify_intent(self, query: str) -> str:
@@ -533,7 +598,7 @@ class ChainOfThoughtRAGAgent:
 
         return intent, entities
 
-    def _check_gatekeeping(self, query, intent, entities, username):
+    def _check_gatekeeping(self, query, intent, entities, username, session_id):
         # 1. Teacher Lock Check
         # from app.core.settings_manager import settings_manager
         # topic_settings = settings_manager.get_settings()
@@ -576,9 +641,15 @@ class ChainOfThoughtRAGAgent:
         # ---------------------------------------
         
         if unknown:
+            # --- FIX: SAVE THE USER'S GOAL ---
+            # We save "Explain Pointers" so we can remember it after the quiz
+            history_manager.update_session_state(username, session_id, {
+                "pending_goal": query 
+            })
+            # ---------------------------------
+
             btns = [f"Explain {p}" for p in unknown] + [f"I know {p} (Verify)" for p in unknown] + [f"Teach me {entities[0]} anyway"]
             
-            # Friendly Message
             topic_name = entities[0] if entities else 'this concept'
             prereq_list = "**, **".join(unknown)
             
@@ -646,23 +717,43 @@ class ChainOfThoughtRAGAgent:
         user_goal = kwargs.get('user_goal')
         session_id = kwargs.get('session_id')
         
-        # 0. CONTEXTUALIZATION
-        yield {"type": "status", "message": "Understanding context...", "percent": 5}
+        # --- 1. STATE FETCH & DEBUG ---
+        current_state = {}
+        if session_id:
+            current_state = history_manager.get_session_state(username, session_id)
+            
+        self.logger.info(f"🔄 [ORCHESTRATOR] Session: {session_id} | State: {current_state}")
+        
+        # --- 2. CONTEXT SKIP RULES ---
+        is_in_quiz = current_state.get("awaiting_quiz_answer", False)
+        
+        # Is there an active scaffolding plan? We shouldn't rewrite code answers either!
+        active_plan = current_state.get("active_plan", {})
+        is_in_plan = active_plan.get("is_active", False)
         
         is_force_teach = "teach me" in query.lower() and "anyway" in query.lower()
         is_verify_request = "verify" in query.lower() and "know" in query.lower()
         
-        if not is_force_teach and not is_verify_request:
+        should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan
+        
+        self.logger.info(f"🔄 [ORCHESTRATOR] Skip Context? {should_skip_context} (Quiz:{is_in_quiz}, Plan:{is_in_plan})")
+
+        # --- 3. CONTEXTUALIZATION ---
+        yield {"type": "status", "message": "Understanding context...", "percent": 5}
+        
+        if not should_skip_context:
             search_query = await self._contextualize_query(query, username, session_id)
         else:
+            self.logger.info(f"⏭️ Skipping Contextualization for: '{query}'")
             search_query = query
 
+        # --- 4. LOAD PROFILE & SETUP STATE ---
         user_row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
         learning_profile = json.loads(user_row['learning_profile']) if user_row and user_row['learning_profile'] else {}
 
-        # INITIALIZE SHARED STATE
         state = AgentState(
             query=search_query,
+            original_query=query, # CRITICAL: keep original
             user_id=username,
             session_id=session_id,
             user_role=user_role,
@@ -703,7 +794,7 @@ class ChainOfThoughtRAGAgent:
         # We check prerequisites before explaining a new concept.
         # We use state.intent/entities that were set by the Sentinel.
         gatekeeper_result = self._check_gatekeeping(
-            state.query, state.intent, state.entities, state.user_id
+            state.query, state.intent, state.entities, state.user_id, state.session_id
         )
         if gatekeeper_result:
             yield {"type": "complete", "data": gatekeeper_result}

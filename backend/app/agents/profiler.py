@@ -2,81 +2,128 @@
 
 import json
 import asyncio
+from typing import AsyncGenerator
+from transformers import pipeline
 from app.agents.base import BaseAgent
+from app.agents.schema import AgentState
 from app.db.sqlite_db import db
 
 class ProfilerAgent(BaseAgent):
     """
     The 'Psychologist' Agent.
-    Analyzes interaction patterns to detect Learning Preferences and Frustration.
+    Analyzes interaction patterns to detect Learning Preferences and Frustration
+    using SOTA Transformer models.
     """
-    
+    def __init__(self, llm, logger):
+        super().__init__(llm, logger)
+        
+        self.logger.info("🧠 Loading SOTA Profiling Models (DistilRoBERTa & DeBERTa)...")
+        
+        # 1. EMOTION DETECTION (Real-time)
+        # Model: DistilRoBERTa (Fast, ~50ms)
+        self.emotion_classifier = pipeline(
+            "text-classification", 
+            model="j-hartmann/emotion-english-distilroberta-base", 
+            top_k=1
+        )
+
+        # 2. BEHAVIORAL PROFILING (Batch)
+        # Model: DeBERTa v3 Small (Accurate, Zero-Shot)
+        # Note: 'cross-encoder' implies NLI task which pipeline handles efficiently
+        self.behavior_classifier = pipeline(
+            "zero-shot-classification",
+            model="cross-encoder/nli-deberta-v3-small"
+        )
+        
+        # Define the Traits we want to detect via NLI
+        self.learning_traits = [
+            "visual learner",       # Prefers diagrams
+            "verbal learner",       # Prefers text reading
+            "practical coder",      # Wants code examples
+            "impatient learner",    # Wants short answers
+            "detail oriented"       # Wants long answers
+        ]
+
+    async def process(self, state: AgentState) -> AsyncGenerator[dict, None]:
+        """
+        Satisfies BaseAgent interface. 
+        Profiler does not process the main chat stream directly.
+        """
+        return
+        yield {}
+
     async def analyze_sentiment(self, user_id: str, last_message: str):
         """
-        Real-time check: Is the user angry/frustrated right now?
+        Real-time Emotion Check.
+        Runs in ~50ms.
         """
-        prompt = f"""
-        Analyze the emotional tone of this student message.
-        Message: "{last_message}"
-        
-        Classify into one of: [NEUTRAL, CURIOUS, CONFUSED, FRUSTRATED, ANGRY, CELEBRATORY].
-        Return ONLY the word.
-        """
-        sentiment = self.llm.generate_response(prompt).strip().upper()
-        
-        if sentiment in ["FRUSTRATED", "ANGRY"]:
-            # Log immediate alert or adjust session state
-            print(f"⚠️ High Emotion Detected for {user_id}: {sentiment}")
-            return sentiment
-        return "NEUTRAL"
+        try:
+            # Run model
+            result = self.emotion_classifier(last_message)[0][0]
+            label = result['label'] # e.g., 'anger', 'joy', 'neutral'
+            score = result['score']
+
+            # Log significant frustration
+            if label in ['anger', 'disgust', 'sadness'] and score > 0.6:
+                self.logger.warning(f"⚠️ Frustration Detected for {user_id}: {label} ({score:.2f})")
+                return "FRUSTRATED"
+            
+            return "NEUTRAL"
+        except Exception as e:
+            self.logger.error(f"Sentiment Analysis Failed: {e}")
+            return "NEUTRAL"
 
     async def update_learning_profile(self, user_id: str):
         """
-        Batch process: Analyzes last 20 messages to detect Neurodiverse patterns.
-        Executed essentially as a background job.
+        Batch Profiling using Zero-Shot Classification.
+        Runs in background (~2s).
         """
-        # 1. Fetch History
+        self.logger.info(f"🧠 Running Deep Profiling for {user_id}...")
+        
+        # 1. Fetch recent history
         rows = db.fetch_all("""
-            SELECT role, content FROM messages 
-            WHERE username = ? 
-            ORDER BY id DESC LIMIT 20
+            SELECT content FROM messages 
+            WHERE username = ? AND role = 'user' 
+            ORDER BY id DESC LIMIT 15
         """, (user_id,))
         
-        if len(rows) < 5: return # Need data to profile
+        messages = [r['content'] for r in rows]
+        if len(messages) < 3: return # Need data
 
-        history_text = "\n".join([f"{r['role']}: {r['content']}" for r in rows])
+        # Concatenate into one context string
+        history_text = ". ".join(messages)
 
-        # 2. The "Implicit Profiling" Prompt
-        # We map behavior to adaptation strategies, NOT medical labels.
-        prompt = f"""
-        Analyze this student's interaction history to build a "Learning Profile".
-        
-        Chat History:
-        {history_text}
-
-        **DIAGNOSTIC CRITERIA:**
-        1. **Attention/Focus:** Does the user ask to repeat things? Do they ignore long text? (Possible Pattern: Short Attention/ADHD-like preference).
-        2. **Processing:** Do they ask for "simple terms" or "pictures"? (Possible Pattern: Visual Learner/Dyslexia-like preference).
-        3. **Emotional Resilience:** do they quit easily? Do they get frustrated at errors? (Pattern: Low Frustration Tolerance).
-        4. **Rigidity:** Do they ask the same question repeatedly expecting a specific format? (Pattern: High Structure Need).
-
-        **OUTPUT JSON:**
-        {{
-            "attention_span": "short" | "normal" | "long",
-            "preferred_modality": "text" | "visual" | "code_first",
-            "frustration_level": "low" | "medium" | "high",
-            "scaffolding_need": "high" | "low",
-            "detected_traits": ["list 2-3 observed behaviors, e.g. 'dislikes walls of text'"]
-        }}
-        """
-        
-        response = self.llm.generate_response(prompt)
+        # 2. Run SOTA Zero-Shot Classification
         try:
-            profile_data = json.loads(response.replace("```json", "").replace("```", "").strip())
+            result = self.behavior_classifier(
+                history_text, 
+                candidate_labels=self.learning_traits,
+                multi_label=True 
+            )
             
-            # 3. Save to DB
-            db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile_data), user_id))
-            print(f"🧠 Updated Profile for {user_id}: {profile_data}")
+            # 3. Interpret Probabilities
+            profile = {}
+            scores = {label: score for label, score in zip(result['labels'], result['scores'])}
             
+            # Logic: Modality
+            if scores['visual learner'] > 0.4 and scores['visual learner'] > scores['verbal learner']:
+                profile['preferred_modality'] = 'visual'
+            elif scores['practical coder'] > 0.5:
+                profile['preferred_modality'] = 'code_first'
+            else:
+                profile['preferred_modality'] = 'text'
+
+            # Logic: Attention
+            if scores['impatient learner'] > 0.5:
+                profile['attention_span'] = 'short'
+            elif scores['detail oriented'] > 0.5:
+                profile['attention_span'] = 'long'
+            else:
+                profile['attention_span'] = 'normal'
+
+            # 4. Save to DB
+            db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), user_id))
+            self.logger.info(f"✅ Profile Updated for {user_id}: {profile}")
+
         except Exception as e:
-            print(f"Profiling failed: {e}")
+            self.logger.error(f"Profiling Failed: {e}")

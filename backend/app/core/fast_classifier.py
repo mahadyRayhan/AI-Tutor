@@ -70,7 +70,10 @@ class FastClassifier:
         if not unique_entities:
             # Basic Regex extraction for C terms
             # Looks for words that are NOT common stopwords
-            stopwords = {'what', 'is', 'the', 'how', 'to', 'do', 'i', 'it', 'its', 'explain', 'tell', 'me', 'about', 'use', 'case'}
+            stopwords = {
+                'what', 'is', 'the', 'how', 'to', 'do', 'i', 'it', 'its', 
+                'explain', 'tell', 'me', 'about', 'use', 'case', 'are', 'a', 'an'
+            }
             words = re.findall(r'\b[a-zA-Z_]\w*\b', query.lower())
             
             potential_entities = []

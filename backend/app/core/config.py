@@ -26,6 +26,9 @@ if not OPENAI_API_KEY:
 # --- Model IDs ---
 DEFAULT_GENERATIVE_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "google")
 # DEFAULT_GOOGLE_MODEL_ID = "gemini-2.5-flash"
+# DEFAULT_GOOGLE_MODEL_ID = "gemini-3.1-pro-preview" # just for data integration
+# DEFAULT_REASONING_MODEL_ID = "gemini-3-pro-preview" 
+DEFAULT_REASONING_MODEL_ID = "gemini-2.5-flash"
 DEFAULT_GOOGLE_MODEL_ID = "gemini-2.5-flash-lite"
 DEFAULT_GOOGLE_EMBEDDING_MODEL = "gemini-embedding-001"
 DEFAULT_OPENAI_CHAT_MODEL = "gpt-4-turbo"

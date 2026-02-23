@@ -19,21 +19,21 @@ class LLMInterface:
     """Handles interactions with LLM providers (Google Gemini or OpenAI)."""
 
     def __init__(self,
-                 llm_provider: str = config.DEFAULT_GENERATIVE_LLM_PROVIDER,
-                 google_api_key: Optional[str] = config.GOOGLE_API_KEY,
-                 openai_api_key: Optional[str] = config.OPENAI_API_KEY,
-                 # Google specific
-                 google_model_id: str = config.DEFAULT_GOOGLE_MODEL_ID,
-                 google_embedding_model_id: str = config.DEFAULT_GOOGLE_EMBEDDING_MODEL,
-                 google_generation_config: Optional[Dict] = None,
-                 # OpenAI specific
-                 openai_chat_model: str = config.DEFAULT_OPENAI_CHAT_MODEL,
-                 openai_embedding_model: str = config.DEFAULT_OPENAI_EMBEDDING_MODEL,
-                 openai_generation_config: Optional[Dict] = None,
-                 # Common
-                 use_embedding_cache: bool = config.DEFAULT_USE_EMBEDDING_CACHE,
-                 use_llm_cache: bool = config.DEFAULT_USE_LLM_CACHE,
-                 logger: logging.Logger = logging.getLogger("CNTRAG")):
+            llm_provider: str = config.DEFAULT_GENERATIVE_LLM_PROVIDER,
+            google_api_key: Optional[str] = config.GOOGLE_API_KEY,
+            openai_api_key: Optional[str] = config.OPENAI_API_KEY,
+            # Google specific
+            google_model_id: str = config.DEFAULT_GOOGLE_MODEL_ID,
+            google_embedding_model_id: str = config.DEFAULT_GOOGLE_EMBEDDING_MODEL,
+            google_generation_config: Optional[Dict] = None,
+            # OpenAI specific
+            openai_chat_model: str = config.DEFAULT_OPENAI_CHAT_MODEL,
+            openai_embedding_model: str = config.DEFAULT_OPENAI_EMBEDDING_MODEL,
+            openai_generation_config: Optional[Dict] = None,
+            # Common
+            use_embedding_cache: bool = config.DEFAULT_USE_EMBEDDING_CACHE,
+            use_llm_cache: bool = config.DEFAULT_USE_LLM_CACHE,
+            logger: logging.Logger = logging.getLogger("CNTRAG")):
 
         self.logger = logger
         self.llm_provider = llm_provider.lower()

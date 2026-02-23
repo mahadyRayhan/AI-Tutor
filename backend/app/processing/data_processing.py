@@ -114,12 +114,18 @@ def _determine_metadata(filename: str) -> Dict[str, str]:
 def _generate_concept_quiz_with_answers(concept_name: str, context: str, llm: LLMInterface) -> List[Dict]:
     """Generates Q&A pairs and pre-computes embeddings (Google + Local)."""
     prompt = f"""
-    Context: {context[:800]}
-    
-    Task: Generate 3 specific Q&A pairs to test a student's understanding of "{concept_name}" in C.
-    - Questions must be answerable in 1 sentence or a code snippet.
-    - NO multiple choice.
-    - Return strictly as a JSON list of objects: [{{ "q": "Question?", "a": "Correct Answer" }}]
+        Context: {context[:1000]}
+        
+        Task: Generate 3 specific Q&A pairs to test a student's understanding of "{concept_name}" in C.
+        
+        CRITICAL RULES:
+        1. **SELF-CONTAINED:** The question MUST make sense without seeing the original text. 
+            - BAD: "In the code above, what does line 2 do?"
+            - GOOD: "In C, what does the line 'int x;' do?"
+        2. **NO REFERENCING:** Do not use phrases like "provided code", "example above", or "as shown".
+        3. Questions must be answerable in 1 sentence or a code snippet.
+        4. NO multiple choice.
+        5. Return strictly as a JSON list of objects: [{{ "q": "Question?", "a": "Correct Answer" }}]
     """
     try:
         resp = llm.generate_response(prompt)

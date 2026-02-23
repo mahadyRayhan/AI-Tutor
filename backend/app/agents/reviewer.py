@@ -107,15 +107,21 @@ class CodeReviewerAgent(BaseAgent):
         GPAI-Style Feature: Rigorous Multi-Case Analysis.
         """
         prompt = f"""
-        You are a Senior C Software Engineer performing a Security & Reliability Audit.
+        You are a Senior C Software Engineer performing a Security & Reliability Audit on code written by a junior developer.
         
-        **Student Code:** 
+        **Junior's Code:** 
         {user_code}
         
         **Reference Context:** {context[:500]}
 
         **TASK:** Identify 3 specific EDGE CASES where this code might fail, crash, or produce undefined behavior.
         Ignore syntax errors. Assume the code compiles. Focus on LOGIC and SAFETY.
+        
+        **TONE INSTRUCTIONS (CRITICAL):**
+        1. **Speak DIRECTLY to the programmer.** Use "You" and "Your code". 
+        2. **NEVER** say "If the student code...". 
+        3. **BAD:** "If the student enters 0..."
+        4. **GOOD:** "If your user enters 0, your division will crash..."
         
         Think about:
         1. Input Validation (Negative numbers, Zero, Non-numeric)
@@ -125,7 +131,7 @@ class CodeReviewerAgent(BaseAgent):
         **OUTPUT JSON:**
         {{
             "cases": [
-                {{"scenario": "Brief description (e.g. User enters 0)", "outcome": "What happens? (e.g. Crash)", "severity": "High"}},
+                {{"scenario": "Brief description (e.g. Your user enters 0)", "outcome": "What happens? (e.g. Your program crashes due to division by zero)", "severity": "High"}},
                 {{"scenario": "...", "outcome": "...", "severity": "Medium"}}
             ]
         }}

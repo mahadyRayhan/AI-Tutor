@@ -70,7 +70,7 @@ class SocraticTutorAgent(BaseAgent):
             prompt = self._build_socratic_plan_prompt(state.query, context_text, state.user_goal)
         else: 
             # Default to Concept Explanation
-            prompt = self._build_concept_prompt(state.query, context_text, state.user_goal)
+            prompt = self._build_concept_prompt(state.query, context_text, state.user_goal, state.profile, state.original_query)
 
         # 5. Stream Answer
         yield {"type": "status", "message": "Generating...", "percent": 100}
@@ -185,65 +185,134 @@ class SocraticTutorAgent(BaseAgent):
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())
         except: return ["Tell me more", "Example code", "Challenge: Write it"]
 
-    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}) -> str:
+    # def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}) -> str:
+    #     goal_section = ""
+    #     if user_goal:
+    #         goal_section = f"""
+    #         6. **GOAL CONNECTION (CRITICAL):** The student's goal is: "{user_goal}". 
+    #            - You MUST explicitly explain how the current concept helps them achieve "{user_goal}".
+    #         """
+    #     # Dynamic Style Injection
+    #     style_instruction = "Standard academic tone."
+    #     if profile.get("attention_span") == "short":
+    #         style_instruction = "EXTREMELY CONCISE. Use bullet points. No paragraphs longer than 2 sentences. The user loses focus easily."
+        
+    #     if profile.get("preferred_modality") == "visual":
+    #         style_instruction += " PRIORITY: Generate a Mermaid Diagram FIRST, then explain textually."
+            
+    #     if profile.get("frustration_level") == "high":
+    #         style_instruction += " TONE: Highly encouraging, patient, and gentle. Validate their effort."
+
+    #     return f"""
+    #     You are an expert C Programming Tutor.
+        
+    #     Student Query: "{query}"
+    #     User's Goal: "{user_goal if user_goal else 'None'}"
+    #     Reference Material: {context}
+    #     **ADAPTIVE STYLE INSTRUCTIONS:**{style_instruction}
+
+    #     **MANDATORY RULES:**
+    #     1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information..."
+    #     2. **PERSONALIZATION:** Acknowledge known concepts from USER CONTEXT.
+    #     3. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences). Use analogies.
+    #     4. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`).
+    #        - **CRITICAL SYNTAX:** 
+    #          - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
+    #          - ABSOLUTELY NO BRACKETS `[]` inside node labels.
+    #          - ABSOLUTELY NO QUOTES `"` inside node labels.
+    #          - **GOOD:** `A[Start] --> B[Declare Array]`
+    #     5. **SOURCE GROUNDING:** Quote specific examples from text.
+    #     6. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
+        
+    #     **STRICT RESPONSE FORMAT:**
+        
+    #     ## Explanation
+    #     [Start by bridging from known concepts if applicable. Then explain the new concept using text and analogies.]
+        
+    #     ## Use Cases
+    #     [Explain WHEN and WHY this concept is used in real programming.]
+
+    #     {goal_section}
+
+    #     ## Visual Model
+    #     ```mermaid
+    #     graph TD
+    #        A["Start"] --> B{{"Condition?"}}
+    #        B -- "Yes" --> C["Action"]
+    #        B -- "No" --> D["End"]
+    #     ```
+        
+    #     ## Example from Class
+    #     [Reference specific code from text]
+    #     """
+
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "") -> str:
         goal_section = ""
         if user_goal:
-            goal_section = f"""
-            6. **GOAL CONNECTION (CRITICAL):** The student's goal is: "{user_goal}". 
-               - You MUST explicitly explain how the current concept helps them achieve "{user_goal}".
-            """
-        # Dynamic Style Injection
-        style_instruction = "Standard academic tone."
-        if profile.get("attention_span") == "short":
-            style_instruction = "EXTREMELY CONCISE. Use bullet points. No paragraphs longer than 2 sentences. The user loses focus easily."
-        
-        if profile.get("preferred_modality") == "visual":
-            style_instruction += " PRIORITY: Generate a Mermaid Diagram FIRST, then explain textually."
-            
-        if profile.get("frustration_level") == "high":
-            style_instruction += " TONE: Highly encouraging, patient, and gentle. Validate their effort."
+            goal_section = f"\n## Connection to Your Goal\nExplain explicitly how this helps achieve: '{user_goal}'\n"
 
+        # 1. Determine if the user is impatient OR explicitly asked for a short answer
+        q_lower = original_query.lower()
+        is_impatient = profile.get("attention_span") == "short" or any(w in q_lower for w in ["short", "brief", "just", "quick", "syntax only", "too long"])
+        
+        print(f"🕵️‍♂️ [SOCRATIC DEBUG] is_impatient: {is_impatient} | Original: '{original_query}'")
+
+        # 2. Build the Format Block based on state
+        if is_impatient:
+            format_rules = """
+            **STRICT RESPONSE FORMAT (CONCISE MODE):**
+            [Provide the Code Syntax immediately]
+            [Provide 1 sentence explaining the syntax]
+
+            WARNING: Do NOT use the words "Explanation", "Use Cases", or "Visual Model". 
+            WARNING: Do NOT output any markdown headers (##).
+            """
+            style_instruction = "TONE: Extremely concise, code-first, no fluff."
+        else:
+            format_rules = f"""
+            **STRICT RESPONSE FORMAT (STANDARD MODE):**
+            
+            ## Explanation
+            [Clear text explanation. Min 3 sentences. Use analogies.]
+            
+            ## Use Cases
+            [Explain WHEN and WHY this concept is used in real programming.]
+            
+            {goal_section}
+            
+            ## Visual Model
+            ```mermaid
+            graph TD
+               ...
+            ```
+            (CRITICAL SYNTAX: NO () [] or "" inside node labels. Use A[Label].)
+            
+            ## Example from Class
+            [Reference specific code from text]
+            """
+            style_instruction = "TONE: Standard academic tone, encouraging, structured."
+            
+            if profile.get("preferred_modality") == "visual":
+                style_instruction += " PRIORITY: Focus heavily on the Mermaid Diagram and visual analogies."
+            if profile.get("frustration_level") == "high":
+                style_instruction += " TONE: Highly encouraging, patient, and gentle. Validate their effort."
+
+        # 3. Assemble the final prompt
         return f"""
         You are an expert C Programming Tutor.
         
         Student Query: "{query}"
-        User's Goal: "{user_goal if user_goal else 'None'}"
         Reference Material: {context}
-        **ADAPTIVE STYLE INSTRUCTIONS:**{style_instruction}
+
+        **ADAPTIVE STYLE INSTRUCTIONS:**
+        {style_instruction}
 
         **MANDATORY RULES:**
         1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information..."
         2. **PERSONALIZATION:** Acknowledge known concepts from USER CONTEXT.
-        3. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences). Use analogies.
-        4. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`).
-           - **CRITICAL SYNTAX:** 
-             - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
-             - ABSOLUTELY NO BRACKETS `[]` inside node labels.
-             - ABSOLUTELY NO QUOTES `"` inside node labels.
-             - **GOOD:** `A[Start] --> B[Declare Array]`
-        5. **SOURCE GROUNDING:** Quote specific examples from text.
-        6. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
+        3. **SOURCE GROUNDING:** Quote specific examples from text.
         
-        **STRICT RESPONSE FORMAT:**
-        
-        ## Explanation
-        [Start by bridging from known concepts if applicable. Then explain the new concept using text and analogies.]
-        
-        ## Use Cases
-        [Explain WHEN and WHY this concept is used in real programming.]
-
-        {goal_section}
-
-        ## Visual Model
-        ```mermaid
-        graph TD
-           A["Start"] --> B{{"Condition?"}}
-           B -- "Yes" --> C["Action"]
-           B -- "No" --> D["End"]
-        ```
-        
-        ## Example from Class
-        [Reference specific code from text]
+        {format_rules}
         """
 
     def _build_socratic_plan_prompt(self, query: str, context: str, user_goal: str = None) -> str:

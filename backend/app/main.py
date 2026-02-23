@@ -168,24 +168,37 @@ async def verify_teacher(x_user_role: str = Header(None, alias="X-User-Role")):
 
 @app.on_event("startup")
 async def startup_event():
-    global llm_interface, vector_store, graph_db, cot_rag_agent
+    global cot_rag_agent # (This is your Orchestrator)
     try:
         logger.info("Initializing C Tutor components...")
-        llm_interface = LLMInterface(logger=logger)
         
-        # --- FIX STARTS HERE ---
-        # We must pass the path from config!
         from app.core import config 
+        
+        # 1. Initialize TWO LLMs
+        # Fast Model (for Chat, Routing, Security)
+        llm_fast = LLMInterface(
+            google_model_id=config.DEFAULT_GOOGLE_MODEL_ID, 
+            logger=logger
+        )
+        
+        # Smart Model (for Planning, Grading, Code Review)
+        llm_smart = LLMInterface(
+            google_model_id=config.DEFAULT_REASONING_MODEL_ID, 
+            logger=logger
+        )
+        
+        # 2. Initialize DBs
         vector_store = ChromaVectorStore(
             persist_directory=config.DEFAULT_VECTOR_DB_PATH, 
             logger=logger
         )
-        # --- FIX ENDS HERE ---
-        
         graph_db = Neo4jGraphDB(logger=logger)
         
+        # 3. Initialize Orchestrator with BOTH LLMs
+        # Note: You need to update Orchestrator's __init__ to accept both!
         cot_rag_agent = ChainOfThoughtRAGAgent(
-            llm_interface=llm_interface,
+            llm_fast=llm_fast,      # <--- Pass Fast
+            llm_smart=llm_smart,    # <--- Pass Smart
             vector_store=vector_store,
             graph_db=graph_db,
             logger=logger

@@ -111,7 +111,7 @@ class ScaffoldingAgent(BaseAgent):
         yield {"type": "complete", "data": {
             "answer": msg,
             "sources": [], 
-            "suggestions": ["Show me pseudocode", "I don't know where to start", "Stop guided mode"],
+            "suggestions": ["I don't know where to start", "Stop guided mode"],
             "intent": "PLANNING"
         }}
 
@@ -188,7 +188,7 @@ class ScaffoldingAgent(BaseAgent):
     def _generate_step_by_step_plan(self, query: str, context: str) -> List[Dict[str, str]]:
         """Generates a JSON plan of 3-6 steps."""
         prompt = f"""
-        You are a C Programming Curriculum Designer.
+        You are a friendly C Programming Tutor designing a lesson plan.
         Problem: "{query}"
         Context: {context}
 
@@ -201,10 +201,16 @@ class ScaffoldingAgent(BaseAgent):
         3. End with Printing Output.
         4. Each step must be a specific, verifiable task (e.g., "Write the function signature for Average").
 
+        **TONE INSTRUCTIONS (CRITICAL):**
+        - Write the `description` as if you are talking DIRECTLY to the student.
+        - Use "You" and "Let's". Be encouraging and active.
+        - **BAD:** "Prompt the user for input."
+        - **GOOD:** "Now, let's ask the user for a number. Use printf to show a message and scanf to read it into our variable."
+
         **OUTPUT FORMAT:**
         Strictly a JSON list of objects:
         [
-            {{"goal": "Brief title of step", "description": "What the student needs to do now", "verification_criteria": "What to check for"}}
+            {{"goal": "Brief title of step", "description": "Conversational instructions...(What the student needs to do now)", "verification_criteria": "What to check for"}}
         ]
         """
         response = self.llm.generate_response(prompt)
@@ -231,10 +237,24 @@ class ScaffoldingAgent(BaseAgent):
 
         **TASK:** Evaluate the student's input.
 
-        **OUTPUT RULES:**
-        1. **STATUS:** "PASS" if correct. "FAIL" if wrong. "QUESTION" if they ask for help.
-        2. **FEEDBACK:** Be encouraging. If they failed, explain WHY based on the Criteria.
-        3. **VISUAL AID (CRITICAL):** 
+        **CRITICAL RULES:**
+        1. **HALLUCINATION CHECK (PRIORITY):**
+           - If the student says "I don't know", "Help", or "Where to start":
+             - Mark Status as **FAIL**.
+             - Do **NOT** say "Good start" or "You declared X".
+             - Acknowledge they are stuck and provide a clear hint.
+        
+        2. **HELP REQUESTS ARE NOT ANSWERS:**
+           - If the student asks for "Pseudocode", "Hint", "Example", or "Solution":
+             - Mark Status as **FAIL** (This keeps them on the current step).
+             - Provide the requested help in `pseudocode_hint` or `visual_aid`.
+             - Do **NOT** verify the step as complete.
+        
+        3. **Status Logic:**
+           - PASS: Only if they provide valid C code/logic that solves the step.
+           - FAIL: Wrong code, "I don't know", OR asking for help/pseudocode.
+
+        4. **VISUAL AID (CRITICAL):** 
            - IF the student is confused, provide a MermaidJS graph string in `visual_aid`.
            - **CRITICAL SANITIZATION RULES:** 
              - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
@@ -242,14 +262,19 @@ class ScaffoldingAgent(BaseAgent):
              - ABSOLUTELY NO QUOTES `"` inside node labels.
              - **BAD:** `A[sum(a,b)]` or `B{{arr[i]}}` or `C["Text"]`
              - **GOOD:** `A[sum a b]` or `B{{arr index i}}` or `C[Text]`
-        4. **PSEUDOCODE:**
+        
+        5. **PSEUDOCODE:**
             - IF the student is stuck on syntax or asks for "Logic/Pseudocode", fill the `pseudocode_hint` field.
             - Format: Plain text algorithm (e.g., "FOR i FROM 0 TO N..."). Do not use C syntax.
+        
+        6. **USER INTENT:**
+            - If user asks for "Pseudocode" specifically, ONLY provide `pseudocode_hint`.
+            - If user asks for "Diagram" specifically, ONLY provide `visual_aid`.
 
         **OUTPUT JSON:**
         {{
             "status": "PASS" | "FAIL" | "QUESTION",
-            "feedback": "Encouraging response...",
+            "feedback": "Response text...",
             "visual_aid": "graph TD...", 
             "pseudocode_hint": "..."
         }}
