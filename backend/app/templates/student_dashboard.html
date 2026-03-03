@@ -227,7 +227,9 @@
 
             // Visuals
             renderCharts(data); 
-            renderSkillBars(data.mastery);
+            
+            // FIX: Pass empty dict if null to prevent skill bar crash
+            renderSkillBars(data.mastery || {}); 
         } catch(e) { 
             console.error("Stats load failed", e); 
         }
@@ -266,13 +268,27 @@
 
     // --- CHART RENDERER ---
     function renderCharts(data) {
-        // Donut Chart (Habits)
-        new Chart(document.getElementById('donutChart'), {
+        // 1. Safety Check: Default to empty object if null/undefined
+        const stats = data.stats || { CONCEPT: 0, PROBLEM: 0, DEBUG: 0, REVIEW: 0 };
+        const mastery = data.mastery || {}; 
+
+        // Destroy existing charts to prevent canvas reuse errors (glitching)
+        if(window.topicChartRef) window.topicChartRef.destroy();
+        if(window.radarChartRef) window.radarChartRef.destroy();
+
+        // 2. Donut Chart (Habits)
+        const ctxDonut = document.getElementById('donutChart').getContext('2d');
+        window.topicChartRef = new Chart(ctxDonut, {
             type: 'doughnut',
             data: {
                 labels: ['Concept (Reading)', 'Problem (Planning)', 'Debug (Fixing)', 'Review (Coding)'],
                 datasets: [{
-                    data: [data.stats.CONCEPT, data.stats.PROBLEM, data.stats.DEBUG, data.stats.REVIEW],
+                    data: [
+                        stats.CONCEPT || 0, 
+                        stats.PROBLEM || 0, 
+                        stats.DEBUG || 0, 
+                        stats.REVIEW || 0
+                    ],
                     backgroundColor: ['#3498db', '#9b59b6', '#e74c3c', '#f1c40f'],
                     borderWidth: 0
                 }]
@@ -283,9 +299,12 @@
             }
         });
 
-        // Radar Chart (Proficiency)
-        const masteryScores = TOPICS.map(t => data.mastery[t] || 0);
-        new Chart(document.getElementById('radarChart'), {
+        // 3. Radar Chart (Proficiency)
+        // CRITICAL FIX: Use the safe 'mastery' object we defined at the top
+        const masteryScores = TOPICS.map(t => mastery[t] || 0);
+        
+        const ctxRadar = document.getElementById('radarChart').getContext('2d');
+        window.radarChartRef = new Chart(ctxRadar, {
             type: 'radar',
             data: {
                 labels: TOPICS,
@@ -300,7 +319,14 @@
             },
             options: { 
                 maintainAspectRatio: false,
-                scales: { r: { min: 0, max: 100, ticks: { display: false } } },
+                scales: { 
+                    r: { 
+                        min: 0, 
+                        max: 100, 
+                        ticks: { display: false },
+                        grid: { color: 'rgba(0,0,0,0.05)' }
+                    } 
+                },
                 plugins: { legend: { display: false } }
             }
         });

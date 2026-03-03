@@ -132,12 +132,12 @@ class ExaminerAgent(BaseAgent):
             msg = f"🧐 **Quick Check:** {qa_pair['q']}\n\n👉 **Type your answer in the chat box below.**"
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": ["I don't know"], "intent": "QUIZ"}}
         else:
-            # Fallback
             yield {"type": "complete", "data": {
-                "answer": f"I don't have a specific quiz for **{verify_topic}** yet. Shall I explain it instead?",
-                "sources": [],
-                "suggestions": [f"Explain {verify_topic}"],
-                "intent": "QUIZ"
+                "answer": msg, 
+                "sources": [], 
+                "suggestions": ["I don't know"], 
+                "intent": "QUIZ",
+                "entities": state.entities # <--- ADD THIS
             }}
 
     async def _grade_quiz(self, state: AgentState, session_state):
@@ -194,7 +194,8 @@ class ExaminerAgent(BaseAgent):
                 "answer": msg, 
                 "sources": [], 
                 "suggestions": suggestions, 
-                "intent": "EVALUATION"
+                "intent": "EVALUATION",
+                "entities": state.entities # <--- ADD THIS
             }}
 
     async def _smart_grade_answer(self, student_answer: str, vec_google, vec_local, correct_text: str) -> dict:

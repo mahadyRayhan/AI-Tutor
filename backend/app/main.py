@@ -79,7 +79,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global variables
-llm_interface = None
+llm_fast = None
+llm_smart = None
 vector_store = None
 graph_db = None
 cot_rag_agent = None
@@ -125,7 +126,10 @@ def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
     scores = {}
     topic_interactions = {}
 
+    print(f"\n📊 [DEBUG] Calculating Mastery for {len(history)} interactions...")
+
     for h in history:
+        # Get Topic and Intent (Default to General/Unknown if missing)
         t = h.get('topic', 'General')
         i = h.get('intent', 'UNKNOWN')
         
@@ -134,7 +138,7 @@ def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
         
         topic_interactions[t] += 1
         
-        # Scoring Logic
+        # Scoring Logic (XP Calculation)
         if i == "REVIEW": 
             scores[t] += 15  # Tried writing code (High effort)
         elif i == "PROBLEM":
@@ -147,8 +151,9 @@ def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
     # Normalize (Simple heuristic: 50 points = 100% mastery for this demo)
     final_scores = {}
     for t, score in scores.items():
-        # Cap at 100, minimum based on interaction count
+        # Cap at 100
         normalized = min(100, score)
+        
         # Penalize if they ONLY ask debug questions (High count, low score)
         if topic_interactions[t] > 5 and score < 20:
             normalized = max(10, normalized - 10)
@@ -156,6 +161,7 @@ def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
         final_scores[t] = normalized
         
     return final_scores
+    
 async def verify_teacher(x_user_role: str = Header(None, alias="X-User-Role")):
     """
     Simple header check. In a real app, use JWT tokens.
@@ -168,37 +174,36 @@ async def verify_teacher(x_user_role: str = Header(None, alias="X-User-Role")):
 
 @app.on_event("startup")
 async def startup_event():
-    global cot_rag_agent # (This is your Orchestrator)
+    # 1. Declare ALL globals we need to set
+    global cot_rag_agent, llm_fast, llm_smart, vector_store, graph_db 
+    
     try:
         logger.info("Initializing C Tutor components...")
         
         from app.core import config 
         
-        # 1. Initialize TWO LLMs
-        # Fast Model (for Chat, Routing, Security)
+        # 2. Initialize LLMs
         llm_fast = LLMInterface(
             google_model_id=config.DEFAULT_GOOGLE_MODEL_ID, 
             logger=logger
         )
         
-        # Smart Model (for Planning, Grading, Code Review)
         llm_smart = LLMInterface(
             google_model_id=config.DEFAULT_REASONING_MODEL_ID, 
             logger=logger
         )
         
-        # 2. Initialize DBs
+        # 3. Initialize DBs
         vector_store = ChromaVectorStore(
             persist_directory=config.DEFAULT_VECTOR_DB_PATH, 
             logger=logger
         )
         graph_db = Neo4jGraphDB(logger=logger)
         
-        # 3. Initialize Orchestrator with BOTH LLMs
-        # Note: You need to update Orchestrator's __init__ to accept both!
+        # 4. Initialize Orchestrator
         cot_rag_agent = ChainOfThoughtRAGAgent(
-            llm_fast=llm_fast,      # <--- Pass Fast
-            llm_smart=llm_smart,    # <--- Pass Smart
+            llm_fast=llm_fast,
+            llm_smart=llm_smart,
             vector_store=vector_store,
             graph_db=graph_db,
             logger=logger
@@ -250,9 +255,6 @@ async def health():
 
 @app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """
-    Stream the response AND save to session history, while Profiling execution time.
-    """
     # --- 1. START PROFILER ---
     profiler = None
     if config.ENABLE_PROFILING:
@@ -260,29 +262,23 @@ async def chat_stream(request: ChatRequest):
         profiler.start()
 
     # --- 2. SESSION MANAGEMENT ---
-    # Create session if new
     session_id = request.session_id
     if not session_id:
         session_id = history_manager.create_session(request.username)
 
     # --- 3. FETCH CONTEXT ---
-    # Get the last few messages to find the active topic
     session_data = history_manager.get_session_details(request.username, session_id)
     last_context = ""
-    
     if session_data and session_data.get("messages"):
-        # Look backwards for the last BOT message to find what we were talking about
         for msg in reversed(session_data["messages"]):
             if msg["role"] == "bot":
                 last_context = msg["content"][:200]
                 break
-    # --------------------------
 
-    # Save USER message immediately
-    history_manager.add_message(request.username, session_id, "user", request.message)
+    # --- 4. SAVE USER MESSAGE & GET ID ---
+    user_msg_id = history_manager.add_message(request.username, session_id, "user", request.message)
 
     async def generate_stream():
-        # Define vars scope for finally block
         full_bot_response = ""
         final_sources = []
         
@@ -293,91 +289,102 @@ async def chat_stream(request: ChatRequest):
 
             user_goal = knowledge_manager.get_goal(request.username)
 
-            # --- 4. RUN AGENT ---
+            # --- 5. RUN AGENT ---
             async for event in cot_rag_agent.run_stream(
                 request.message, 
                 request.user_role, 
                 username=request.username,
                 user_goal=user_goal,
-                conversation_context=last_context, # Passing the context we fetched
-                session_id=session_id # Passing session ID for contextualization
+                conversation_context=last_context,
+                session_id=session_id
             ):
-                # Capture text for history
+                # A. Capture Tokens (Streaming)
                 if event["type"] in ["token", "answer"]:
-                    full_bot_response += event.get("text", "")
+                    text_chunk = event.get("text", "")
+                    full_bot_response += text_chunk
                 
-                # Capture sources/metadata for history
+                # B. Handle Completion (Metadata)
                 if event["type"] == "complete":
                     final_data = event["data"]
-                    if not full_bot_response: 
-                        full_bot_response = final_data.get('answer', '')
+                    
+                    # CRITICAL FIX: Ensure we capture the final authoritative answer
+                    # This handles cases like Gatekeeper which don't stream tokens
+                    if final_data.get('answer'):
+                        full_bot_response = final_data.get('answer')
+                        
                     final_sources = final_data.get('sources', [])
                     
-                    # --- FIX: Better Topic Detection ---
                     detected_topic = "General"
                     
-                    # 1. Try to get topic from sources
-                    if final_sources:
+                    # 1. Get raw entities from the Agent (sent in Step 1)
+                    raw_entities = final_data.get('entities', [])
+                    
+                    # 2. Flatten to a single string for easy searching
+                    # e.g. "for loop iteration"
+                    search_str = " ".join(raw_entities).lower() + " " + final_data.get('detected_entity', "").lower()
+                    
+                    # 3. Map to Dashboard Topics (Priority Order)
+                    if any(x in search_str for x in ["pointer", "memory", "address", "malloc", "free", "*", "&"]):
+                        detected_topic = "Pointers"
+                    elif any(x in search_str for x in ["struct", "union", "member", "dot operator"]):
+                        detected_topic = "Structures"
+                    elif any(x in search_str for x in ["string", "char array", "text", "strcat", "strcpy"]):
+                        detected_topic = "Strings" # Strings often contain 'array', so check this before Arrays
+                    elif any(x in search_str for x in ["array", "list", "collection", "index", "["]):
+                        detected_topic = "Arrays"
+                    elif any(x in search_str for x in ["function", "void", "return", "param", "arg", "call"]):
+                        detected_topic = "Functions"
+                    elif any(x in search_str for x in ["loop", "while", "for", "if", "else", "switch", "break", "continue", "control"]):
+                        detected_topic = "Control Flow"
+                    elif any(x in search_str for x in ["int", "float", "double", "char", "variable", "const", "type"]):
+                        detected_topic = "Variables"
+                    
+                    # 4. Fallback: If still General, try to trust the Source Document Metadata
+                    if detected_topic == "General" and final_sources:
                         # Extract all topics found in sources
                         topics = [s.get('topic') for s in final_sources if s.get('topic')]
                         if topics:
-                            # Pick the most common topic (e.g., if 3 docs say "Arrays" and 1 says "General", pick "Arrays")
                             from collections import Counter
+                            # Pick most common topic from the retrieved chunks
                             detected_topic = Counter(topics).most_common(1)[0][0]
-                    
-                    # 2. Fallback: If no sources (e.g. Prereq Check), try to infer from Intent + Content
-                    if detected_topic == "General":
-                         # Get the entity the agent found (e.g., "array")
-                         entity = final_data.get("detected_entity", "General").lower()
-                         
-                         # Map entity to frontend topic
-                         if "array" in entity: detected_topic = "Arrays"
-                         elif "loop" in entity: detected_topic = "Control Flow"
-                         elif "pointer" in entity: detected_topic = "Pointers"
-                         elif "struct" in entity: detected_topic = "Structures"
-                         elif "string" in entity: detected_topic = "Strings"
-                         elif "function" in entity: detected_topic = "Functions"
-                         elif "var" in entity: detected_topic = "Variables"
-                         # You could add simple keyword matching here if you want, 
-                         # but usually sources are the source of truth.
-                    # -----------------------------------
+                    try:
+                        history_manager.log_interaction(
+                            user_msg_id, 
+                            final_data['intent'], 
+                            detected_topic 
+                        )
+                    except Exception as analytics_err:
+                        logger.error(f"Analytics logging failed: {analytics_err}")
 
-                    # Log with the CORRECT topic
-                    history_manager.log_interaction(
-                        request.username, request.message, final_data['intent'], 
-                        final_data['answer'], detected_topic 
-                    )
                     
                     event["data"]["session_id"] = session_id 
 
                 yield f"data: {json.dumps(event)}\n\n"
-
-            # SAVE BOT MESSAGE to Session History
-            history_manager.add_message(request.username, session_id, "bot", full_bot_response, final_sources)
 
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         
         finally:
-            # --- 5. STOP PROFILER & SAVE REPORT (Conditional) ---
+            # --- 6. SAVE BOT MESSAGE (Guaranteed Execution) ---
+            # We save whatever response we have, even if the stream crashed
+            if full_bot_response.strip():
+                try:
+                    history_manager.add_message(request.username, session_id, "bot", full_bot_response, final_sources)
+                except Exception as save_err:
+                    logger.error(f"Failed to save bot message: {save_err}")
+
+            # --- 7. STOP PROFILER ---
             if profiler:
                 try:
                     profiler.stop()
-                    
                     timestamp = int(time.time())
-                    safe_sess_id = str(session_id).replace("/", "_")
-                    filename = f"profile_{safe_sess_id}_{timestamp}.html"
+                    filename = f"profile_{session_id}_{timestamp}.html"
                     filepath = os.path.join(PROFILE_DIR, filename)
-                    
-                    # This is the heavy part (2-3s) - only runs if enabled
                     with open(filepath, "w", encoding="utf-8") as f:
                         f.write(profiler.output_html())
-                    
-                    profile_url = f"/profiles/{filename}"
-                    yield f"data: {json.dumps({'type': 'profiler_report', 'url': profile_url})}\n\n"
-                except Exception as prof_e:
-                    logger.error(f"Profiling save failed: {prof_e}")
+                    yield f"data: {json.dumps({'type': 'profiler_report', 'url': f'/profiles/{filename}'})}\n\n"
+                except: pass
 
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
@@ -402,16 +409,20 @@ async def get_student_stats(username: str):
 
 @app.get("/api/v1/analytics/report/{username}")
 async def get_student_report(username: str):
-    """SLOW Endpoint: Returns LLM advice."""
+    """SLOW Endpoint: Returns LLM advice using the Smart Model."""
     history = history_manager.get_student_history(username)
     recent_logs = history[-15:]
     
     if not recent_logs:
         return {"focus": "Just getting started", "strengths": "N/A", "weakness": "N/A", "reading": ["Basics"]}
         
-    log_text = "\n".join([f"- [{log['intent']}] Topic: {log.get('topic', 'General')} - Q: {log['query']}" for log in recent_logs])
+    log_text = "\n".join([
+        f"- [{log.get('intent', 'N/A')}] "
+        f"Topic: {log.get('topic', 'General')} "
+        f"- Q: {log.get('query', 'Unknown')[:50]}..." 
+        for log in recent_logs
+    ])
     
-    # --- RESTORED PROMPT ---
     prompt = f"""
     You are an AI Tutor Analyst. Analyze this student's recent interaction history.
     
@@ -428,27 +439,72 @@ async def get_student_report(username: str):
     Return ONLY JSON: {{ "focus": "...", "strengths": "...", "weakness": "...", "reading": ["Topic A", "Topic B"] }}
     """
     
+    report_raw = "" # Initialize to avoid UnboundLocalError
     try:
-        report_raw = llm_interface.generate_response(prompt)
+        # FIX: Use llm_smart instead of llm_interface
+        report_raw = llm_smart.generate_response(prompt)
         
-        # --- ROBUST JSON CLEANER ---
-        # 1. Strip markdown
+        # Clean JSON string
         clean_text = report_raw.replace("```json", "").replace("```", "").strip()
-        
-        # 2. Extract JSON substring if LLM chatted (Find first '{' and last '}')
         start = clean_text.find('{')
         end = clean_text.rfind('}') + 1
-        if start != -1 and end != -1:
-            clean_text = clean_text[start:end]
-            
-        return json.loads(clean_text)
-        # ---------------------------
+        return json.loads(clean_text[start:end])
         
     except Exception as e:
-        # Log the specific error to the terminal so you can see it
         logger.error(f"Analytics Report Failed: {e}")
-        logger.error(f"Raw Output was: {report_raw}")
+        # report_raw might be empty, so we check before logging
+        if report_raw:
+            logger.error(f"Raw Output was: {report_raw}")
         return {"focus": "Analysis Error", "strengths": "N/A", "weakness": "Try again later", "reading": []}
+
+# async def get_student_report(username: str):
+#     """SLOW Endpoint: Returns LLM advice."""
+#     history = history_manager.get_student_history(username)
+#     recent_logs = history[-15:]
+    
+#     if not recent_logs:
+#         return {"focus": "Just getting started", "strengths": "N/A", "weakness": "N/A", "reading": ["Basics"]}
+        
+#     log_text = "\n".join([f"- [{log['intent']}] Topic: {log.get('topic', 'General')} - Q: {log['query']}" for log in recent_logs])
+    
+#     # --- RESTORED PROMPT ---
+#     prompt = f"""
+#     You are an AI Tutor Analyst. Analyze this student's recent interaction history.
+    
+#     Student Logs:
+#     {log_text}
+    
+#     Task: Write a helpful "Progress Report" strictly in JSON format.
+    
+#     1. **Focus:** What topics are they asking about most? (Max 10 words)
+#     2. **Strengths:** What are they doing well? (e.g., "Good curiosity about Pointers")
+#     3. **Weakness:** What are they struggling with? (e.g., "Syntax errors in Loops")
+#     4. **Reading:** Suggest 2 specific C topics or concepts they should study next based on their weaknesses (e.g., "Arrays", "Memory Management"). Return as a list of strings.
+    
+#     Return ONLY JSON: {{ "focus": "...", "strengths": "...", "weakness": "...", "reading": ["Topic A", "Topic B"] }}
+#     """
+    
+#     try:
+#         report_raw = llm_interface.generate_response(prompt)
+        
+#         # --- ROBUST JSON CLEANER ---
+#         # 1. Strip markdown
+#         clean_text = report_raw.replace("```json", "").replace("```", "").strip()
+        
+#         # 2. Extract JSON substring if LLM chatted (Find first '{' and last '}')
+#         start = clean_text.find('{')
+#         end = clean_text.rfind('}') + 1
+#         if start != -1 and end != -1:
+#             clean_text = clean_text[start:end]
+            
+#         return json.loads(clean_text)
+#         # ---------------------------
+        
+#     except Exception as e:
+#         # Log the specific error to the terminal so you can see it
+#         logger.error(f"Analytics Report Failed: {e}")
+#         logger.error(f"Raw Output was: {report_raw}")
+#         return {"focus": "Analysis Error", "strengths": "N/A", "weakness": "Try again later", "reading": []}
 
 @app.get("/api/v1/config/topics")
 async def get_topics():
@@ -898,7 +954,7 @@ async def ai_check_assignment(req: SubmissionRequest):
     Do NOT give a grade.
     """
     
-    feedback = llm_interface.generate_response(review_prompt)
+    feedback = llm_fast.generate_response(review_prompt)
     return {"ai_feedback": feedback}
 
 if __name__ == "__main__":

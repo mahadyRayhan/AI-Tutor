@@ -112,7 +112,8 @@ class ScaffoldingAgent(BaseAgent):
             "answer": msg,
             "sources": [], 
             "suggestions": ["I don't know where to start", "Stop guided mode"],
-            "intent": "PLANNING"
+            "intent": "PLANNING",
+            "entities": state.entities # <--- ADD THIS
         }}
 
     # --- INTERNAL LOGIC: CONTINUE PLAN ---
@@ -180,7 +181,8 @@ class ScaffoldingAgent(BaseAgent):
             "answer": answer_text, 
             "sources": formatted_sources,
             "suggestions": sugg_list,
-            "intent": "GUIDED_PRACTICE"
+            "intent": "GUIDED_PRACTICE",
+            "entities": state.entities # <--- ADD THIS
         }}
 
     # --- PROMPTS AND HELPERS ---

@@ -726,18 +726,13 @@ class ChainOfThoughtRAGAgent:
         
         # --- 2. CONTEXT SKIP RULES ---
         is_in_quiz = current_state.get("awaiting_quiz_answer", False)
-        
-        # Is there an active scaffolding plan? We shouldn't rewrite code answers either!
         active_plan = current_state.get("active_plan", {})
         is_in_plan = active_plan.get("is_active", False)
-        
         is_force_teach = "teach me" in query.lower() and "anyway" in query.lower()
         is_verify_request = "verify" in query.lower() and "know" in query.lower()
         
         should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan
         
-        self.logger.info(f"🔄 [ORCHESTRATOR] Skip Context? {should_skip_context} (Quiz:{is_in_quiz}, Plan:{is_in_plan})")
-
         # --- 3. CONTEXTUALIZATION ---
         yield {"type": "status", "message": "Understanding context...", "percent": 5}
         
@@ -753,7 +748,7 @@ class ChainOfThoughtRAGAgent:
 
         state = AgentState(
             query=search_query,
-            original_query=query, # CRITICAL: keep original
+            original_query=query, 
             user_id=username,
             session_id=session_id,
             user_role=user_role,
@@ -766,7 +761,6 @@ class ChainOfThoughtRAGAgent:
         # ---------------------------------------------------------
 
         # 1. SENTINEL (Security & Classification)
-        # Populates state.intent and state.entities
         async for event in self.sentinel.process(state):
             yield event
         if state.stop_processing: return
@@ -791,8 +785,6 @@ class ChainOfThoughtRAGAgent:
         # ---------------------------------------------------------
 
         # 5. GATEKEEPER CHECK
-        # We check prerequisites before explaining a new concept.
-        # We use state.intent/entities that were set by the Sentinel.
         gatekeeper_result = self._check_gatekeeping(
             state.query, state.intent, state.entities, state.user_id, state.session_id
         )
@@ -801,16 +793,24 @@ class ChainOfThoughtRAGAgent:
             return
 
         # 6. SOCRATIC TUTOR (Standard RAG)
-        # If no other agent handled it, the Socratic Tutor explains the concept.
         async for event in self.socratic.process(state):
+            # IMPORTANT: We inject the entities into the Socratic response 
+            # so main.py can log them correctly.
+            if event["type"] == "complete":
+                event["data"]["entities"] = state.entities 
+                event["data"]["intent"] = state.intent
             yield event
+
+        # --- REMOVED LOGGING BLOCK HERE ---
+        # Logging is now handled entirely by main.py using user_msg_id
+        # ----------------------------------
 
         # Fire-and-forget sentiment analysis
         asyncio.create_task(
             self.profiler.analyze_sentiment(username, query)
         )
         
-        # Occasional deep profiling (e.g., 10% chance or every N messages)
+        # Occasional deep profiling
         if random.random() < 0.1:
             asyncio.create_task(
                 self.profiler.update_learning_profile(username)

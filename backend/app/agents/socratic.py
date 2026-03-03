@@ -90,10 +90,11 @@ class SocraticTutorAgent(BaseAgent):
         yield {
             "type": "complete",
             "data": {
-                "answer": full_answer, # Frontend handles markdown
+                "answer": full_answer, 
                 "sources": [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks],
                 "suggestions": await suggest_task,
                 "intent": state.intent,
+                "entities": state.entities, # <--- ADD THIS
                 "session_id": state.session_id
             }
         }
