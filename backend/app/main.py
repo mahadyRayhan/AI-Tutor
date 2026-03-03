@@ -947,6 +947,14 @@ async def grade_assignment(req: AssignmentGradeRequest):
     assignment_manager.grade_assignment(req.assignment_id, req.feedback)
     return {"status": "success"}
 
+@app.get("/api/v1/analytics/active_time")
+async def get_active_time_stats(username: str, days: int = 7):
+    """
+    Calculates active time on the fly.
+    """
+    duration_str = history_manager.calculate_active_time(username, days)
+    return {"username": username, "days": days, "active_time": duration_str}
+
 # --- THE MAGIC: AI CHECKER ---
 @app.post("/api/v1/assignments/ai_check")
 async def ai_check_assignment(req: SubmissionRequest):

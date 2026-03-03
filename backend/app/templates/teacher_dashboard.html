@@ -336,6 +336,18 @@
                         <tr>
                             <th>Student ID</th>
                             <th>Attention Needed</th>
+                            <th style="min-width: 140px;">
+                                <div style="display:flex; flex-direction:column; gap:2px;">
+                                    <span>Active Time</span>
+                                    <select id="timeRangeSelector" onchange="updateAllActiveTimes(this.value)" 
+                                            style="padding:2px; font-size:0.8rem; border-radius:4px; border:1px solid #ccc;">
+                                        <option value="1">Last 24 Hours</option>
+                                        <option value="7" selected>Last 7 Days</option>
+                                        <option value="30">Last 30 Days</option>
+                                        <option value="999">All Time</option>
+                                    </select>
+                                </div>
+                            </th>
                             <th>Mastered Skill</th>
                             <th>Growth Area</th>
                             <th>Last Active</th>
@@ -702,7 +714,8 @@
 
     function renderRiskTable(students) {
         const thead = document.querySelector('#riskTable thead tr');
-        // Update Header with Info Icon (Requirement 1)
+        
+        // 1. Update Header to include Active Time Dropdown
         thead.innerHTML = `
             <th>Student ID</th>
             <th>
@@ -717,6 +730,22 @@
                     </span>
                 </div>
             </th>
+            
+            <!-- NEW COLUMN -->
+            <th style="min-width: 140px;">
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <span style="font-size:0.75rem; text-transform:uppercase; font-weight:700; color:#7f8c8d;">Active Time</span>
+                    <select id="timeRangeSelector" onchange="updateAllActiveTimes(this.value)" 
+                            style="padding:4px; font-size:0.8rem; border-radius:4px; border:1px solid #ccc; cursor:pointer;">
+                        <option value="1">Last 24 Hours</option>
+                        <option value="7" selected>Last 7 Days</option>
+                        <option value="30">Last 30 Days</option>
+                        <option value="999">All Time</option>
+                    </select>
+                </div>
+            </th>
+            <!-- END NEW COLUMN -->
+
             <th>Mastered Skill</th>
             <th>Growth Area</th>
             <th>Last Active</th>
@@ -737,21 +766,62 @@
                 </div>
             `;
 
-            // Row is clickable (Requirement 2 & 3)
-            // Note: We pass 'hidden_username' to the function, but display 'display_id'
             // We escape the JSON for mastery to pass it to the modal without another fetch
             const masteryStr = encodeURIComponent(JSON.stringify(s.mastery));
             
+            // Unique ID for the time cell is not strictly needed for logic but good for debugging
+            const timeCellId = `time-${s.display_id}`;
+
             tbody.innerHTML += `
                 <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${s.risk_level}', '${masteryStr}')">
                     <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
                     <td>${riskBadge}</td>
+                    
+                    <!-- NEW: Active Time Cell -->
+                    <!-- We store the real username in data-username so the JS fetcher can find it -->
+                    <td id="${timeCellId}" class="active-time-cell" data-username="${s.hidden_username}">
+                        <span style="color:#bdc3c7; font-size:0.8rem;">Pending...</span>
+                    </td>
+                    
                     <td>${s.strongest_topic}</td>
                     <td>${s.weakest_topic}</td>
                     <td>${s.last_active}</td>
                 </tr>
             `;
         });
+
+        // 2. Trigger Initial Calculation (Default: 7 Days)
+        // We use a small timeout to ensure the DOM elements are rendered first
+        setTimeout(() => {
+            const dropdown = document.getElementById('timeRangeSelector');
+            if(dropdown) updateAllActiveTimes(dropdown.value);
+        }, 100);
+    }
+
+    async function updateAllActiveTimes(days) {
+        const cells = document.querySelectorAll('.active-time-cell');
+        
+        // 1. Show Loading State for all cells
+        cells.forEach(cell => {
+            cell.innerHTML = '<span style="font-size:0.8rem; color:#3498db;">⟳ Calculating...</span>';
+        });
+
+        // 2. Fetch data for each student in parallel
+        // We use map to create an array of promises
+        const promises = Array.from(cells).map(async (cell) => {
+            const username = cell.dataset.username;
+            try {
+                const res = await fetch(`${API_URL}/api/v1/analytics/active_time?username=${username}&days=${days}`);
+                const data = await res.json();
+                
+                // Update the specific cell
+                cell.innerHTML = `<span style="font-weight:600; color:#2c3e50;">${data.active_time}</span>`;
+            } catch (e) {
+                cell.innerHTML = '<span style="color:red;">Error</span>';
+            }
+        });
+
+        await Promise.all(promises);
     }
 
     // --- MODAL LOGIC ---

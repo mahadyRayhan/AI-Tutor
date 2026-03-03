@@ -142,4 +142,57 @@ class HistoryManager:
         """, (username,))
         return [dict(r) for r in rows]
 
+    def calculate_active_time(self, username: str, days: int) -> str:
+        """
+        Calculates total active time in minutes for the last N days.
+        Heuristic: Sum of time deltas between messages where gap < 20 mins.
+        """
+        from datetime import timedelta
+        
+        # 1. Calculate cutoff date
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        # 2. Fetch timestamps only (Fast query)
+        rows = db.fetch_all("""
+            SELECT timestamp FROM messages 
+            WHERE username = ? AND timestamp > ?
+            ORDER BY timestamp ASC
+        """, (username, cutoff_date))
+        
+        if not rows or len(rows) < 2:
+            return "0m"
+
+        total_seconds = 0
+        SESSION_THRESHOLD = 20 * 60 # 20 minutes in seconds
+
+        timestamps = []
+        for r in rows:
+            try:
+                # Handle ISO format string from DB
+                if isinstance(r['timestamp'], str):
+                    timestamps.append(datetime.fromisoformat(r['timestamp']))
+                else:
+                    timestamps.append(r['timestamp'])
+            except: continue
+
+        # 3. Sum Deltas
+        for i in range(1, len(timestamps)):
+            delta = (timestamps[i] - timestamps[i-1]).total_seconds()
+            
+            # Only count if the gap is reasonable (active session)
+            # If they reply 5 hours later, don't count those 5 hours.
+            if delta < SESSION_THRESHOLD:
+                total_seconds += delta
+            else:
+                # Add a minimal baseline for the new session start (e.g. 1 min reading time)
+                total_seconds += 60 
+
+        # 4. Format Output
+        hours = int(total_seconds // 3600)
+        minutes = int((total_seconds % 3600) // 60)
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+
 history_manager = HistoryManager()

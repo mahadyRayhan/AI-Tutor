@@ -418,3 +418,11 @@ When you retrieve them, you **MUST** convert them back to Python Dictionaries, o
 **Recommendation:**
 If you are close to the paper deadline, **stick with JSON**. It is working.
 If you have 2-3 days, **switch to SQLite**. It makes the "System Implementation" section of your paper much stronger because you can talk about "Relational Data Modeling" and "ACID Compliance."
+
+### -------------------------------------
+How to Calculate "Active Time"?
+Since HTTP is stateless, we don't know exactly when a student leaves the tab.
+The Heuristic: We sort messages by time. We calculate the time difference between consecutive messages.
+If difference < 20 minutes: We count it as active studying.
+If difference > 20 minutes: We assume they took a break and don't count the gap.
+### -------------------------------------
