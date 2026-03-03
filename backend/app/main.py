@@ -126,8 +126,6 @@ def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
     scores = {}
     topic_interactions = {}
 
-    print(f"\n📊 [DEBUG] Calculating Mastery for {len(history)} interactions...")
-
     for h in history:
         # Get Topic and Intent (Default to General/Unknown if missing)
         t = h.get('topic', 'General')
@@ -743,28 +741,26 @@ async def get_teacher_detailed_analytics():
     class_matrix = []
     current_time = datetime.now()
 
-    # Create consistent anonymous IDs based on sorting
+    # Sort students for consistent display
     students.sort() 
     
     for idx, student in enumerate(students):
-        # Generate ID like "Student_01"
         anon_id = f"Student_{idx + 1:02d}"
         
         history = history_manager.get_student_history(student)
         mastery = _calculate_mastery(history)
         
-        # ... (Keep your existing Risk Logic here) ...
-        # [PASTE YOUR EXISTING RISK LOGIC FROM PREVIOUS STEP HERE]
-        # Recalculate risk/last_active variables...
-        
-        # 1. Last Active
+        # 1. Last Active Calculation
         last_active_str = "Never"
         days_inactive = 999
         if history:
             last_ts = history[-1]['timestamp']
-            last_date = datetime.fromisoformat(last_ts)
-            last_active_str = last_date.strftime("%Y-%m-%d")
-            days_inactive = (current_time - last_date).days
+            try:
+                last_date = datetime.fromisoformat(last_ts)
+                last_active_str = last_date.strftime("%Y-%m-%d")
+                days_inactive = (current_time - last_date).days
+            except:
+                pass # Handle legacy timestamp formats if any
 
         # 2. Risk Assessment
         total_interactions = len(history)
@@ -780,20 +776,44 @@ async def get_teacher_detailed_analytics():
         elif days_inactive > 7:
             risk = "High"
             risk_reason = f"Absent for {days_inactive} days"
-        elif (debug_count / max(1, total_interactions)) > 0.6 and total_interactions > 5:
+        elif total_interactions > 5 and (debug_count / total_interactions) > 0.6:
             risk = "High"
             risk_reason = "High error rate (Struggling)"
-        elif avg_mastery < 30:
+        elif total_interactions > 0 and avg_mastery < 30:
             risk = "Medium"
             risk_reason = "Low topic mastery"
             
-        sorted_topics = sorted(mastery.items(), key=lambda x: x[1], reverse=True)
-        strongest = sorted_topics[0][0] if sorted_topics else "-"
-        weakest = sorted_topics[-1][0] if sorted_topics else "-"
+        # 3. Strongest / Weakest Logic (The Fix)
+        # Filter out "General" for specific skill tracking
+        valid_topics = {k: v for k, v in mastery.items() if k != "General"}
+        print(" DEBUG: Valid Topics", valid_topics)
+        sorted_topics = sorted(valid_topics.items(), key=lambda x: x[1], reverse=True)
+        print(" DEBUG: Sorted Topics", sorted_topics)
+        
+        strongest = "-"
+        weakest = "-"
+
+        if sorted_topics:
+            # Top of the list is strongest
+            top_topic, top_score = sorted_topics[0]
+            if top_score > 10:
+                strongest = top_topic
+            else:
+                strongest = "Just Started"
+
+            # Bottom of the list is weakest (if we have more than 1 topic)
+            if len(sorted_topics) > 1:
+                weakest = sorted_topics[-1][0]
+            elif top_score < 40:
+                # If only 1 topic and score is low, it's also the weakness
+                weakest = top_topic
+        
+        print(" DEBUG: Strongest", strongest)
+        print(" DEBUG: Weakest", weakest)
 
         class_matrix.append({
-            "hidden_username": student, # Kept for API calls, NOT for display
-            "display_id": anon_id,      # Show this to teacher
+            "hidden_username": student, 
+            "display_id": anon_id,      
             "risk_level": risk,
             "risk_reason": risk_reason,
             "strongest_topic": strongest,

@@ -11,12 +11,16 @@ class HistoryManager:
     def log_interaction(self, message_id: int, intent: str, topic: str):
         if message_id:
             try:
+                # Safety fallback: If AI sends None, use defaults
+                safe_intent = intent or "UNKNOWN"
+                safe_topic = topic or "General"
+                
                 db.conn.execute("""
                     UPDATE messages 
                     SET intent = ?, topic = ? 
                     WHERE id = ?
-                """, (intent, topic, message_id))
-                db.conn.commit() # <--- CRITICAL FIX: Save the update
+                """, (safe_intent, safe_topic, message_id))
+                db.conn.commit()
             except Exception as e:
                 print(f"Analytics Log Error: {e}")
 
@@ -30,29 +34,40 @@ class HistoryManager:
         return session_id
 
     def add_message(self, username: str, session_id: str, role: str, content: str, sources: list = None) -> int:
-        """
-        Adds a message and RETURNS the database row ID.
-        """
-        # 1. Ensure Session Exists (If manually passed ID)
+        # 1. Ensure Session Exists
         sess = db.fetch_one("SELECT 1 FROM sessions WHERE session_id = ?", (session_id,))
         if not sess:
-            self.create_session(username) # Logic creates entry with that ID if we forced it
+            self.create_session(username) 
 
-        # 2. Update Title if it's the first user message
+        # 2. Update Title if first user message
         if role == "user":
             count = db.fetch_one("SELECT count(*) as c FROM messages WHERE session_id = ?", (session_id,))
             if count['c'] == 0:
                 new_title = content[:40] + "..."
                 db.execute("UPDATE sessions SET title = ? WHERE session_id = ?", (new_title, session_id))
 
-        # 3. Insert Message and Return ID
+        # 3. Insert Message with DEFAULTS
         sources_json = json.dumps(sources) if sources else None
         
-        # We use the connection directly here to ensure we get the cursor for lastrowid
+        # --- ROOT CAUSE FIX IS HERE ---
+        # We explicitly insert 'General' for topic and 'PROCESSING' for intent.
+        # This prevents NULLs even if the analytics step crashes later.
+        default_topic = "General"
+        default_intent = "PROCESSING" if role == 'user' else "RESPONSE"
+
         cursor = db.conn.execute("""
-            INSERT INTO messages (session_id, username, role, content, sources, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (session_id, username, role, content, sources_json, datetime.now()))
+            INSERT INTO messages (session_id, username, role, content, sources, timestamp, intent, topic)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            session_id, 
+            username, 
+            role, 
+            content, 
+            sources_json, 
+            datetime.now(), 
+            default_intent, # <--- No more NULL
+            default_topic   # <--- No more NULL
+        ))
         db.conn.commit()
         
         return cursor.lastrowid
