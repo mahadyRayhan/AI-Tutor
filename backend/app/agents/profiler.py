@@ -74,54 +74,50 @@ class ProfilerAgent(BaseAgent):
             return "NEUTRAL"
 
     async def update_learning_profile(self, user_id: str):
-        """
-        Batch Profiling using Zero-Shot Classification.
-        Runs in background (~2s).
-        """
         self.logger.info(f"🧠 Running Deep Profiling for {user_id}...")
         
         # 1. Fetch recent history
         rows = db.fetch_all("""
             SELECT content FROM messages 
             WHERE username = ? AND role = 'user' 
-            ORDER BY id DESC LIMIT 15
-        """, (user_id,))
+            ORDER BY id DESC LIMIT 5
+        """, (user_id,)) # Reduced to 5 so it reacts faster to recent mood swings
         
-        messages = [r['content'] for r in rows]
-        if len(messages) < 3: return # Need data
+        messages = [r['content'].lower() for r in rows]
+        if not messages: return
 
-        # Concatenate into one context string
+        # 2. HEURISTIC OVERRIDES (The "Demo Savior")
+        # If the user explicitly says these words, don't rely on probability, just do it.
+        is_explicitly_short = any(word in msg for msg in messages for word in ["too long", "shorter", "syntax only", "just the code", "brief"])
+        is_explicitly_long = any(word in msg for msg in messages for word in ["explain in detail", "elaborate", "deep dive", "theory"])
+        is_explicitly_visual = any(word in msg for msg in messages for word in ["picture", "diagram", "draw", "visual"])
+
         history_text = ". ".join(messages)
+        profile = {"preferred_modality": "text", "attention_span": "normal"} # Defaults
 
-        # 2. Run SOTA Zero-Shot Classification
         try:
+            # 3. Run SOTA Zero-Shot Classification
             result = self.behavior_classifier(
                 history_text, 
                 candidate_labels=self.learning_traits,
                 multi_label=True 
             )
-            
-            # 3. Interpret Probabilities
-            profile = {}
             scores = {label: score for label, score in zip(result['labels'], result['scores'])}
             
-            # Logic: Modality
-            if scores['visual learner'] > 0.4 and scores['visual learner'] > scores['verbal learner']:
+            # 4. Blend Heuristics with ML Scores
+            # Modality
+            if is_explicitly_visual or (scores['visual learner'] > 0.4 and scores['visual learner'] > scores['verbal learner']):
                 profile['preferred_modality'] = 'visual'
             elif scores['practical coder'] > 0.5:
                 profile['preferred_modality'] = 'code_first'
-            else:
-                profile['preferred_modality'] = 'text'
 
-            # Logic: Attention
-            if scores['impatient learner'] > 0.5:
+            # Attention
+            if is_explicitly_short or scores['impatient learner'] > 0.4:
                 profile['attention_span'] = 'short'
-            elif scores['detail oriented'] > 0.5:
+            elif is_explicitly_long or scores['detail oriented'] > 0.4:
                 profile['attention_span'] = 'long'
-            else:
-                profile['attention_span'] = 'normal'
 
-            # 4. Save to DB
+            # 5. Save to DB
             db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), user_id))
             self.logger.info(f"✅ Profile Updated for {user_id}: {profile}")
 
