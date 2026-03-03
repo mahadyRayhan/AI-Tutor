@@ -544,8 +544,20 @@ async def signup(req: SignupRequest):
         raise HTTPException(status_code=400, detail="Username already exists")
 
 @app.get("/api/v1/admin/users", dependencies=[Depends(verify_teacher)])
-async def get_all_users():
-    return user_manager.get_all_users()
+async def get_users_paginated(page: int = 1, page_size: int = 10):
+    # 1. Get Data from Manager
+    users = user_manager.get_all_users(page, page_size)
+    total_records = user_manager.get_total_user_count()
+    
+    # 2. Calculate Metadata
+    total_pages = (total_records + page_size - 1) // page_size
+    
+    return {
+        "items": users,
+        "total": total_records,
+        "page": page,
+        "pages": total_pages
+    }
 
 @app.post("/api/v1/admin/users/update")
 async def update_user(req: AdminUserUpdate):
@@ -731,38 +743,55 @@ async def get_teacher_analytics():
     }
     
 @app.get("/api/v1/analytics/teacher/detailed")
-async def get_teacher_detailed_analytics():
+async def get_teacher_detailed_analytics(page: int = 1, page_size: int = 10):
     """
-    Returns calculated matrix with ANONYMIZED IDs.
+    Returns calculated matrix with Pagination.
+    Optimization: Only runs heavy calculations for the requested page of students.
     """
-    all_users = user_manager.get_all_users()
-    students = [u['username'] for u in all_users if u['role'] == 'student']
+    # 1. Fetch ALL student usernames to establish order and total count
+    # We use a raw query here because we need the full list to sort alphabetically before slicing
+    rows = db.fetch_all("SELECT username FROM users WHERE role = 'student'")
+    students = [r['username'] for r in rows]
+    students.sort() # Ensure consistent order across pages
+    
+    # 2. Pagination Logic
+    total_records = len(students)
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    
+    # Slice the list: only process students for THIS page
+    page_students = students[start_idx:end_idx]
 
     class_matrix = []
     current_time = datetime.now()
 
-    # Sort students for consistent display
-    students.sort() 
-    
-    for idx, student in enumerate(students):
-        anon_id = f"Student_{idx + 1:02d}"
+    # 3. Heavy Calculation (Only for the sliced students)
+    for idx, student in enumerate(page_students):
+        # Calculate display ID based on actual index in the full list
+        real_idx = start_idx + idx + 1
+        anon_id = f"Student_{real_idx:02d}"
         
         history = history_manager.get_student_history(student)
         mastery = _calculate_mastery(history)
         
-        # 1. Last Active Calculation
+        # --- A. Last Active Calculation ---
         last_active_str = "Never"
         days_inactive = 999
         if history:
             last_ts = history[-1]['timestamp']
             try:
-                last_date = datetime.fromisoformat(last_ts)
+                # Handle both ISO strings and datetime objects
+                if isinstance(last_ts, str):
+                    last_date = datetime.fromisoformat(last_ts)
+                else:
+                    last_date = last_ts
+                
                 last_active_str = last_date.strftime("%Y-%m-%d")
                 days_inactive = (current_time - last_date).days
-            except:
-                pass # Handle legacy timestamp formats if any
+            except: 
+                pass
 
-        # 2. Risk Assessment
+        # --- B. Risk Assessment ---
         total_interactions = len(history)
         debug_count = sum(1 for h in history if h.get('intent') == 'DEBUG')
         avg_mastery = sum(mastery.values()) / len(mastery) if mastery else 0
@@ -778,38 +807,26 @@ async def get_teacher_detailed_analytics():
             risk_reason = f"Absent for {days_inactive} days"
         elif total_interactions > 5 and (debug_count / total_interactions) > 0.6:
             risk = "High"
-            risk_reason = "High error rate (Struggling)"
+            risk_reason = "High error rate"
         elif total_interactions > 0 and avg_mastery < 30:
             risk = "Medium"
             risk_reason = "Low topic mastery"
             
-        # 3. Strongest / Weakest Logic (The Fix)
-        # Filter out "General" for specific skill tracking
-        valid_topics = {k: v for k, v in mastery.items() if k != "General"}
-        print(" DEBUG: Valid Topics", valid_topics)
+        # --- C. Strongest / Weakest Logic ---
+        # Filter out "General" and None values
+        valid_topics = {k: v for k, v in mastery.items() if k and k != "General"} 
         sorted_topics = sorted(valid_topics.items(), key=lambda x: x[1], reverse=True)
-        print(" DEBUG: Sorted Topics", sorted_topics)
         
         strongest = "-"
         weakest = "-"
 
         if sorted_topics:
-            # Top of the list is strongest
             top_topic, top_score = sorted_topics[0]
-            if top_score > 10:
-                strongest = top_topic
-            else:
-                strongest = "Just Started"
-
-            # Bottom of the list is weakest (if we have more than 1 topic)
-            if len(sorted_topics) > 1:
-                weakest = sorted_topics[-1][0]
-            elif top_score < 40:
-                # If only 1 topic and score is low, it's also the weakness
-                weakest = top_topic
-        
-        print(" DEBUG: Strongest", strongest)
-        print(" DEBUG: Weakest", weakest)
+            if top_score > 10: strongest = top_topic
+            else: strongest = "Just Started"
+            
+            if len(sorted_topics) > 1: weakest = sorted_topics[-1][0]
+            elif top_score < 40: weakest = top_topic
 
         class_matrix.append({
             "hidden_username": student, 
@@ -822,7 +839,12 @@ async def get_teacher_detailed_analytics():
             "mastery": mastery
         })
         
-    return class_matrix
+    return {
+        "items": class_matrix,
+        "total": total_records,
+        "page": page,
+        "pages": (total_records + page_size - 1) // page_size if page_size > 0 else 1
+    }
 
 @app.get("/api/v1/analytics/student_detail/{username}")
 async def get_student_detail_view(username: str):

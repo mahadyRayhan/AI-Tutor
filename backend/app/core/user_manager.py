@@ -54,9 +54,28 @@ class UserManager:
             print(f"Signup error: {e}")
             return False
 
-    def get_all_users(self) -> List[Dict]:
-        rows = db.fetch_all("SELECT username, role, name, email, university, is_blocked FROM users")
+    def get_all_users(self, page: int = 1, page_size: int = 10) -> List[Dict]:
+        """
+        Fetches a specific page of users.
+        """
+        offset = (page - 1) * page_size
+        
+        # Use parameterized query for safety, though integers are generally safe
+        rows = db.fetch_all(f"""
+            SELECT username, role, name, email, university, is_blocked 
+            FROM users
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (page_size, offset))
+        
         return [dict(row) for row in rows]
+
+    def get_total_user_count(self) -> int:
+        """
+        Returns total number of users for pagination calculation.
+        """
+        row = db.fetch_one("SELECT count(*) as cnt FROM users")
+        return row['cnt'] if row else 0
 
     def update_user_status(self, username: str, role: str = None, blocked: bool = None):
         if role:

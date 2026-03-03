@@ -207,6 +207,18 @@
             visibility: visible;
             opacity: 1;
         }
+
+        .pagination-controls {
+            display: flex; justify-content: flex-end; align-items: center; gap: 15px;
+            padding: 10px 0; border-top: 1px solid #eee; margin-top: 5px;
+        }
+        .btn-page {
+            padding: 6px 12px; background: white; border: 1px solid #ddd;
+            border-radius: 6px; cursor: pointer; color: var(--secondary); font-weight: 600;
+        }
+        .btn-page:hover { background: #f1f2f6; }
+        .btn-page:disabled { opacity: 0.5; cursor: not-allowed; }
+
         /* --- RESPONSIVE --- */
         @media (max-width: 900px) {
             .grid-container { grid-template-columns: 1fr; }
@@ -250,6 +262,17 @@
                         </tr>
                     </thead>
                     <tbody><!-- Loaded via JS --></tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="5">
+                                <div class="pagination-controls">
+                                    <button class="btn-page" onclick="changeUserPage(-1)">Previous</button>
+                                    <span id="userPageInfo">Page 1</span>
+                                    <button class="btn-page" onclick="changeUserPage(1)">Next</button>
+                                </div>
+                            </td>
+                        </tr>
+                    </tfoot>
                 </table>
             </div>
         </div>
@@ -354,6 +377,17 @@
                         </tr>
                     </thead>
                     <tbody><!-- Loaded via JS --></tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="6">
+                                <div class="pagination-controls">
+                                    <button class="btn-page" onclick="changeRiskPage(-1)">Previous</button>
+                                    <span id="riskPageInfo">Page 1</span>
+                                    <button class="btn-page" onclick="changeRiskPage(1)">Next</button>
+                                </div>
+                            </td>
+                        </tr>
+                    </tfoot>
                 </table>
             </div>
         </div>
@@ -394,6 +428,9 @@
 
 <script>
     const API_URL = "";
+    let currentUserPage = 1;
+    let currentRiskPage = 1;
+    const PAGE_SIZE = 10; 
     const USER_ID_MAP = {};
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
     const FILE_RULES = {
@@ -446,59 +483,17 @@
 
     // --- 2. DATA LOADING ---
     async function loadData() {
+        // 1. Load the first page of the tables (Paginated)
+        loadUsersTable(1);
+        loadRiskTable(1);
+        
+        // 2. Load the stuff that doesn't change (Charts, Topics, Inbox)
+        loadStaticData();
+    }
+
+    async function loadStaticData() {
         try {
-            // A. LOAD USERS (Updated with Security Headers)
-            const resUsers = await fetch(`${API_URL}/api/v1/admin/users`, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    // PASS THE ROLE HEADER SO BACKEND ALLOWS ACCESS
-                    'X-User-Role': currentUser.role 
-                }
-            });
-
-            if (resUsers.ok) {
-                const users = await resUsers.json();
-                const tbody = document.querySelector('#userTable tbody');
-                tbody.innerHTML = '';
-
-                users.forEach(u => {
-                    const isSelf = u.username === currentUser.username;
-                    
-                    // Role Dropdown HTML
-                    const roleSelect = isSelf ? 
-                        `<span style="font-weight:bold; color:purple">Teacher (You)</span>` :
-                        `<select class="role-select" onchange="changeUserRole('${u.username}', this.value)">
-                            <option value="student" ${u.role === 'student' ? 'selected' : ''}>Student</option>
-                            <option value="teacher" ${u.role === 'teacher' ? 'selected' : ''}>Teacher</option>
-                        </select>`;
-
-                    // Block Switch HTML
-                    const blockSwitch = isSelf ? 
-                        `<span class="status-badge status-active">Active</span>` :
-                        `<label class="switch">
-                            <input type="checkbox" ${!u.blocked ? 'checked' : ''} onchange="toggleBlockUser('${u.username}', !this.checked)">
-                            <span class="slider ${!u.blocked ? '' : 'danger'}"></span>
-                        </label>
-                        <span style="font-size:0.8rem; margin-left:8px; color:${u.blocked ? 'red' : 'green'}">
-                            ${u.blocked ? 'Blocked' : 'Active'}
-                        </span>`;
-
-                    tbody.innerHTML += `
-                        <tr>
-                            <td style="font-weight:600;">${u.username}</td>
-                            <td>${u.name || '-'}</td>
-                            <td>${roleSelect}</td>
-                            <td>${u.university || '-'}</td>
-                            <td>${blockSwitch}</td>
-                        </tr>
-                    `;
-                });
-            } else {
-                console.error("Access Denied to User List (Check your Role/Headers)");
-            }
-
-            // B. LOAD TOPICS
+            // A. Topics
             const resTopics = await fetch(`${API_URL}/api/v1/config/topics`);
             const topics = await resTopics.json();
             const tGrid = document.getElementById('topicGrid');
@@ -514,16 +509,12 @@
                     </div>`;
             }
 
-            // C. LOAD ANALYTICS & RISK (Existing Logic)
+            // B. Charts
             const resOverview = await fetch(`${API_URL}/api/v1/analytics/teacher/overview`);
             const dataOv = await resOverview.json();
             renderCharts(dataOv);
 
-            const resMatrix = await fetch(`${API_URL}/api/v1/analytics/teacher/detailed`);
-            const riskData = await resMatrix.json();
-            renderRiskTable(riskData);
-
-            // D. LOAD INBOX
+            // C. Inbox
             const resInbox = await fetch(`${API_URL}/api/v1/assignments/teacher/pending?username=${currentUser.username}`);
             const inbox = await resInbox.json();
             const inboxDiv = document.getElementById('inboxList');
@@ -532,8 +523,9 @@
             if(inbox.length === 0) inboxDiv.innerHTML = '<div style="color:#777">No pending reviews.</div>';
 
             inbox.forEach(item => {
-                // Ensure USER_ID_MAP is populated by renderRiskTable before this runs
-                const safeName = USER_ID_MAP[item.student] || "Student-X";
+                // Note: USER_ID_MAP is populated by loadRiskTable, so names might be "Student-X" initially
+                // until the risk table loads.
+                const safeName = USER_ID_MAP[item.student] || item.student;
                 
                 inboxDiv.innerHTML += `
                     <div style="border:1px solid #eee; padding:15px; border-radius:8px; background:#fff;">
@@ -544,9 +536,7 @@
                             <b>Q:</b> ${item.question}<br>
                             <b>A:</b> ${item.student_answer}
                         </div>
-                        
                         <textarea id="feedback-${item.id}" placeholder="Write feedback here..." style="width:100%; margin-bottom:5px; padding:5px; border:1px solid #ddd; border-radius:4px; font-family:inherit;"></textarea>
-                        
                         <div style="display:flex; gap:10px;">
                             <button onclick="aiCheck('${item.id}', '${escape(item.student_answer)}')" style="background:#f1c40f; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">🤖 Check with AI</button>
                             <button onclick="submitGrade('${item.id}')" style="background:#27ae60; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">✅ Send Feedback</button>
@@ -554,8 +544,143 @@
                     </div>
                 `;
             });
+        } catch (e) { console.error("Error loading static data:", e); }
+    }
 
-        } catch (e) { console.error("Error loading data:", e); }
+    async function loadUsersTable(page) {
+        try {
+            const res = await fetch(`${API_URL}/api/v1/admin/users?page=${page}&page_size=${PAGE_SIZE}`, {
+                headers: { 'X-User-Role': currentUser.role }
+            });
+            const data = await res.json();
+            
+            const tbody = document.querySelector('#userTable tbody');
+            tbody.innerHTML = '';
+            
+            data.items.forEach(u => {
+                const isSelf = u.username === currentUser.username;
+                
+                const roleSelect = isSelf ? 
+                    `<span style="font-weight:bold; color:purple">Teacher (You)</span>` :
+                    `<select class="role-select" onchange="changeUserRole('${u.username}', this.value)">
+                        <option value="student" ${u.role === 'student' ? 'selected' : ''}>Student</option>
+                        <option value="teacher" ${u.role === 'teacher' ? 'selected' : ''}>Teacher</option>
+                    </select>`;
+
+                const blockSwitch = isSelf ? 
+                    `<span class="status-badge status-active">Active</span>` :
+                    `<label class="switch">
+                        <input type="checkbox" ${!u.blocked ? 'checked' : ''} onchange="toggleBlockUser('${u.username}', !this.checked)">
+                        <span class="slider ${!u.blocked ? '' : 'danger'}"></span>
+                    </label>
+                    <span style="font-size:0.8rem; margin-left:8px; color:${u.blocked ? 'red' : 'green'}">
+                        ${u.blocked ? 'Blocked' : 'Active'}
+                    </span>`;
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td style="font-weight:600;">${u.username}</td>
+                        <td>${u.name || '-'}</td>
+                        <td>${roleSelect}</td>
+                        <td>${u.university || '-'}</td>
+                        <td>${blockSwitch}</td>
+                    </tr>
+                `;
+            });
+
+            // Update State & UI
+            currentUserPage = data.page;
+            const info = document.getElementById('userPageInfo');
+            if(info) info.innerText = `Page ${data.page} of ${data.pages}`;
+
+        } catch (e) { console.error("Error loading users:", e); }
+    }
+
+    function changeUserPage(dir) {
+        const newPage = currentUserPage + dir;
+        // Basic check: > 0. Ideally check < total_pages too, but strict bounds are handled by backend clamping usually
+        if (newPage > 0) loadUsersTable(newPage);
+    }
+
+    async function loadRiskTable(page) {
+        const tbody = document.querySelector('#riskTable tbody');
+        // Loading State
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:#999;">🔄 Calculating analytics...</td></tr>';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/detailed?page=${page}&page_size=${PAGE_SIZE}`);
+            const data = await res.json();
+            
+            // Pass the array of students to the renderer
+            renderRiskTableRows(data.items);
+
+            // Update State & UI
+            currentRiskPage = data.page;
+            const info = document.getElementById('riskPageInfo');
+            if(info) info.innerText = `Page ${data.page} of ${data.pages}`;
+            
+        } catch (e) { 
+            console.error("Error loading risk table:", e);
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:red;">Error loading data</td></tr>';
+        }
+    }
+
+    function changeRiskPage(dir) {
+        const newPage = currentRiskPage + dir;
+        if (newPage > 0) loadRiskTable(newPage);
+    }
+
+    function renderRiskTableRows(students) {
+        const tbody = document.querySelector('#riskTable tbody');
+        tbody.innerHTML = '';
+        
+        if (!students || students.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">No students found.</td></tr>';
+            return;
+        }
+
+        students.forEach(s => {
+            // Map hidden username to display ID for other parts of the app
+            USER_ID_MAP[s.hidden_username] = s.display_id;
+            
+            // Determine badge color
+            let riskColor = s.risk_level === 'High' ? '#e74c3c' : (s.risk_level === 'Medium' ? '#f39c12' : '#27ae60');
+            if(s.risk_level === 'Inactive') riskColor = '#95a5a6';
+
+            const riskBadge = `
+                <div class="info-icon" style="background:${riskColor}; color:white; width:auto; padding:2px 10px; border-radius:12px; font-weight:bold; font-family:sans-serif;">
+                    ${s.risk_level}
+                    <span class="tooltip-text">${s.risk_reason}</span>
+                </div>
+            `;
+
+            // Escape JSON for onclick handler
+            const masteryStr = encodeURIComponent(JSON.stringify(s.mastery));
+            const timeCellId = `time-${s.display_id}`;
+
+            tbody.innerHTML += `
+                <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${s.risk_level}', '${masteryStr}')">
+                    <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
+                    <td>${riskBadge}</td>
+                    
+                    <!-- Active Time Cell -->
+                    <td id="${timeCellId}" class="active-time-cell" data-username="${s.hidden_username}">
+                        <span style="color:#bdc3c7; font-size:0.8rem;">Pending...</span>
+                    </td>
+                    
+                    <td>${s.strongest_topic}</td>
+                    <td>${s.weakest_topic}</td>
+                    <td>${s.last_active}</td>
+                </tr>
+            `;
+        });
+
+        // Trigger Active Time Calc for this specific page of students
+        setTimeout(() => {
+            const dropdown = document.getElementById('timeRangeSelector');
+            // If dropdown exists, calculate. Default to 7 days if not set.
+            if(dropdown) updateAllActiveTimes(dropdown.value || 7);
+        }, 100);
     }
 
     // --- HELPERS ---
