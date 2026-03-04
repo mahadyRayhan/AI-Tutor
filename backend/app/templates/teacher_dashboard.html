@@ -208,6 +208,56 @@
             opacity: 1;
         }
 
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;  /* Standard width for ALL toggles */
+            height: 24px; /* Standard height */
+            flex-shrink: 0; /* Prevent squashing in tables */
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 100%;    /* Force input to cover the toggle */
+            height: 100%;   /* Force input to cover the toggle */
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 2;     /* Keep it above the slider so it catches clicks */
+            cursor: pointer;
+            margin: 0;
+        }
+
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #CBD5E1; /* Default Gray (Inactive) */
+            transition: .3s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px; width: 18px;
+            left: 3px; bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* Nice shadow */
+        }
+
+        /* Checked State (Green) */
+        input:checked + .slider {
+            background-color: var(--success);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
         .pagination-controls {
             display: flex; justify-content: flex-end; align-items: center; gap: 15px;
             padding: 10px 0; border-top: 1px solid #eee; margin-top: 5px;
@@ -472,13 +522,57 @@
         }
     }
 
-    async function toggleBlockUser(username, isBlocked) {
-        await fetch(`${API_URL}/api/v1/admin/users/update`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ target_username: username, blocked: isBlocked })
-        });
-        loadData(); // Refresh UI
+    async function handleToggleChange(checkbox, username) {
+        const isNowActive = checkbox.checked;
+        const shouldBlock = !isNowActive; 
+
+        // 1. Optimistic UI Update
+        const container = checkbox.closest('div');
+        
+        // FIX: Target the specific class we added
+        const statusLabel = container.querySelector('.status-label');
+        
+        if (statusLabel) {
+            statusLabel.textContent = isNowActive ? 'Active' : 'Blocked';
+            statusLabel.style.color = isNowActive ? 'var(--success)' : 'var(--danger)';
+        }
+
+        // 2. API Request
+        try {
+            const res = await fetch(`${API_URL}/api/v1/admin/users/update`, {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ target_username: username, blocked: shouldBlock })
+            });
+
+            if (!res.ok) throw new Error("API Error");
+            
+        } catch (e) {
+            console.error("Toggle failed", e);
+            // Revert UI on error
+            checkbox.checked = !isNowActive; 
+            if (statusLabel) {
+                statusLabel.textContent = !isNowActive ? 'Active' : 'Blocked';
+                statusLabel.style.color = !isNowActive ? 'var(--success)' : 'var(--danger)';
+            }
+            alert("Failed to update status.");
+        }
+    }
+
+    async function toggleBlockUser(username, shouldBlock) {
+        try {
+            // AWAIT the update so the DB finishes saving before we reload
+            await fetch(`${API_URL}/api/v1/admin/users/update`, {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ target_username: username, blocked: shouldBlock })
+            });
+            
+            // Reload the table to show the new state from the database
+            loadUsersTable(currentUserPage);
+        } catch(e) {
+            console.error("Failed to toggle user status:", e);
+        }
     }
 
     // --- 2. DATA LOADING ---
@@ -567,15 +661,24 @@
                         <option value="teacher" ${u.role === 'teacher' ? 'selected' : ''}>Teacher</option>
                     </select>`;
 
+                const isActive = !u.is_blocked; 
+                const statusColor = isActive ? 'var(--success)' : 'var(--danger)';
+                const statusLabel = isActive ? 'Active' : 'Blocked';
+
                 const blockSwitch = isSelf ? 
-                    `<span class="status-badge status-active">Active</span>` :
-                    `<label class="switch">
-                        <input type="checkbox" ${!u.blocked ? 'checked' : ''} onchange="toggleBlockUser('${u.username}', !this.checked)">
-                        <span class="slider ${!u.blocked ? '' : 'danger'}"></span>
-                    </label>
-                    <span style="font-size:0.8rem; margin-left:8px; color:${u.blocked ? 'red' : 'green'}">
-                        ${u.blocked ? 'Blocked' : 'Active'}
-                    </span>`;
+                    `<span class="badge badge-low">Active</span>` :
+                    `<div style="display:flex; align-items:center; gap:12px;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" 
+                                   ${isActive ? 'checked' : ''} 
+                                   onchange="handleToggleChange(this, '${u.username}')">
+                            <span class="slider"></span>
+                        </label>
+                        <!-- ADDED CLASS: status-label -->
+                        <span class="status-label" style="font-size:0.8rem; font-weight:600; color:${statusColor}; min-width:50px;">
+                            ${statusLabel}
+                        </span>
+                    </div>`;
 
                 tbody.innerHTML += `
                     <tr>
