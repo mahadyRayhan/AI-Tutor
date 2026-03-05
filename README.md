@@ -102,7 +102,7 @@ unzip -o tutor_v2.zip -d ~/AI-Tutor
 Ensure necessary directories have write permissions for the Docker containers:
 ```bash
 cd ~/AI-Tutor
-sudo chmod -R 777 database/ logs/ resources/
+sudo chmod -R 777 backend/database/ logs/ resources/
 ```
 
 ### Step D: Build and Launch

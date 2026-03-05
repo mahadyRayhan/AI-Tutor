@@ -14,7 +14,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     pyinstrument \
     gliner \
-    sentence-transformers
+    sentence-transformers \
+    passlib[bcrypt]==1.7.4 \
+    bcrypt==4.0.1
 
 # Step 2: Install PyTorch separately using the CPU-specific index
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu

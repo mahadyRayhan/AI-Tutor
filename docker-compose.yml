@@ -12,10 +12,11 @@ services:
       - PYTHONPATH=/app
     volumes:
       # Maps host folder to the root (for absolute path code)
-      - ./database:/database
+      # - ./database:/database
       - ./resources:/resources
       # Maps host folder to /app (for relative path code)
-      - ./database:/app/database
+      # - ./database:/app/database
+      - ./backend/database:/app/backend/database
       - ./resources:/app/resources
       - ./scripts:/app/scripts
       # Add logs to prevent permission crashes during logging

@@ -44,7 +44,8 @@ CODE_PATH = RESOURCES_DIR / "code"
 
 RESOURCE_PATHS = [CONCEPTS_PATH, CODE_PATH]
 
-DB_DIR = PROJECT_ROOT / "database"
+# DB_DIR = PROJECT_ROOT / "database"
+DB_DIR = PROJECT_ROOT / "backend" / "database"
 LOG_DIR = PROJECT_ROOT / "logs"
 DEFAULT_VECTOR_DB_PATH = str(DB_DIR / "chroma_db")
 DEFAULT_LOG_FILE_PATH = str(LOG_DIR / "ai_tutor.log")
