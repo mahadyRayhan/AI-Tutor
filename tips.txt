@@ -126,39 +126,7 @@ Based on your working CoT RAG system, here are concrete research directions that
 4. **Educational technology journals** (Computers & Education, JAIED)
 
 Your system provides a unique research platform because you can study both successful and failed reasoning in a controlled educational context. The key is focusing on one direction initially while building the infrastructure for broader studies.
-
-
-function displaySources(sources) {
-    const container = document.getElementById('sourcesList');
-    let html = '';
-    const seen = new Set();
-
-    sources.forEach(source => {
-        const name = source.document_name || 'Unknown Source';
-        if (!seen.has(name)) {
-            seen.add(name);
-            html += `<div class="source-item">📄 ${escapeHtml(name)}</div>`;
-        }
-    });
-
-    container.innerHTML = html;
-}
-
-so, whatever has been done so far, if I want to submit this as a conference paper. But I am not sure whether this is enough of not.
-I have some other ideas to add, like security check, llm security, rag security and all.
-could you tell me what else I should add to make it a good conference paper (inital focus is ICHMS) including evalaution
-I need a good to the point plan for this.
-
-/* Messages */
-.messages-container { 
-    flex: 1; padding: 20px 6%; 
-    overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
-    padding-bottom: 120px; z-index: 6;
-}
-.message { 
-    max-width: 95%; padding: 10px 10px; border-radius: 18px; 
-    line-height: 1.6; font-size: 1rem; color: var(--text-primary);
-}
+--------------------------------------------------------------------------------------------------------------------------
 
 ------ ML for PPN ------------
 Got it. Now it works and saves users feedback as well as changes text based on your choice, like simplified or deepdive. Now, I have a question: how can I use some ML model here (specifically for content visual decision making)? previously I had some suggestions like this:
@@ -189,235 +157,8 @@ This table covers the entire pipeline: from understanding the user, to deciding 
 4.  **Llama 3 (DPO)** receives the prompt: *"Explain loops using a visual analogy. Do not give code."*
 5.  **DeBERTa** verifies the explanation is accurate.
 6.  **The User** sees a helpful diagram instead of a wall of text.
+---------------------------------------------------------------------------------------------------------------------------------
 
-which one is useful here?
-
------ LLM suggested next steps ------------
-To transform this from a "Smart Tool" into a **"True Learning Companion,"** you need to move beyond *answering* and start *anticipating*. You need features that foster **Metacognition** (thinking about thinking) and **Long-Term Retention**.
-
-Here are the 3 most impactful features to add next, ranked by educational value.
-
----
-
-### **1. The "Knowledge Constellation" (Visual Metacognition)**
-Currently, "Mastery" is just a bar chart on a dashboard.
-**The Feature:** A dynamic, interactive network graph on the Student Dashboard.
-*   **Visual:** Nodes represent topics (Loops, Arrays).
-*   **Logic:**
-    *   **Gray:** Locked/Unknown.
-    *   **Yellow:** In Progress (Prerequisites met).
-    *   **Green:** Mastered.
-*   **Why:** It shows the student *how concepts connect*. They see that "Arrays" isn't just a random topic; it's physically connected to "Loops" and "Variables."
-*   **Implementation:** Use a library like `vis.js` or `cytoscape.js` on the frontend. The backend endpoint simply returns the Neo4j nodes/edges filtered by the student's `user_knowledge.json`.
-
----
-
-### **2. Spaced Repetition "Warm-ups" (Retention)**
-Currently, the system assumes the student remembers everything they learned yesterday. Real students forget.
-**The Feature:** When a student starts a new session, the AI proactively asks a **"Warm-up Question"** based on a topic they learned 3+ days ago.
-*   **Logic:**
-    1.  Check `user_knowledge.json` for topics marked "Known" > 3 days ago.
-    2.  If one exists, inject a system message at the start of the chat: *"Welcome back! Before we start, quick check: Do you remember how to declare a float array?"*
-*   **Why:** This fights the "Forgetting Curve." It turns the AI into a coach that ensures long-term retention.
-
----
-
-### **3. Personalized Analogy Engine (Companion)**
-You captured the user's **"Interest"** (e.g., Music, Gaming, Sports) during Signup, but you aren't using it!
-**The Feature:** Inject the user's interest into the System Prompt so explanations use relevant metaphors.
-*   **Example:**
-    *   *User Interest:* "Gaming"
-    *   *Question:* "What is a Struct?"
-    *   *AI Answer:* "Think of a **Struct** like a **Player Character** in a game. It holds different stats (Health, Name, Ammo) in one package."
-
-#### **Implementation Guide for Feature 3 (The Quickest Win)**
-
-This is very easy to add and makes the system feel "alive."
-
-**Step 1: Update `run_stream` to fetch user interest**
-In `main.py` or wherever you load the user, ensure you pass `interest`.
-
-**Step 2: Update `_build_concept_prompt` in `cot_rag_agent.py`**
-
-Add an `user_interest` argument and inject it into the prompt.
-
-```python
-    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, user_interest: str = None) -> str:
-        
-        # ... existing goal section ...
-
-        interest_instruction = ""
-        if user_interest and user_interest.lower() != "none":
-            interest_instruction = f"""
-            7. **PERSONALIZATION:** The student loves "**{user_interest}**". 
-               - When explaining concepts, use analogies related to {user_interest}.
-               - Example: If interest is 'Gaming' and topic is 'Structs', compare a Struct to a 'Player Stats' container.
-            """
-
-        return f"""
-        You are an expert C Programming Tutor.
-        
-        # ... (Rest of prompt) ...
-
-        **MANDATORY RULES:**
-        # ... (Rules 1-6) ...
-        {interest_instruction}
-        
-        # ... (Rest of prompt) ...
-        """
-```
-
----
-
-### **4. "Struggle Detection" & Metacognitive Nudges**
-The system currently tracks *what* they ask. It should track *how often they fail*.
-
-**The Feature:** If a student triggers the "Guide Mode" or "Visual Aid" 3 times for the same topic (e.g., Pointers), the system should intervene.
-*   **The Intervention:** instead of just explaining again, the AI says:
-    > *"I notice we've hit a bump with Pointers a few times. That is totally normal—it's the hardest part of C!
-    >
-    > instead of writing code, do you want to try a 'Memory Diagram' exercise where we just draw boxes and arrows?"*
-
-**Why:** It teaches the student to **change strategies** when stuck, rather than just brute-forcing the code.
-
----
-
-### **Summary: The Roadmap**
-
-1.  **Immediate (Software):** Implement **Feature 3 (Personalization)**. It requires minimal code but drastically changes the "vibe" of the chat.
-2.  **Short Term (Logic):** Implement **Feature 2 (Spaced Repetition)**. Add a timestamp to your `user_knowledge.json` entries (`{"topic": "Arrays", "date": "2023-10-27"}`) and check it on login.
-3.  **Long Term (Frontend):** Build **Feature 1 (The Graph UI)**. This is the "Killer Feature" for the Student Dashboard.
-
-### DB
-You are asking the right question. The "Saving" part (INSERT) is easy. The **"Retrieval"** part (SELECT) is where the complexity lies, especially for your Dashboards.
-
-Currently, your `main.py` does a lot of **"Python Loop Filtering"** (e.g., loading a huge JSON list and looping through it to count "DEBUG" intents).
-
-When you switch to SQLite, you have two choices:
-1.  **The Lazy Way:** Fetch all rows into Python and loop through them (same logic as JSON, just different loading).
-2.  **The Efficient Way:** Let SQL do the filtering (using `WHERE`, `COUNT`, etc.).
-
-Here is how you specifically handle the **Retrieval Logic** for your Dashboards in `sqlite_db`.
-
----
-
-### **1. Updating `HistoryManager` for Dashboards**
-
-Your dashboards rely heavily on `get_student_history` and `get_user_sessions_list`.
-
-**Old (JSON):**
-```python
-def get_student_history(self, username):
-    # Loads entire file into RAM, filters via list comprehension
-    with open(ANALYTICS_FILE, 'r') as f:
-        history = json.load(f)
-    return [h for h in history if h['username'] == username]
-```
-
-**New (SQLite):**
-You need to join the `sessions` table with the `messages` table to get a flat list for analytics.
-
-```python
-class HistoryManager:
-    # ... (insert methods) ...
-
-    def get_student_history(self, username: str) -> List[Dict]:
-        """
-        Used by Analytics/Risk Matrix. 
-        Reconstructs the flat list of interactions from SQL tables.
-        """
-        query = """
-            SELECT 
-                m.content as query,
-                m.timestamp,
-                m.intent, -- You need to ensure you save 'intent' in messages table
-                m.role
-            FROM messages m
-            JOIN sessions s ON m.session_id = s.session_id
-            WHERE s.user_id = ? AND m.role = 'user'
-            ORDER BY m.timestamp ASC
-        """
-        rows = db.fetch_all(query, (username,))
-        
-        # Convert SQL Row objects to Dictionaries so main.py logic still works
-        return [dict(row) for row in rows]
-
-    def get_user_sessions_list(self, username: str) -> List[Dict]:
-        """
-        Used by Student Sidebar.
-        """
-        query = """
-            SELECT session_id as id, title, created_at as date 
-            FROM sessions 
-            WHERE user_id = ? 
-            ORDER BY created_at DESC
-        """
-        rows = db.fetch_all(query, (username,))
-        return [dict(row) for row in rows]
-```
-
----
-
-### **2. Updating `AssignmentManager` for Teacher Inbox**
-
-The teacher inbox expects a specific dictionary structure. You must manually reconstruct the JSON fields.
-
-**New (SQLite):**
-```python
-class AssignmentManager:
-    # ... (create methods) ...
-
-    def get_pending_reviews(self, teacher: str):
-        query = """
-            SELECT * FROM assignments 
-            WHERE teacher_id = ? AND status = 'SUBMITTED'
-        """
-        rows = db.fetch_all(query, (teacher,))
-        
-        results = []
-        for row in rows:
-            item = dict(row)
-            # Map SQL column names to what your Frontend expects
-            results.append({
-                "id": item['id'],
-                "student": item['student_id'],
-                "question": item['question'],
-                "student_answer": item['answer'],
-                "status": item['status']
-            })
-        return results
-```
-
----
-
-### **3. The "Gotcha" (JSON Columns)**
-
-SQLite stores JSON (like `metadata`, `sources`, or `active_plan`) as **Text strings**.
-
-When you retrieve them, you **MUST** convert them back to Python Dictionaries, or your code will crash trying to access `active_plan['steps']`.
-
-**Example: Retrieving Session State**
-```python
-    def get_session_state(self, username, session_id):
-        row = db.fetch_one("SELECT state FROM sessions WHERE session_id = ?", (session_id,))
-        
-        if row and row['state']:
-            # CRITICAL: Convert String back to Dict
-            return json.loads(row['state']) 
-            
-        return {} # Return empty dict if null
-```
-
-### **Summary of the Work Required**
-
-1.  **`db/sqlite_db.py`**: Create the Table definitions (Code provided in previous step).
-2.  **`core/user_manager.py`**: Change `json.load/dump` to `INSERT/SELECT`.
-3.  **`core/assignment_manager.py`**: Change to `INSERT/SELECT`.
-4.  **`core/history_manager.py`**: This is the hardest one. You need to ensure you are saving `intent` and `topic` into the `messages` table if you want the "Risk Matrix" to calculate correctly.
-
-**Recommendation:**
-If you are close to the paper deadline, **stick with JSON**. It is working.
-If you have 2-3 days, **switch to SQLite**. It makes the "System Implementation" section of your paper much stronger because you can talk about "Relational Data Modeling" and "ACID Compliance."
 
 ### -------------------------------------
 How to Calculate "Active Time"?
@@ -426,3 +167,92 @@ The Heuristic: We sort messages by time. We calculate the time difference betwee
 If difference < 20 minutes: We count it as active studying.
 If difference > 20 minutes: We assume they took a break and don't count the gap.
 ### -------------------------------------
+
+USERNAME                  | MESSAGES   | ACTIVE TIME    
+------------------------------------------------------------
+M@M                       | 182        | 3h 48m         
+R@R                       | 35         | 26m            
+HASAN                     | 36         | 50m            
+TEST1                     | 169        | 3h 43m         
+ashish                    | 2          | 1m             
+gre4bt                    | 8          | 3m             
+salvin                    | 28         | 20m            
+kzraryan                  | 8          | 6m             
+John                      | 17         | 4m             
+alpha_tester_kevrqd       | 7          | 2m             
+noah.glaser               | 40         | 7m             
+stpb5c                    | 28         | 9m             
+pari                      | 8          | 4m             
+bw1                       | 42         | 32m            
+gabeedwards               | 21         | 7m
+---------------------------------------------------------------------------------------------------------------------------------
+
+# PART 1: The "Pedagogical Test Bench" (Your Evaluation Framework)
+
+Since it is hard to get 500 real students to test the system reliably, your idea of a **"Simulated Student Swarm"** evaluated by a **"Context-Aware Judge"** is highly publishable. Here is how you build it:
+
+### 1. The Simulated Student Swarm (The Testers)
+Instead of just sending static queries, you create 4 LLM-driven "Student Agents." You feed them the syllabus and give them a persona. They chat with your Tutor continuously for 10-15 turns per session.
+*   **The Novice:** Instructed to make frequent syntax errors, express frustration, and ask "silly" questions (e.g., "Why does my computer hate me?").
+*   **The Lazy Offloader:** Instructed to paste entire assignment prompts and demand the final code without showing any effort.
+*   **The Hacker:** Tries to jailbreak the system to get the exam answers.
+*   **The Fast Learner:** Starts with basic questions but is instructed to "learn" from the Tutor's answers and ask progressively harder questions.
+
+### 2. The Context-Aware Judge (The Evaluator)
+Standard LLM-as-a-Judge (like GPT-4) just looks at the Chatbot's answer and says "Is this accurate?" Your Context-Aware Judge is smarter. You pass it the Chat Log **PLUS** the Vector DB chunks, the Graph DB state, and the Student's XP profile. 
+The Judge scores the Tutor on:
+*   **Vector Grounding:** "Did the Tutor hallucinate, or did it strictly use the provided context chunks?"
+*   **Graph Adherence:** "The student asked about Arrays, but the Graph DB says they don't know Variables. Did the Tutor properly block them and check prerequisites?"
+*   **Scaffolding Density:** "Did the Tutor give away more than 20% of the code solution?"
+
+### 3. The New Evaluation Metrics (Your #2)
+*   **Semantic Maturity Metric (Tracking Improvement):** How do you prove the student learned? You take the student's questions from Session 1 and Session 5 and map their embeddings. If the vectors shift from generic clusters ("how to do this") to highly specific technical clusters ("does this pointer leak memory"), you mathematically prove the student's cognitive maturity increased.
+*   **Knowledge Tracing Accuracy:** *Knowledge Tracing* is the classic academic term for "tracking what a student knows over time." To evaluate this, the framework checks your SQLite DB (`user_knowledge` table) against the Simulated Student's hidden prompt. If the Simulated Student was instructed *not* to understand Loops, but your system gave them 100 XP for Loops anyway, your system failed the Knowledge Tracing test.
+
+---
+
+# PART 2: Integrating the New Features into Your Chatbot
+
+You identified three great features. Because your system is already a **Multi-Agent Architecture**, slotting these in is incredibly clean. Here is exactly where they go:
+
+### 1. Semantic Unit Tests
+**Where it goes:** `CodeReviewerAgent` and `ExaminerAgent`.
+*   **How it works:** Right now, if a student pastes code, your Code Reviewer does a static text review. Instead, you update the `CodeReviewerAgent` to dynamically generate a hidden unit test.
+*   **Example:** Student submits an `add(a, b)` function. The LLM secretly writes `assert(add(2147483647, 1) < 0)`. It runs the test (or simulates it), sees it fails due to Integer Overflow, and tells the student: *"Your logic looks good, but what happens if I pass the maximum possible integer into your function?"*
+
+### 2. Agentic TDD (Test-Driven Development) as Scaffolding
+**Where it goes:** `ScaffoldingAgent` (Triggered by high mastery).
+*   **How it works:** You update `cot_rag_agent.py` to check the student's XP before routing. 
+    *   If XP < 50%: Route to standard `ScaffoldingAgent` (step-by-step text instructions).
+    *   If XP > 80%: Route to a new **`TDDAgent`**.
+*   **The UX:** The student says, "I know Arrays, let me write a reverse function." The system outputs a code block with a failing C test: 
+    ```c
+    // I wrote this test for you. Make it pass!
+    void test_reverse() {
+        int arr[] = {1, 2, 3};
+        reverse(arr, 3);
+        assert(arr[0] == 3 && arr[2] == 1);
+    }
+    ```
+    This completely gamifies the learning process for advanced students.
+
+### 3. Multi-Modal Logic Tracing
+**Where it goes:** `CodeReviewerAgent` (Specifically for the `DEBUG` intent).
+*   **How it works:** You mentioned you didn't know where to put this. It is the perfect solution for **Infinite Loops** or **Segmentation Faults**. 
+*   **The UX:** When a student pastes a broken `while` loop and says "Why is this crashing?", text explanations usually fail because beginners can't visualize memory. You update the `CodeReviewerAgent` to generate a **Mermaid.js State Diagram** that physically traces the variables.
+*   **Example Output generated by your Bot:**
+    *"Your loop never stops because `i` is never incremented. Here is what your computer's memory looks like right now:"*
+    ```mermaid
+    graph TD
+       A[Iteration 1: i=0] --> B[Iteration 2: i=0]
+       B --> C[Iteration 3: i=0]
+       C --> D[...Infinite Crash...]
+    ```
+
+---
+
+### Summary of the Research Paper Potential
+If you build this, your paper essentially writes itself in two parts:
+1.  **The System:** "We built a Multi-Agent AI Tutor that uses dynamic TDD and Multi-Modal Logic Tracing to teach C Programming, utilizing a Gatekeeper architecture to prevent cheating."
+2.  **The Framework:** "Because human evaluation is slow and subjective, we introduced a novel 'Simulated Student Swarm' framework. Our context-aware judge proved that our system improved student Semantic Maturity by X% while maintaining a 0% cheat-leakage rate."
+---------------------------------------------------------------------------------------------------------------------------------
