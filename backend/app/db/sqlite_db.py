@@ -98,6 +98,27 @@ class SQLiteDB:
                 )
             """)
 
+            # 7. User Feedback
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT,
+                    session_id TEXT,
+                    original_query TEXT,
+                    feedback_type TEXT,
+                    feedback_text TEXT, -- NEW COLUMN
+                    timestamp TIMESTAMP,
+                    FOREIGN KEY(username) REFERENCES users(username),
+                    FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                )
+            """)
+            # Safe catch to add the column to existing databases without breaking
+            import sqlite3
+            try:
+                self.conn.execute("ALTER TABLE user_feedback ADD COLUMN feedback_text TEXT")
+            except sqlite3.OperationalError:
+                pass # Column already exists
+
     def execute(self, query, params=()):
         """Execute a write operation"""
         with self.conn:

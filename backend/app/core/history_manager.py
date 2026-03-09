@@ -82,6 +82,16 @@ class HistoryManager:
         
         return [{"id": r['session_id'], "title": r['title'], "date": r['created_at']} for r in rows]
 
+    def log_feedback(self, username: str, session_id: str, original_query: str, feedback_type: str, feedback_text: str = None):
+        try:
+            db.conn.execute("""
+                INSERT INTO user_feedback (username, session_id, original_query, feedback_type, feedback_text, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (username, session_id, original_query, feedback_type, feedback_text, datetime.now()))
+            db.conn.commit()
+        except Exception as e:
+            print(f"Failed to log feedback to SQL: {e}")
+    
     def get_session_details(self, username: str, session_id: str) -> Dict:
         # 1. Verify ownership
         sess = db.fetch_one("SELECT * FROM sessions WHERE session_id = ? AND username = ?", (session_id, username))

@@ -501,27 +501,6 @@
         sendMessage();
     };
 
-    // function addProfilerButton(container, relativeUrl) {
-    //     const btn = document.createElement('a');
-        
-    //     const cleanPath = relativeUrl.startsWith('/') ? relativeUrl.slice(1) : relativeUrl;
-    //     btn.href = `${API_URL}/${cleanPath}`;         
-    //     btn.target = "_blank"; 
-    //     btn.className = 'profiler-btn';
-    //     btn.innerHTML = '⚡ View Execution Profile';
-        
-    //     btn.style.display = 'inline-block';
-    //     btn.style.marginTop = '10px';
-    //     btn.style.fontSize = '0.75rem';
-    //     btn.style.color = '#e67e22';
-    //     btn.style.textDecoration = 'none';
-    //     btn.style.border = '1px solid #e67e22';
-    //     btn.style.padding = '4px 10px';
-    //     btn.style.borderRadius = '12px';
-        
-    //     container.appendChild(btn);
-    // }
-
     function addFeedbackButtons(container, originalQuery) {
         const bar = document.createElement('div');
         bar.className = 'feedback-bar';
@@ -533,35 +512,73 @@
             { id: 'deep_dive', icon: '🤿', label: 'Deep Dive' }
         ];
 
+        // Helper function to execute the API call
+        async function sendFeedbackPayload(type, text = null) {
+            const res = await fetch(`${API_URL}/api/v1/chat/feedback`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    username: currentUser.username,
+                    session_id: currentSessionId,
+                    message_index: 0, 
+                    feedback_type: type,
+                    original_query: originalQuery,
+                    feedback_text: text // Include the text!
+                })
+            });
+            const data = await res.json();
+            if (data.action === 'regenerate') {
+                window.sendMessage(data.modified_query, true); 
+            }
+        }
+
         actions.forEach(act => {
             const btn = document.createElement('button');
             btn.className = 'feedback-btn';
             btn.innerHTML = `${act.icon} ${act.label}`;
             
             btn.onclick = async () => {
-                // Visual Feedback
+                // Highlight the button
+                container.querySelectorAll('.feedback-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 
-                // Send to Backend
-                const res = await fetch(`${API_URL}/api/v1/chat/feedback`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        username: currentUser.username,
-                        session_id: currentSessionId,
-                        message_index: 0, 
-                        feedback_type: act.id,
-                        original_query: originalQuery
-                    })
-                });
-                
-                const data = await res.json();
-                
-                // Handle Regeneration
-                if (data.action === 'regenerate') {
-                    // Send hidden message to trigger new stream
-                    // TRUE = Hidden (Don't show user bubble)
-                    window.sendMessage(data.modified_query, true); 
+                // If it's a THUMBS DOWN, show the text box
+                if (act.id === 'down') {
+                    // Prevent duplicate boxes if clicked multiple times
+                    if (container.querySelector('.feedback-text-box')) return;
+
+                    const box = document.createElement('div');
+                    box.className = 'feedback-text-box';
+                    box.style.marginTop = '15px';
+                    box.style.padding = '10px';
+                    box.style.background = 'rgba(0,0,0,0.2)';
+                    box.style.borderRadius = '8px';
+                    box.style.border = '1px solid #444';
+                    
+                    box.innerHTML = `
+                        <div style="font-size:0.85rem; color:#ccc; margin-bottom:5px;">What went wrong?</div>
+                        <textarea placeholder="e.g., Too complicated, incorrect code, confusing diagram..." rows="2" 
+                                  style="width:100%; box-sizing:border-box; padding:8px; border-radius:4px; border:1px solid #555; background:#1e1f20; color:#e3e3e3; font-family:inherit; outline:none; resize:vertical;"></textarea>
+                        <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+                            <button style="padding:6px 12px; background:var(--accent-color); color:#000; border:none; border-radius:4px; font-weight:600; cursor:pointer; font-size:0.85rem;">Submit Feedback</button>
+                        </div>
+                    `;
+                    container.appendChild(box);
+
+                    // Handle Submit Click
+                    const submitBtn = box.querySelector('button');
+                    const textarea = box.querySelector('textarea');
+                    
+                    submitBtn.onclick = async () => {
+                        submitBtn.innerText = "Saving...";
+                        await sendFeedbackPayload(act.id, textarea.value);
+                        box.innerHTML = '<span style="color:#a8c7fa; font-size:0.85rem;">✅ Thank you! Your feedback helps me learn.</span>';
+                        setTimeout(() => box.remove(), 3000); // Hide after 3 seconds
+                    };
+
+                } else {
+                    // For Thumbs Up, Simplify, Deep Dive -> Send immediately
+                    await sendFeedbackPayload(act.id, null);
                 }
             };
             

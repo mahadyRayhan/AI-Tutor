@@ -103,6 +103,7 @@ class FeedbackRequest(BaseModel):
     message_index: int  # Which message in the chat history is this for?
     feedback_type: str  # "up", "down", "simplify", "deep_dive"
     original_query: str # Needed for re-generation
+    feedback_text: Optional[str] = None
 
 # --- ASSIGNMENT DATA MODELS ---
 class ChallengeRequest(BaseModel):
@@ -907,41 +908,28 @@ async def set_user_goal(req: GoalRequest):
 @app.post("/api/v1/chat/feedback")
 async def handle_feedback(req: FeedbackRequest):
     """
-    Logs feedback and optionally returns a new answer.
+    Logs feedback to SQL and optionally returns a trigger for a new answer.
     """
-    # 1. Log the Feedback (Crucial for your future ML model)
-    feedback_entry = {
-        "timestamp": datetime.now().isoformat(),
-        "username": req.username,
-        "query": req.original_query,
-        "preference": req.feedback_type
-    }
-    
-    # Save to a new 'feedback_dataset.csv' for training later
-    feedback_file = os.path.join(config.PROJECT_ROOT, "database", "feedback_history.csv")
-    file_exists = os.path.isfile(feedback_file)
-    
-    with open(feedback_file, 'a', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=["timestamp", "username", "query", "preference"])
-        if not file_exists: writer.writeheader()
-        writer.writerow(feedback_entry)
+    # 1. Log the Feedback to SQLite (No more CSV!)
+    history_manager.log_feedback(
+        username=req.username,
+        session_id=req.session_id,
+        original_query=req.original_query,
+        feedback_type=req.feedback_type,
+        feedback_text=req.feedback_text
+    )
 
     # 2. Handle Re-Generation (Simplify / Deep Dive)
     if req.feedback_type in ["simplify", "deep_dive"]:
-        # We need to trigger the agent with a specific instruction
         instruction = ""
         if req.feedback_type == "simplify":
             instruction = "Explain this again, but extremely simple. Use 5th-grader language. Keep it under 3 sentences."
         elif req.feedback_type == "deep_dive":
             instruction = "Explain this again, but go very deep. Cover memory management, advanced edge cases, and best practices."
             
-        # We use a special internal prompt format for this
         modified_query = f"{instruction} Query: {req.original_query}"
         
-        # Return a stream response just like the main chat
-        # Note: We reuse the existing chat_stream logic by creating a dummy request
-        # But since we can't call an endpoint from an endpoint easily in FastAPI without overhead,
-        # we will return a flag to the frontend to call the stream endpoint again.
+        # Return flag to frontend to trigger the new stream
         return {"action": "regenerate", "modified_query": modified_query}
 
     return {"status": "recorded"}
