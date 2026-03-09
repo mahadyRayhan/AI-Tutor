@@ -78,6 +78,12 @@ class ScaffoldingAgent(BaseAgent):
         3. Saves the plan to the persistent session state.
         4. Presents the first step to the user.
         """
+        # --- NEW UX FIX: Instant Initial Response ---
+        greeting_text = "This is a complex problem! 🧠\n\n To ensure you really learn this, I've broken it down into smaller manageable steps.\n\n"
+        
+        # Yield the text immediately so it shows up in the chat UI instantly
+        yield {"type": "token", "text": greeting_text}
+        # -------------------------------------------
         yield {"type": "status", "message": "Planning & Searching...", "percent": 30}
         
         # Parallel Execution: Retrieve Context + Generate Steps

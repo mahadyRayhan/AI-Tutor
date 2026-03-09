@@ -642,6 +642,7 @@
         botDiv.className = 'message bot';
         const progId = `prog-${Date.now()}`;
         botDiv.innerHTML = `
+            <div id="text-${progId}"></div> 
             <div class="loading-container" id="${progId}">
                 <div class="loading-status">
                     <div class="spinner"></div>
@@ -695,17 +696,24 @@
                             }
                             // 2. TOKEN STREAM
                             else if (data.type === 'token' || data.type === 'answer') {
-                                const skeleton = document.getElementById(progId);
-                                if (skeleton) skeleton.remove(); // Kill the skeleton
+                                // Hide the ghost lines, but KEEP the spinner alive
+                                const skeletonLines = document.querySelectorAll(`#${progId} .skeleton-line`);
+                                skeletonLines.forEach(line => line.style.display = 'none');
 
                                 currentMarkdown += data.text;
-                                botDiv.innerHTML = marked.parse(currentMarkdown);
+                                
+                                // Render markdown into the dedicated text container
+                                const textContainer = document.getElementById(`text-${progId}`);
+                                if (textContainer) {
+                                    textContainer.innerHTML = marked.parse(currentMarkdown);
+                                }
                                 scrollToBottom();
                             }
                             // 3. COMPLETE
                             else if (data.type === 'complete') {
                                 if (data.data.session_id) currentSessionId = data.data.session_id;
                                 
+                                // Overwrite the entire bubble (which automatically destroys the spinner)
                                 botDiv.innerHTML = marked.parse(data.data.answer);
                                 displaySources(data.data.sources);
                                 renderDiagrams(botDiv);
