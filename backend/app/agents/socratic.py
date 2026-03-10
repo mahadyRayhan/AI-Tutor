@@ -290,6 +290,10 @@ class SocraticTutorAgent(BaseAgent):
             
             ## Example from Class
             [Reference specific code from text]
+
+            ## Your Turn! (Micro-Challenge)
+            [End your explanation by asking the student to write exactly ONE line of code based on what you just taught. Do not give them the answer.]
+            Example: "Now it's your turn. How would you declare an integer variable named 'score' and set it to 100?"
             """
             style_instruction = "TONE: Standard academic tone, encouraging, structured."
             

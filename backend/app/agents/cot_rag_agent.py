@@ -732,6 +732,37 @@ class ChainOfThoughtRAGAgent:
         is_verify_request = "verify" in query.lower() and "know" in query.lower()
         
         should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan
+
+        # --- NEW: THE SOCRATIC LOCK ---
+        if current_state.get("awaiting_micro_challenge"):
+            user_input_lower = query.lower()
+            # If they surrender or attempt it, we let them pass
+            skip_phrases = ["skip", "idk", "i don't know", "no", "stop", "answer", "tell me", "hint"]
+            is_skip = any(p in user_input_lower for p in skip_phrases)
+            has_code = any(c in query for c in [";", "{", "}", "=", "(", ")", "int ", "char ", "float "])
+            
+            # Fast Heuristic: If no code, no skip phrase, and it looks like a new question
+            is_new_question = not is_skip and not has_code and ("?" in query or query.lower().startswith(("what", "how", "why")))
+
+            if is_new_question:
+                challenge_topic = current_state.get("challenge_topic", "that concept")
+                
+                # Save their new question so they don't have to type it again later
+                history_manager.update_session_state(username, session_id, {"pending_goal": query})
+                
+                msg = f"I'd be happy to explain **{query}** next! \n\nBut first, I want to make sure you understood **{challenge_topic}**. Give my micro-challenge a try! *(Or type 'skip' if you are stuck).* "
+                
+                yield {"type": "complete", "data": {
+                    "answer": msg,
+                    "sources": [],
+                    "intent": "GUIDANCE",
+                    "suggestions": ["I'm stuck (Skip)", "Can I have a hint?"]
+                }}
+                return
+            else:
+                # User attempted it or skipped. Clear the lock.
+                history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
+        # ------------------------------
         
         # --- 3. CONTEXTUALIZATION ---
         yield {"type": "status", "message": "Understanding context...", "percent": 5}
@@ -799,6 +830,16 @@ class ChainOfThoughtRAGAgent:
             if event["type"] == "complete":
                 event["data"]["entities"] = state.entities 
                 event["data"]["intent"] = state.intent
+                
+                # --- NEW: SET THE SOCRATIC LOCK ---
+                # When the tutor finishes explaining a concept, it asks a micro-challenge.
+                # We lock the state so the user has to answer it.
+                topic_name = state.entities[0] if state.entities else "the last topic"
+                history_manager.update_session_state(
+                    username, session_id, 
+                    {"awaiting_micro_challenge": True, "challenge_topic": topic_name}
+                )
+                # ----------------------------------
             yield event
 
         # --- REMOVED LOGGING BLOCK HERE ---
