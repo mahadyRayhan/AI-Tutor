@@ -305,8 +305,13 @@ class ScaffoldingAgent(BaseAgent):
             start = clean_json.find('{')
             end = clean_json.rfind('}') + 1
             return json.loads(clean_json[start:end])
-        except:
-            return {"status": "FAIL", "feedback": "I couldn't verify that automatically. Can you try explaining your logic?"}
+        except Exception as e:
+            self.logger.error(f"Scaffolding JSON parse error: {e}. Raw response: {response}")
+            # FIX: Must return a dict with a valid 'status' key!
+            return {
+                "status": "FAIL", 
+                "feedback": "I couldn't quite understand that. Remember, the goal right now is to write the code for this specific step. Give it a try, or type 'help'."
+            }
 
     def _clean_guided_visual(self, text: str) -> str:
         """

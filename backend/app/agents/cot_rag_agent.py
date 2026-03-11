@@ -731,47 +731,21 @@ class ChainOfThoughtRAGAgent:
         is_force_teach = "teach me" in query.lower() and "anyway" in query.lower()
         is_verify_request = "verify" in query.lower() and "know" in query.lower()
         
-        should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan
-
-        # --- NEW: THE SOCRATIC LOCK ---
-        if current_state.get("awaiting_micro_challenge"):
-            user_input_lower = query.lower()
-            # If they surrender or attempt it, we let them pass
-            skip_phrases = ["skip", "idk", "i don't know", "no", "stop", "answer", "tell me", "hint"]
-            is_skip = any(p in user_input_lower for p in skip_phrases)
-            has_code = any(c in query for c in [";", "{", "}", "=", "(", ")", "int ", "char ", "float "])
-            
-            # Fast Heuristic: If no code, no skip phrase, and it looks like a new question
-            is_new_question = not is_skip and not has_code and ("?" in query or query.lower().startswith(("what", "how", "why")))
-
-            if is_new_question:
-                challenge_topic = current_state.get("challenge_topic", "that concept")
-                
-                # Save their new question so they don't have to type it again later
-                history_manager.update_session_state(username, session_id, {"pending_goal": query})
-                
-                msg = f"I'd be happy to explain **{query}** next! \n\nBut first, I want to make sure you understood **{challenge_topic}**. Give my micro-challenge a try! *(Or type 'skip' if you are stuck).* "
-                
-                yield {"type": "complete", "data": {
-                    "answer": msg,
-                    "sources": [],
-                    "intent": "GUIDANCE",
-                    "suggestions": ["I'm stuck (Skip)", "Can I have a hint?"]
-                }}
-                return
-            else:
-                # User attempted it or skipped. Clear the lock.
-                history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
-        # ------------------------------
+        # NEW: Don't let the LLM rewrite raw code blocks!
+        # If it has brackets or semicolons, it's code, leave it alone.
+        is_raw_code = "{" in query or "}" in query or ";" in query
         
+        should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan or is_raw_code
+
         # --- 3. CONTEXTUALIZATION ---
         yield {"type": "status", "message": "Understanding context...", "percent": 5}
         
         if not should_skip_context:
             search_query = await self._contextualize_query(query, username, session_id)
         else:
-            self.logger.info(f"⏭️ Skipping Contextualization for: '{query}'")
+            self.logger.info(f"⏭️ Skipping Contextualization for: [RAW CODE or EXPLICIT REQUEST]")
             search_query = query
+
 
         # --- 4. LOAD PROFILE & SETUP STATE ---
         user_row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
@@ -787,46 +761,108 @@ class ChainOfThoughtRAGAgent:
             profile=learning_profile
         )
 
+        # --- 5. PROACTIVE POP QUIZZES ---
+        msg_list = current_state.get("messages", []) if current_state else []
+        if not msg_list and session_id:
+            sess_details = history_manager.get_session_details(username, session_id)
+            msg_list = sess_details.get("messages", []) if sess_details else []
+            
+        user_msg_count = sum(1 for m in msg_list if m.get("role") == "user")
+
+        if user_msg_count > 0 and user_msg_count % 5 == 0 and not is_in_quiz and not is_in_plan:
+            self.logger.info("🎯 Triggering Proactive Pop Quiz!")
+            
+            recent_topic = "Variables" 
+            for msg in reversed(msg_list):
+                if msg.get("role") == "bot" and msg.get("topic") and msg.get("topic") != "General":
+                    recent_topic = msg.get("topic")
+                    break
+            
+            history_manager.update_session_state(username, session_id, {"pending_goal": state.query})
+            state.query = f"know {recent_topic} (verify)"
+            state.intent = "QUIZ"
+            state.entities = [recent_topic]
+            state.profile['is_surprise_quiz'] = True
+        # --------------------------------------------
+
         # ---------------------------------------------------------
         # AGENT PIPELINE
         # ---------------------------------------------------------
 
-        # 1. ACTIVE SCAFFOLDING PRIORITY (The Fix)
-        # If the user is currently in a guided plan, route directly to the Scaffolding Agent.
-        # This prevents the Sentinel from accidentally blocking short answers like "help" or "idk".
-        if is_in_plan:
-            async for event in self.scaffolding.process(state):
-                yield event
-            if state.stop_processing: return
-
-        # 2. SENTINEL (Security & Classification)
-        # Only run if we are NOT inside a guided plan, or if the plan just finished.
+        # 1. SENTINEL (Security & Classification)
+        # Must run FIRST to ensure the raw prompt isn't a jailbreak
         async for event in self.sentinel.process(state):
             yield event
         if state.stop_processing: return
 
-        # 3. NEW SCAFFOLDING TRIGGERS 
-        # If they aren't in a plan yet, but their query warrants one (e.g. "Write a program...")
+        # 2. THE SOCRATIC LOCK
+        # Now that it's safe, check if we need to hold them accountable
+        if current_state.get("awaiting_micro_challenge"):
+            user_input_lower = state.original_query.lower()
+            skip_phrases = ["skip", "idk", "i don't know", "no", "stop", "answer", "tell me", "hint"]
+            is_skip = any(p in user_input_lower for p in skip_phrases)
+            has_code = any(c in state.original_query for c in [";", "{", "}", "=", "(", ")", "int ", "char ", "float "])
+            
+            is_new_question = not is_skip and not has_code and ("?" in state.original_query or state.original_query.lower().startswith(("what", "how", "why")))
+
+            if is_new_question:
+                challenge_topic = current_state.get("challenge_topic", "that concept")
+                history_manager.update_session_state(username, session_id, {"pending_goal": state.original_query})
+                
+                msg = f"I'd be happy to explain **{state.original_query}** next! \n\nBut first, I want to make sure you understood **{challenge_topic}**. Give my micro-challenge a try! *(Or type 'skip' if you are stuck).* "
+                
+                yield {"type": "complete", "data": {
+                    "answer": msg,
+                    "sources": [],
+                    "intent": "GUIDANCE",
+                    "suggestions": ["I'm stuck (Skip)", "Can I have a hint?"]
+                }}
+                return
+            else:
+                # --- THE UNLOCK KEY ---
+                history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
+                
+                if has_code and not is_skip:
+                    state.intent = "REVIEW" 
+                    pending = current_state.get("pending_goal")
+                    if pending:
+                        state.query = f"[CONTEXT: I am answering your micro-challenge: '{state.original_query}'] Review my code. If it is correct, please answer my next question: '{pending}'"
+                        history_manager.update_session_state(username, session_id, {"pending_goal": None})
+                    else:
+                        state.query = f"[CONTEXT: I am answering your micro-challenge: '{state.original_query}'] Review my code. Keep it brief."
+
+        # 3. ACTIVE SCAFFOLDING PRIORITY
+        if is_in_plan:
+            async for event in self.scaffolding.process(state):
+                yield event
+            if state.stop_processing: return
+        
+        # 4. CODE REVIEWER AGENT (Reviews)
+        async for event in self.reviewer.process(state):
+            yield event
+        if state.stop_processing: return
+
+        # 5. NEW SCAFFOLDING TRIGGERS 
         if not is_in_plan:
             async for event in self.scaffolding.process(state):
                 yield event
             if state.stop_processing: return
 
-        # 4. EXAMINER AGENT (Quizzes)
+        # 6. EXAMINER AGENT (Quizzes)
         async for event in self.examiner.process(state):
             yield event
         if state.stop_processing: return
 
-        # 5. CODE REVIEWER AGENT (Reviews)
-        async for event in self.reviewer.process(state):
-            yield event
-        if state.stop_processing: return
+        # # 7. CODE REVIEWER AGENT (Reviews)
+        # async for event in self.reviewer.process(state):
+        #     yield event
+        # if state.stop_processing: return
 
         # ---------------------------------------------------------
         # FINAL FALLBACK: CONCEPT TUTORING
         # ---------------------------------------------------------
 
-        # 5. GATEKEEPER CHECK
+        # 7. GATEKEEPER CHECK
         gatekeeper_result = self._check_gatekeeping(
             state.query, state.intent, state.entities, state.user_id, state.session_id
         )
@@ -834,36 +870,68 @@ class ChainOfThoughtRAGAgent:
             yield {"type": "complete", "data": gatekeeper_result}
             return
 
-        # 6. SOCRATIC TUTOR (Standard RAG)
+        # 8. SOCRATIC TUTOR (Standard RAG)
         async for event in self.socratic.process(state):
-            # IMPORTANT: We inject the entities into the Socratic response 
-            # so main.py can log them correctly.
             if event["type"] == "complete":
                 event["data"]["entities"] = state.entities 
                 event["data"]["intent"] = state.intent
                 
-                # --- NEW: SET THE SOCRATIC LOCK ---
-                # When the tutor finishes explaining a concept, it asks a micro-challenge.
-                # We lock the state so the user has to answer it.
                 topic_name = state.entities[0] if state.entities else "the last topic"
                 history_manager.update_session_state(
                     username, session_id, 
                     {"awaiting_micro_challenge": True, "challenge_topic": topic_name}
                 )
-                # ----------------------------------
             yield event
 
-        # --- REMOVED LOGGING BLOCK HERE ---
-        # Logging is now handled entirely by main.py using user_msg_id
-        # ----------------------------------
+        # ---------------------------------------------------------
+        # POST-PROCESSING (PROFILER & PENDING GOALS)
+        # ---------------------------------------------------------
 
         # Fire-and-forget sentiment analysis
         asyncio.create_task(
             self.profiler.analyze_sentiment(username, query)
         )
         
-        # Occasional deep profiling
         if random.random() < 0.1:
             asyncio.create_task(
                 self.profiler.update_learning_profile(username)
             )
+
+        # HANDLE THE PENDING GOAL IMMEDIATELY
+        pending = current_state.get("pending_goal")
+        if pending and not current_state.get("awaiting_micro_challenge") and state.intent == "REVIEW":
+            self.logger.info(f"🔄 Executing Pending Goal: {pending}")
+            
+            history_manager.update_session_state(username, session_id, {"pending_goal": None})
+            
+            yield {"type": "token", "text": "\n\n---\n\n### Now, back to your question: *" + pending + "*\n\n"}
+            yield {"type": "status", "message": "Loading next topic...", "percent": 90}
+            
+            followup_state = AgentState(
+                query=pending,
+                original_query=pending,
+                user_id=username,
+                session_id=session_id,
+                user_role=user_role,
+                user_goal=user_goal,
+                profile=learning_profile,
+                intent="CONCEPT" 
+            )
+            
+            if config.INTENT_CLASSIFIER_MODE == "fast":
+                followup_state.entities = fast_classifier.extract_entities(pending)
+            else:
+                followup_state.entities = [pending]
+                
+            async for follow_event in self.socratic.process(followup_state):
+                if follow_event["type"] == "complete":
+                    topic_name = followup_state.entities[0] if followup_state.entities else "the last topic"
+                    history_manager.update_session_state(
+                        username, session_id, 
+                        {"awaiting_micro_challenge": True, "challenge_topic": topic_name}
+                    )
+                    
+                    follow_event["data"]["entities"] = followup_state.entities
+                    follow_event["data"]["intent"] = "REVIEW_AND_CONCEPT"
+                    
+                yield follow_event

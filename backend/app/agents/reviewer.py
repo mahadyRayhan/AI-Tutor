@@ -24,74 +24,54 @@ class CodeReviewerAgent(BaseAgent):
         self.vector_store = vector_store
 
     async def process(self, state: AgentState) -> AsyncGenerator[dict, None]:
-        """
-        Main processing loop for the Reviewer Agent.
-        Now includes Rigorous Edge Case Analysis (GPAI-style).
-        
-        Args:
-            state (AgentState): The current state of the agent workflow.
-            
-        Yields:
-            dict: Workflow events (status updates, tokens, final response).
-        """
-        # Only run if intent is specifically REVIEW
         if state.intent != "REVIEW":
             return
 
         yield {"type": "status", "message": "Reviewing code...", "percent": 30}
 
-        # 1. Retrieve Reference Code (Standard RAG)
-        # We search for the user's code to find similar valid examples in our knowledge base.
-        # This grounding ensures our feedback aligns with the course's preferred coding style.
         query_embedding = self.llm.get_embedding(state.query)
         chunks = self.vector_store.query(query_embedding, top_k=3)
         context_text = "\n".join([c['text'] for c in chunks])
 
-        # 2. START PARALLEL TASKS (Optimization)
-        # Task A: Generate the Standard Review (Streaming immediately to user)
-        # Task B: Run the Rigorous Edge Case Analysis (Background task, appended later)
-        # This prevents the user from waiting for the deep analysis before seeing the initial feedback.
+        # --- QoL FIX: Only trigger Edge Cases for Complex Code ---
+        # Heuristic: More than 1 line, or contains loops/functions
+        is_complex_code = len(state.query.split('\n')) > 1 or any(k in state.query for k in ["for", "while", "if", "void", "return"])
         
-        edge_case_task = asyncio.create_task(
-            asyncio.to_thread(self._analyze_edge_cases, state.query, context_text)
-        )
+        edge_case_task = None
+        if is_complex_code:
+            edge_case_task = asyncio.create_task(
+                asyncio.to_thread(self._analyze_edge_cases, state.query, context_text)
+            )
+        # ---------------------------------------------------------
 
-        # 3. Generate Standard Review (Streaming)
         yield {"type": "status", "message": "Analyzing syntax...", "percent": 60}
         
         prompt = self._build_review_prompt(state.query, context_text, state.user_goal)
         
         full_response = ""
-        # Stream the initial "Sandwich Method" feedback
         async for token in self.llm.stream_response_async(prompt):
             full_response += token
             yield {"type": "token", "text": token}
 
-        # 4. Append Engineer's Perspective (Edge Cases)
-        # Once the main review is done, we check if the background analysis found any critical flaws.
-        yield {"type": "status", "message": "Checking edge cases...", "percent": 90}
-        
-        edge_report = await edge_case_task
-        
-        if edge_report and edge_report.get('cases'):
-            # Format the rigorous analysis section
-            edge_text = "\n\n---\n### 🧐 Engineer's Perspective: Rigorous Analysis\n"
-            edge_text += "Your logic works for standard inputs. Now, let's think like a Senior Engineer and test the **Edge Cases**:\n\n"
+        # --- QoL FIX: Await only if the task was created ---
+        if edge_case_task:
+            yield {"type": "status", "message": "Checking edge cases...", "percent": 90}
+            edge_report = await edge_case_task
             
-            for case in edge_report['cases']:
-                icon = "🔴" if case.get('severity') == "High" else "⚠️"
-                edge_text += f"- {icon} **Scenario:** {case['scenario']}\n  - **Outcome:** {case['outcome']}\n"
-            
-            edge_text += "\n*Handling these cases prevents crashes in production!*"
-            
-            # Stream this new section to the user
-            full_response += edge_text
-            yield {"type": "token", "text": edge_text}
+            if edge_report and edge_report.get('cases'):
+                edge_text = "\n\n---\n### 🧐 Engineer's Perspective: Rigorous Analysis\n"
+                edge_text += "Your logic works for standard inputs. Now, let's think like a Senior Engineer and test the **Edge Cases**:\n\n"
+                for case in edge_report['cases']:
+                    icon = "🔴" if case.get('severity') == "High" else "⚠️"
+                    edge_text += f"- {icon} **Scenario:** {case['scenario']}\n  - **Outcome:** {case['outcome']}\n"
+                edge_text += "\n*Handling these cases prevents crashes in production!*"
+                
+                full_response += edge_text
+                yield {"type": "token", "text": edge_text}
+        # ---------------------------------------------------------
 
-        # 5. Finalize
-        # We store the response in the shared state so downstream handlers can access it if needed
         state.final_response = full_response
-        state.stop_processing = True # We handled the request, stop other agents from processing
+        state.stop_processing = True 
         
         yield {
             "type": "complete",

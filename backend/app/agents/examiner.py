@@ -116,7 +116,6 @@ class ExaminerAgent(BaseAgent):
             except: pass
 
         if qa_pair:
-            # ... (Rest of your existing saving/display logic) ...
             # Save State
             vector_data = {
                 "google": qa_pair['a_vector'],
@@ -129,16 +128,26 @@ class ExaminerAgent(BaseAgent):
                 "quiz_correct_text": qa_pair['a']
             })
 
-            msg = f"🧐 **Quick Check:** {qa_pair['q']}\n\n👉 **Type your answer in the chat box below.**"
-            yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": ["I don't know"], "intent": "QUIZ"}}
+            # --- NEW: Check if this is a surprise Pop Quiz ---
+            if state.profile.get('is_surprise_quiz'):
+                msg = f"I will gladly help you with that next! But first, it's time for a **Pop Quiz**! 📝\n\nLet's quickly review **{verify_topic}** to make sure it's sticking in your memory.\n\n"
+                msg += f"**Question:** {qa_pair['q']}\n\n👉 *Type your answer below!*"
+            else:
+                # Standard user-requested quiz
+                msg = f"🧐 **Quick Check:** {qa_pair['q']}\n\n👉 **Type your answer in the chat box below.**"
+            # -------------------------------------------------
+
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": ["I don't know (Skip)"], "intent": "QUIZ", "entities": state.entities}}
         else:
+            # Fallback
             yield {"type": "complete", "data": {
-                "answer": msg, 
-                "sources": [], 
-                "suggestions": ["I don't know"], 
+                "answer": f"I don't have a specific quiz for **{verify_topic}** yet. Shall I explain it instead?",
+                "sources": [],
+                "suggestions": [f"Explain {verify_topic}"],
                 "intent": "QUIZ",
-                "entities": state.entities # <--- ADD THIS
+                "entities": state.entities
             }}
+
 
     async def _grade_quiz(self, state: AgentState, session_state):
         """

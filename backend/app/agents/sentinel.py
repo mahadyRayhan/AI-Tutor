@@ -150,23 +150,27 @@ class SentinelAgent(BaseAgent):
         # =========================================================
         # LAYER 3: CODE DETECTION (INTENT FORCING)
         # =========================================================
-        code_markers = [";", "{", "}", "#include", "int main", "printf(", "scanf(", "return 0", "void ", "char *"]
-        match_count = sum(1 for m in code_markers if m in query_lower)
+        query_text = state.query
+        query_lower = query_text.lower()
         
-        if match_count >= 2:
+        has_braces = "{" in query_text and "}" in query_text
+        has_semicolon = ";" in query_text
+        has_return_or_type = any(kw in query_lower for kw in ["return", "int ", "float ", "void ", "char "])
+        
+        if (has_braces and has_return_or_type) or (has_braces and has_semicolon):
             intent = "REVIEW"
             entities = ["code submission"]
         else:
             # LAYER 4: STANDARD CLASSIFICATION
             intent = "General"
             entities = []
-
+            
             if config.INTENT_CLASSIFIER_MODE == "fast":
                 intent = fast_classifier.classify_intent(state.query)
                 entities = fast_classifier.extract_entities(state.query)
             else:
                 intent = "CONCEPT" 
-                entities = [state.query]
+                entities = [state.query] 
 
         # Save to shared state
         state.intent = intent
