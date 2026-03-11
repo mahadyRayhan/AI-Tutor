@@ -122,15 +122,15 @@ class ScaffoldingAgent(BaseAgent):
             "entities": state.entities # <--- ADD THIS
         }}
 
-    # --- INTERNAL LOGIC: CONTINUE PLAN ---
     async def _continue_plan(self, state: AgentState, active_plan):
         """
         Evaluates the user's response to the current step and moves to the next one if valid.
+        Includes 3-Strike Escalation Protocol.
         """
         # Exit Check (User wants to bail out)
         if any(w in state.query.lower() for w in ["stop", "cancel", "quit", "reset"]):
             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
-            yield {"type": "complete", "data": {"answer": "Guided mode cancelled.", "sources": [], "intent": "General"}}
+            yield {"type": "complete", "data": {"answer": "Guided mode cancelled.", "sources": [], "intent": "General", "entities": state.entities}}
             return
 
         yield {"type": "status", "message": "Checking your step...", "percent": 20}
@@ -148,22 +148,21 @@ class ScaffoldingAgent(BaseAgent):
         evaluation = self._evaluate_step_progress(state.query, current_step, context_text)
         answer_text = evaluation['feedback']
         
-        # Status Handler
         sugg_list = ["I'm stuck", "Stop guided mode"]
 
         if evaluation['status'] == "PASS":
+            # --- SUCCESS: Reset strike counter ---
+            active_plan['failed_attempts'] = 0
+            
             idx += 1
             if idx >= len(steps):
                 # ALL STEPS DONE - Victory Lap
                 answer_text += "\n\n🎉 **Problem Solved!** You've completed all steps. Excellent work."
                 
-                # Award XP
                 topic_credit = active_plan.get('original_problem', 'General')
-                # Use first entity if available, else snippet of problem
                 topic_label = state.entities[0] if state.entities else topic_credit[:20]
                 knowledge_manager.mark_concept_as_known(state.user_id, f"Solved: {topic_label}")
                 
-                # Clear State
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
             else:
                 # MOVE TO NEXT STEP
@@ -172,14 +171,29 @@ class ScaffoldingAgent(BaseAgent):
                 active_plan['current_step_index'] = idx
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
         else:
-            # FAILURE / HINT - Provide help
-            if evaluation.get('visual_aid'):
-                clean_visual = self._clean_guided_visual(evaluation['visual_aid'])
-                answer_text += f"\n\nHere is a visual aid:\n```mermaid\n{clean_visual}\n```"
-            elif evaluation.get('pseudocode_hint'):
-                answer_text += f"\n\n💡 **Logic Hint:**\n```text\n{evaluation['pseudocode_hint']}\n```"
-            
-            sugg_list.insert(0, "Show me Pseudocode")
+            # --- FAILURE HANDLING & ESCALATION ---
+            failed_attempts = active_plan.get('failed_attempts', 0) + 1
+            active_plan['failed_attempts'] = failed_attempts
+            history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+
+            if failed_attempts >= 3:
+                # TRIGGER ESCALATION PROTOCOL
+                answer_text = f"⚠️ **It looks like we are stuck here.** \n\n"
+                answer_text += f"You have tried this step {failed_attempts} times. Instead of getting frustrated, this is a perfect time to consult your TA or Instructor.\n\n"
+                answer_text += "**Here is a summary you can copy-paste to them:**\n"
+                answer_text += f"> *\"Hi, I am trying to build a program that {active_plan.get('original_problem', 'does this')}. I am stuck on the step where I need to: {current_step['goal']}. My current code is: {state.query}\"*\n\n"
+                answer_text += "Do you want to try one more time, or should we pause this exercise for now?"
+                
+                sugg_list = ["Stop guided mode", "Give me the answer", "Try one more time"]
+            else:
+                # Standard Hint
+                if evaluation.get('visual_aid'):
+                    clean_visual = self._clean_guided_visual(evaluation['visual_aid'])
+                    answer_text += f"\n\nHere is a visual aid:\n```mermaid\n{clean_visual}\n```"
+                elif evaluation.get('pseudocode_hint'):
+                    answer_text += f"\n\n💡 **Logic Hint:**\n```text\n{evaluation['pseudocode_hint']}\n```"
+                
+                sugg_list.insert(0, "Show me Pseudocode")
 
         formatted_sources = [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks]
 
@@ -188,10 +202,8 @@ class ScaffoldingAgent(BaseAgent):
             "sources": formatted_sources,
             "suggestions": sugg_list,
             "intent": "GUIDED_PRACTICE",
-            "entities": state.entities # <--- ADD THIS
+            "entities": state.entities 
         }}
-
-    # --- PROMPTS AND HELPERS ---
 
     def _generate_step_by_step_plan(self, query: str, context: str) -> List[Dict[str, str]]:
         """Generates a JSON plan of 3-6 steps."""

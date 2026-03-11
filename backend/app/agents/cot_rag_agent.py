@@ -791,22 +791,33 @@ class ChainOfThoughtRAGAgent:
         # AGENT PIPELINE
         # ---------------------------------------------------------
 
-        # 1. SENTINEL (Security & Classification)
+        # 1. ACTIVE SCAFFOLDING PRIORITY (The Fix)
+        # If the user is currently in a guided plan, route directly to the Scaffolding Agent.
+        # This prevents the Sentinel from accidentally blocking short answers like "help" or "idk".
+        if is_in_plan:
+            async for event in self.scaffolding.process(state):
+                yield event
+            if state.stop_processing: return
+
+        # 2. SENTINEL (Security & Classification)
+        # Only run if we are NOT inside a guided plan, or if the plan just finished.
         async for event in self.sentinel.process(state):
             yield event
         if state.stop_processing: return
 
-        # 2. SCAFFOLDING AGENT (Complex Problems)
-        async for event in self.scaffolding.process(state):
-            yield event
-        if state.stop_processing: return
+        # 3. NEW SCAFFOLDING TRIGGERS 
+        # If they aren't in a plan yet, but their query warrants one (e.g. "Write a program...")
+        if not is_in_plan:
+            async for event in self.scaffolding.process(state):
+                yield event
+            if state.stop_processing: return
 
-        # 3. EXAMINER AGENT (Quizzes)
+        # 4. EXAMINER AGENT (Quizzes)
         async for event in self.examiner.process(state):
             yield event
         if state.stop_processing: return
 
-        # 4. CODE REVIEWER AGENT (Reviews)
+        # 5. CODE REVIEWER AGENT (Reviews)
         async for event in self.reviewer.process(state):
             yield event
         if state.stop_processing: return
