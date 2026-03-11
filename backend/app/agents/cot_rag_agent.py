@@ -743,9 +743,40 @@ class ChainOfThoughtRAGAgent:
         if not should_skip_context:
             search_query = await self._contextualize_query(query, username, session_id)
         else:
-            self.logger.info(f"⏭️ Skipping Contextualization for: [RAW CODE or EXPLICIT REQUEST]")
+            self.logger.info(f"⏭️ Skipping Contextualization for: '{query}'")
             search_query = query
 
+        # =========================================================
+        # --- NEW: PROACTIVE GREETING (STAGE 4) ---
+        # =========================================================
+        if query.strip() == "[INIT_SESSION]":
+            known_concepts = knowledge_manager.get_known_concepts(username)
+            
+            greeting = ""
+            suggestions = ["Help me get started", "I have a specific question"]
+            
+            if user_goal:
+                greeting += f"Your current goal is to **{user_goal}**.<br>"
+            
+            if known_concepts:
+                last_known = known_concepts[-1] 
+                greeting += f"Last time, you successfully mastered <b>{last_known}</b>. Awesome job! 🚀<br>"
+                suggestions = [f"Review {last_known}", "Teach me something new", "I need to debug code"]
+            else:
+                greeting += "We have a blank slate! What topic should we dive into first?"
+                suggestions = ["What is a Variable?", "How does C work?", "I need help with an assignment"]
+                
+            # Only yield the complete data package. No token stream.
+            yield {"type": "complete", "data": {
+                "answer": greeting,
+                "sources": [],
+                "intent": "GREETING",
+                "suggestions": suggestions,
+                "entities": ["General"],
+                "session_id": session_id
+            }}
+            return
+        # =========================================================
 
         # --- 4. LOAD PROFILE & SETUP STATE ---
         user_row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))

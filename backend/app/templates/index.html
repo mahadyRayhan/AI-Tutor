@@ -138,8 +138,16 @@
         #welcome-view {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            z-index: 5; pointer-events: none;
+            z-index: 5; 
+            pointer-events: none; /* Passes clicks through the invisible background */
         }
+        
+        #welcome-view .suggestions-area {
+            pointer-events: auto; /* Restores clicking specifically for the buttons */
+            z-index: 15;
+            display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; padding: 0 20px;
+        }
+
         .welcome-text {
             font-size: 3.5rem; font-weight: 500; margin: 0;
             background: linear-gradient(90deg, #4285F4, #9B72CB, #F889A7);
@@ -151,11 +159,14 @@
         .messages-container { 
             flex: 1; padding: 20px 6%; 
             overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
-            padding-bottom: 120px; z-index: 6;
+            padding-bottom: 120px; 
+            z-index: 10; /* Must be higher than the background */
+            pointer-events: none; 
         }
         .message { 
             max-width: 95%; padding: 10px 10px; border-radius: 18px; 
             line-height: 1.6; font-size: 1rem; color: var(--text-primary);
+            pointer-events: auto; /* Restores clicking for the chat bubbles */
         }
         .message.user { align-self: flex-end; background-color: #282a2c; border-bottom-right-radius: 4px; }
         .message.bot { align-self: flex-start; background-color: transparent; padding-left: 0; }
@@ -447,21 +458,21 @@
                 </div>
             </div>
 
-            <!-- Welcome View -->
+            <!-- Welcome View (WITH THE CHIPS INSIDE IT) -->
             <div id="welcome-view">
                 <h1 class="welcome-text">Hi, <span id="welcomeName">User</span></h1>
-                <h2 class="sub-welcome">What should we discuss today?</h2>
+                <div id="dynamicGreeting" style="font-size: 1.2rem; color: #a8c7fa; margin-top: 15px; font-weight: 500; text-align: center; max-width: 600px; line-height: 1.5;"></div>
+                <h2 class="sub-welcome" style="margin-top: 30px;">What should we discuss today?</h2>
+                
+                <!-- THE ONLY PLACE CHIPS SHOULD EXIST -->
+                <div class="suggestions-area" id="initialSuggestions" style="position: relative; bottom: auto; margin-top: 20px;">
+                </div>
             </div>
 
             <!-- Chat History -->
             <div class="messages-container" id="messages"></div>
 
-            <!-- Suggestions -->
-            <div class="suggestions-area" id="initialSuggestions">
-                <div class="suggestion-chip" onclick="startTopic('Explain Pointers')">Explain Pointers</div>
-                <div class="suggestion-chip" onclick="startTopic('How to write a Loop')">Write a Loop</div>
-                <div class="suggestion-chip" onclick="startTopic('Debug my code')">Debug Code</div>
-            </div>
+            <!-- THERE SHOULD BE NO SUGGESTIONS-AREA DIV HERE. DELETE IT IF IT EXISTS. -->
 
             <!-- Input -->
             <div class="input-wrapper">
@@ -908,7 +919,11 @@
         document.getElementById('app-screen').style.display = 'block';
         document.getElementById('welcomeName').innerText = currentUser.name || currentUser.username;
         document.getElementById('roleBadge').innerText = currentUser.role.toUpperCase();
+        
         loadChatHistory();
+        
+        // --- NEW: Automatically greet the user on login ---
+        startNewChat();
     }
 
     function logout() { localStorage.removeItem('c_tutor_user'); location.reload(); }
@@ -1009,14 +1024,77 @@
         } catch (e) { console.error("Session load error", e); }
     }
 
-    function startNewChat() {
+    async function startNewChat() {
         currentSessionId = null;
         document.getElementById('messages').innerHTML = '';
         document.getElementById('sourcesList').innerHTML = '';
+        
+        // Show the centered welcome view
         document.getElementById('welcome-view').style.display = 'flex';
-        document.getElementById('welcome-view').style.opacity = '1';
         document.getElementById('initialSuggestions').style.display = 'flex';
+        
         document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
+
+        // Fetch the dynamic greeting silently
+        try {
+            const res = await fetch(`${API_URL}/api/v1/chat/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // Use the special [INIT_SESSION] trigger
+                body: JSON.stringify({ 
+                    message: '[INIT_SESSION]', 
+                    user_role: currentUser.role, 
+                    username: currentUser.username,
+                    session_id: null 
+                })
+            });
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                const lines = decoder.decode(value, { stream: true }).split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            
+                            if (data.type === 'complete') {
+                                // 1. Inject the text into the centered greeting box
+                                // (We use data.answer, but strip the "Welcome back" part since we already have "Hi, User")
+                                let cleanGreeting = data.data.answer.replace("👋 **Welcome back!**\n\n", "").replace(/\n/g, '<br>');
+                                document.getElementById('dynamicGreeting').innerHTML = cleanGreeting;
+                                
+                                // 2. Inject the dynamic suggestion chips
+                                const suggestionsDiv = document.getElementById('initialSuggestions');
+                                suggestionsDiv.innerHTML = ''; // clear old ones
+                                
+                                data.data.suggestions.forEach(text => {
+                                    const chip = document.createElement('div');
+                                    chip.className = 'suggestion-chip';
+                                    chip.innerText = text;
+                                    
+                                    // Make sure CSS pointers are enabled
+                                    chip.style.pointerEvents = 'auto'; 
+                                    
+                                    // Add the click listener
+                                    chip.addEventListener('click', function() {
+                                        window.startTopic(text);
+                                    });
+                                    
+                                    suggestionsDiv.appendChild(chip);
+                                });
+                            }
+                        } catch(e) { }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load greeting", e);
+        }
     }
 
     // Init
