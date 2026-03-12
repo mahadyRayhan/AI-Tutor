@@ -317,6 +317,8 @@ async def chat_stream(request: ChatRequest):
                     # CRITICAL FIX: Ensure we capture the final authoritative answer
                     # This handles cases like Gatekeeper which don't stream tokens
                     if final_data.get('answer'):
+                        # Sanitize mermaid diagrams before sending to frontend
+                        final_data['answer'] = cot_rag_agent._sanitize_mermaid(final_data['answer'])
                         full_bot_response = final_data.get('answer')
                         
                     final_sources = final_data.get('sources', [])

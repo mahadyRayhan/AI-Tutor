@@ -205,18 +205,89 @@ class ChainOfThoughtRAGAgent:
 
     def _sanitize_mermaid(self, text: str) -> str:
         """
-        Fixes Mermaid syntax. 
-        PREVIOUSLY: It stripped brackets (BAD).
-        NOW: It only fixes quotes and ensures ID compliance.
+        Robust Mermaid sanitizer.
+        Strips [], (), and quotes from INSIDE node labels to prevent syntax errors.
+        E.g. A[Declare sum[ set to 0]] → A["Declare sum set to 0"]
         """
-        # 1. Fix the specific error you saw: "Node'Label'" -> "Node['Label']"
-        # This regex looks for IDs followed immediately by a single-quoted string
-        text = re.sub(r"(\w+)'([^']+)'", r'\1["\2"]', text)
-
-        # 2. Ensure text labels use double quotes inside brackets
-        # Capture: ID[Text] -> ID["Text"] if quotes missing
-        text = re.sub(r"(\w+)\[([^\"\]]+)\]", r'\1["\2"]', text)
+        def clean_node_label(raw_label: str) -> str:
+            """Strip all brackets, parens, and quotes from inside a label."""
+            clean = raw_label.replace('[', '').replace(']', '')
+            clean = clean.replace('(', '').replace(')', '')
+            clean = clean.replace('"', '').replace("'", '')
+            return clean.strip()
         
+        def clean_mermaid_line(line: str) -> str:
+            """Process a single mermaid line, fixing all node definitions."""
+            stripped = line.strip()
+            
+            # Skip non-node lines
+            if not stripped or any(stripped.startswith(kw) for kw in ['graph ', 'flowchart ', '%%', 'style ', 'classDef ', 'subgraph', 'end', 'direction ']):
+                return line
+            
+            # Skip pure arrow lines (no brackets at all)
+            if '[' not in stripped and '{' not in stripped and '(' not in stripped:
+                return line
+            
+            indent = re.match(r'^(\s*)', line).group(1)
+            
+            # Rebuild the line by finding and fixing each node definition
+            # Strategy: walk through the line character by character
+            result = []
+            i = 0
+            chars = stripped
+            
+            while i < len(chars):
+                # Look for node ID followed by opening bracket
+                id_match = re.match(r'(\w+)\s*(\[|\{|\()', chars[i:])
+                if id_match:
+                    node_id = id_match.group(1)
+                    open_br = id_match.group(2)
+                    close_br = {'[': ']', '{': '}', '(': ')'}[open_br]
+                    
+                    # Move past ID and opening bracket
+                    start = i + id_match.end()
+                    
+                    # Find the matching close bracket (handle nesting)
+                    depth = 1
+                    j = start
+                    while j < len(chars) and depth > 0:
+                        if chars[j] == open_br:
+                            depth += 1
+                        elif chars[j] == close_br:
+                            depth -= 1
+                        j += 1
+                    
+                    # Extract and clean the label
+                    label_raw = chars[start:j-1]  # everything between brackets
+                    label_clean = clean_node_label(label_raw)
+                    
+                    if label_clean:
+                        result.append(f'{node_id}["{label_clean}"]')
+                    else:
+                        result.append(f'{node_id}')
+                    
+                    i = j  # move past the closing bracket
+                else:
+                    # Not a node definition — copy character(s) as-is
+                    # But try to grab chunks (arrows, whitespace, etc.)
+                    arrow_match = re.match(r'(\s*(?:-->|--\>|---|==>|-\.->|--)\s*)', chars[i:])
+                    if arrow_match:
+                        result.append(arrow_match.group(1))
+                        i += arrow_match.end()
+                    else:
+                        result.append(chars[i])
+                        i += 1
+            
+            return indent + ''.join(result)
+        
+        def clean_mermaid_block(block: str) -> str:
+            return '\n'.join(clean_mermaid_line(line) for line in block.split('\n'))
+        
+        # Find all ```mermaid ... ``` blocks and sanitize them
+        def replacer(match):
+            return '```mermaid\n' + clean_mermaid_block(match.group(1)) + '\n```'
+        
+        text = re.sub(r'```mermaid\s*\n(.*?)\n\s*```', replacer, text, flags=re.DOTALL)
         return text
 
 
@@ -700,7 +771,7 @@ class ChainOfThoughtRAGAgent:
         yield {
             "type": "complete",
             "data": {
-                "answer": full_answer, #self._sanitize_mermaid(full_answer),
+                "answer": self._sanitize_mermaid(full_answer),
                 "sources": [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks],
                 "suggestions": await suggest_task,
                 "intent": intent,
