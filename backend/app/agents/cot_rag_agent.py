@@ -820,21 +820,27 @@ class ChainOfThoughtRAGAgent:
         # AGENT PIPELINE
         # ---------------------------------------------------------
 
-        # 1. SENTINEL (Security & Classification)
-        # Must run FIRST to ensure the raw prompt isn't a jailbreak
+        # 1. ACTIVE SCAFFOLDING PRIORITY (The Fix)
+        # If the user is currently in a guided plan, let the Scaffolding agent handle it.
+        # This prevents the Sentinel from blocking valid menu clicks like "Help me message the TA".
+        if is_in_plan:
+            async for event in self.scaffolding.process(state):
+                yield event
+            if state.stop_processing: return
+
+        # 2. SENTINEL (Security & Classification)
+        # Runs on all new queries that aren't part of an active plan
         async for event in self.sentinel.process(state):
             yield event
         if state.stop_processing: return
 
-        # 2. THE SOCRATIC LOCK
-        # Now that it's safe, check if we need to hold them accountable
+        # 3. THE SOCRATIC LOCK
         if current_state.get("awaiting_micro_challenge"):
             user_input_lower = state.original_query.lower()
             skip_phrases = ["skip", "idk", "i don't know", "no", "stop", "answer", "tell me", "hint"]
-            is_skip = any(p in user_input_lower for p in skip_phrases)
             has_code = any(c in state.original_query for c in [";", "{", "}", "=", "(", ")", "int ", "char ", "float "])
             
-            is_new_question = not is_skip and not has_code and ("?" in state.original_query or state.original_query.lower().startswith(("what", "how", "why")))
+            is_new_question = not any(p in user_input_lower for p in skip_phrases) and not has_code and ("?" in state.original_query or state.original_query.lower().startswith(("what", "how", "why")))
 
             if is_new_question:
                 challenge_topic = current_state.get("challenge_topic", "that concept")
@@ -850,10 +856,8 @@ class ChainOfThoughtRAGAgent:
                 }}
                 return
             else:
-                # --- THE UNLOCK KEY ---
                 history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
-                
-                if has_code and not is_skip:
+                if has_code and not any(p in user_input_lower for p in skip_phrases):
                     state.intent = "REVIEW" 
                     pending = current_state.get("pending_goal")
                     if pending:
@@ -862,25 +866,19 @@ class ChainOfThoughtRAGAgent:
                     else:
                         state.query = f"[CONTEXT: I am answering your micro-challenge: '{state.original_query}'] Review my code. Keep it brief."
 
-        # 3. ACTIVE SCAFFOLDING PRIORITY
-        if is_in_plan:
-            async for event in self.scaffolding.process(state):
-                yield event
-            if state.stop_processing: return
-        
-        # 4. CODE REVIEWER AGENT (Reviews)
-        async for event in self.reviewer.process(state):
-            yield event
-        if state.stop_processing: return
-
-        # 5. NEW SCAFFOLDING TRIGGERS 
+        # 4. NEW SCAFFOLDING TRIGGERS 
         if not is_in_plan:
             async for event in self.scaffolding.process(state):
                 yield event
             if state.stop_processing: return
 
-        # 6. EXAMINER AGENT (Quizzes)
+        # 5. EXAMINER AGENT (Quizzes)
         async for event in self.examiner.process(state):
+            yield event
+        if state.stop_processing: return
+
+        # 6. CODE REVIEWER AGENT (Reviews)
+        async for event in self.reviewer.process(state):
             yield event
         if state.stop_processing: return
 

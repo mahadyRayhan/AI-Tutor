@@ -122,17 +122,77 @@ class ScaffoldingAgent(BaseAgent):
             "entities": state.entities # <--- ADD THIS
         }}
 
+    # In backend/app/agents/scaffolding.py
+
     async def _continue_plan(self, state: AgentState, active_plan):
         """
         Evaluates the user's response to the current step and moves to the next one if valid.
-        Includes 3-Strike Escalation Protocol.
+        Includes Agency-Driven Escalation Protocol.
         """
-        # Exit Check (User wants to bail out)
+        # Exit Check (User wants to bail out completely)
         if any(w in state.query.lower() for w in ["stop", "cancel", "quit", "reset"]):
             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
             yield {"type": "complete", "data": {"answer": "Guided mode cancelled.", "sources": [], "intent": "General", "entities": state.entities}}
             return
 
+        # =========================================================
+        # --- NEW: STEP 2 (HANDLE ESCALATION CHOICES) ---
+        # =========================================================
+        if active_plan.get('awaiting_escalation_choice'):
+            user_input = state.query.lower()
+            
+            # Choice 1: They want the TA Summary
+            if "ta" in user_input or "message" in user_input or "instructor" in user_input or "help me message" in user_input:
+                active_plan['awaiting_escalation_choice'] = False
+                active_plan['failed_attempts'] = 0 # Reset so they can try again later if they want
+                history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+                
+                current_step = active_plan['steps'][active_plan['current_step_index']]
+                msg = "**Here is a summary you can copy-paste to your TA:**\n\n"
+                msg += f"> *\"Hi, I am trying to build a program that {active_plan.get('original_problem', 'does this')}. I am stuck on the step where I need to: {current_step['goal']}. Could you help me understand the logic?\"*\n\n"
+                msg += "Whenever you are ready to try again, just type your next attempt below!"
+                
+                yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDED_PRACTICE", "suggestions": ["Stop guided mode"], "entities": state.entities}}
+                return
+
+            # Choice 2: They want Partial Code
+            elif "code" in user_input or "partial" in user_input or "give" in user_input:
+                active_plan['awaiting_escalation_choice'] = False
+                history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+                
+                current_step = active_plan['steps'][active_plan['current_step_index']]
+                
+                yield {"type": "status", "message": "Generating partial code...", "percent": 50}
+                
+                # Ask the LLM to generate the partial code based on the current step
+                prompt = f"""
+                You are a C Tutor. The student is stuck on this step: "{current_step['goal']}".
+                Task: "{current_step['description']}"
+                
+                Generate a PARTIAL C code snippet that helps them complete this exact step. 
+                Use `___` or `// TODO:` for the parts the student still needs to figure out.
+                Do not give the complete working answer. Add 1 sentence of encouragement.
+                Format the code in standard markdown ```c ... ```.
+                """
+                # Use to_thread to keep it async friendly
+                partial_code_response = await asyncio.to_thread(self.llm.generate_response, prompt)
+                
+                yield {"type": "complete", "data": {
+                    "answer": partial_code_response + "\n\n👉 *Fill in the blanks and reply with your updated code!*", 
+                    "sources": [], 
+                    "intent": "GUIDED_PRACTICE", 
+                    "suggestions": ["Stop guided mode"],
+                    "entities": state.entities
+                }}
+                return
+            
+            else:
+                # They ignored the choices and just typed random code. Turn off the flag and evaluate it normally.
+                active_plan['awaiting_escalation_choice'] = False
+                history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+        # =========================================================
+
+        # --- NORMAL STEP EVALUATION ---
         yield {"type": "status", "message": "Checking your step...", "percent": 20}
         
         steps = active_plan['steps']
@@ -145,12 +205,13 @@ class ScaffoldingAgent(BaseAgent):
         context_text = "\n".join([c['text'] for c in chunks])
 
         # LLM Evaluation of the student's work
-        evaluation = self._evaluate_step_progress(state.query, current_step, context_text)
-        answer_text = evaluation['feedback']
+        # (Using asyncio.to_thread to prevent blocking the event loop)
+        evaluation = await asyncio.to_thread(self._evaluate_step_progress, state.query, current_step, context_text)
+        answer_text = evaluation.get('feedback', "I couldn't verify that automatically.")
         
         sugg_list = ["I'm stuck", "Stop guided mode"]
 
-        if evaluation['status'] == "PASS":
+        if evaluation.get('status') == "PASS":
             # --- SUCCESS: Reset strike counter ---
             active_plan['failed_attempts'] = 0
             
@@ -171,7 +232,9 @@ class ScaffoldingAgent(BaseAgent):
                 active_plan['current_step_index'] = idx
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
         else:
-            # --- FAILURE HANDLING & ESCALATION ---
+            # =========================================================
+            # --- NEW: STEP 1 (TRIGGER ESCALATION MENU) ---
+            # =========================================================
             failed_attempts = active_plan.get('failed_attempts', 0) + 1
             active_plan['failed_attempts'] = failed_attempts
             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
@@ -179,12 +242,15 @@ class ScaffoldingAgent(BaseAgent):
             if failed_attempts >= 3:
                 # TRIGGER ESCALATION PROTOCOL
                 answer_text = f"⚠️ **It looks like we are stuck here.** \n\n"
-                answer_text += f"You have tried this step {failed_attempts} times. Instead of getting frustrated, this is a perfect time to consult your TA or Instructor.\n\n"
-                answer_text += "**Here is a summary you can copy-paste to them:**\n"
-                answer_text += f"> *\"Hi, I am trying to build a program that {active_plan.get('original_problem', 'does this')}. I am stuck on the step where I need to: {current_step['goal']}. My current code is: {state.query}\"*\n\n"
-                answer_text += "Do you want to try one more time, or should we pause this exercise for now?"
+                answer_text += f"You have tried this step {failed_attempts} times. Learning to code is hard, and it's completely okay to hit a wall!\n\n"
+                answer_text += "**How would you like to proceed?**\n"
+                answer_text += "1. **Get Partial Code:** I can give you the code structure for this step with a heavy hint.\n"
+                answer_text += "2. **Consult TA:** I can write a summary of what you've tried so far, so you can email your Instructor for human help.\n\n"
                 
-                sugg_list = ["Stop guided mode", "Give me the answer", "Try one more time"]
+                active_plan['awaiting_escalation_choice'] = True
+                history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+
+                sugg_list = ["Give me Partial Code", "Help me message the TA", "Stop guided mode"]
             else:
                 # Standard Hint
                 if evaluation.get('visual_aid'):
