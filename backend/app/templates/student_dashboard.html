@@ -1,30 +1,130 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Learning Journey</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #f4f4f9; padding: 40px; color: #333; }
-        .container { max-width: 1100px; margin: 0 auto; }
-        
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-        .back-btn { padding: 10px 20px; background: #2c3e50; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
-        
-        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); position: relative; }
-        h2 { margin: 0 0 15px 0; color: #2c3e50; font-size: 1.2rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; display: flex; align-items: center; }
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #f4f4f9;
+            /* Fluid padding: scales between 12px and 40px based on viewport */
+            padding: clamp(12px, 4vw, 40px);
+            color: #333;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            /* wraps naturally when too narrow */
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+
+        .header h1 {
+            font-size: clamp(1.2rem, 3vw, 1.8rem);
+            /* fluid font */
+            margin: 0;
+        }
+
+        .back-btn {
+            padding: clamp(8px, 1.5vw, 10px) clamp(14px, 2vw, 20px);
+            background: #2c3e50;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        /* Card */
+        .card {
+            background: white;
+            padding: clamp(16px, 3vw, 25px);
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            position: relative;
+        }
+
+        h2 {
+            margin: 0 0 15px 0;
+            color: #2c3e50;
+            font-size: clamp(0.95rem, 2vw, 1.2rem);
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
 
         /* Goal Section */
-        .goal-box { background: linear-gradient(135deg, #1abc9c, #16a085); color: white; padding: 25px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 4px 15px rgba(26, 188, 156, 0.2); }
-        .goal-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .goal-label { font-weight: bold; text-transform: uppercase; opacity: 0.8; font-size: 0.9rem; }
-        .goal-text { font-size: 1.5rem; font-weight: bold; }
-        .goal-input { padding: 8px; border-radius: 4px; border: none; width: 60%; font-size: 1rem; }
-        .goal-btn { background: rgba(0,0,0,0.2); border: none; color: white; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .goal-btn:hover { background: rgba(0,0,0,0.3); }
+        .goal-box {
+            background: linear-gradient(135deg, #1abc9c, #16a085);
+            color: white;
+            padding: clamp(16px, 3vw, 25px);
+            border-radius: 12px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(26, 188, 156, 0.2);
+        }
 
-        /* Challenge Card Styles */
+        .goal-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .goal-label {
+            font-weight: bold;
+            text-transform: uppercase;
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+
+        .goal-text {
+            font-size: clamp(1.1rem, 3vw, 1.5rem);
+            font-weight: bold;
+        }
+
+        .goal-input {
+            padding: 8px;
+            border-radius: 4px;
+            border: none;
+            width: min(60%, 400px);
+            /* fluid but capped */
+            font-size: 1rem;
+        }
+
+        .goal-btn {
+            background: rgba(0, 0, 0, 0.2);
+            border: none;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .goal-btn:hover {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        /* Challenge Card */
         .challenge-item {
             background: #fdfdfd;
             border: 1px solid #eee;
@@ -32,319 +132,452 @@
             border-radius: 8px;
             margin-bottom: 15px;
         }
-        
+
         .challenge-header {
-            display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 10px;
         }
-        
+
         .challenge-status {
-            font-size: 0.75rem; font-weight: bold; text-transform: uppercase;
-            padding: 4px 10px; border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            padding: 4px 10px;
+            border-radius: 12px;
         }
-        
-        .st-pending { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
-        .st-submitted { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
-        .st-graded { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+
+        .st-pending {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+
+        .st-submitted {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .st-graded {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
 
         .teacher-feedback {
-            background: #f8f9fa; border-left: 4px solid #2ecc71;
-            padding: 10px 15px; margin-top: 15px; font-size: 0.9rem;
+            background: #f8f9fa;
+            border-left: 4px solid #2ecc71;
+            padding: 10px 15px;
+            margin-top: 15px;
+            font-size: 0.9rem;
         }
 
-        /* Grid Layout */
-        .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-        .full-width { grid-column: span 2; }
+        /* Main Dashboard Grid — fluid: 2 columns on wide, 1 on narrow */
+        .dash-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+            gap: clamp(12px, 2vw, 20px);
+            margin-bottom: 20px;
+        }
 
-        /* Skill Tree */
-        .skill-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
-        .skill-item { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef; }
-        .progress-bar { height: 8px; background: #ddd; border-radius: 4px; margin-top: 8px; overflow: hidden; }
-        .fill { height: 100%; transition: width 1s; }
+        /* Full-width spans all columns (auto-fit means this auto collapses) */
+        .full-width {
+            grid-column: 1 / -1;
+        }
 
-        /* AI Report */
-        .report-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; } /* Added 4th column */
-        .report-col h3 { font-size: 1rem; color: #2980b9; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-        .report-content { font-size: 0.95rem; line-height: 1.5; color: #555; }
-        .reading-chip { display: inline-block; background: #e8f6f3; color: #16a085; padding: 4px 10px; border-radius: 15px; font-size: 0.85rem; margin-right: 5px; margin-bottom: 5px; border: 1px solid #a3e4d7; }
+        /* Skill Tree — intrinsically fluid */
+        .skill-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
+            gap: 15px;
+        }
+
+        .skill-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: #ddd;
+            border-radius: 4px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+
+        .fill {
+            height: 100%;
+            transition: width 1s;
+        }
+
+        /* AI Report — fluid: 4 → 2 → 1 columns naturally */
+        .report-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+            gap: clamp(12px, 2vw, 20px);
+        }
+
+        .report-col h3 {
+            font-size: clamp(0.85rem, 1.5vw, 1rem);
+            color: #2980b9;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .report-content {
+            font-size: 0.95rem;
+            line-height: 1.5;
+            color: #555;
+        }
+
+        .reading-chip {
+            display: inline-block;
+            background: #e8f6f3;
+            color: #16a085;
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-size: 0.85rem;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            border: 1px solid #a3e4d7;
+        }
 
         /* Tooltips */
         .info-icon {
-            display: inline-block; background: #bdc3c7; color: white; width: 18px; height: 18px;
-            border-radius: 50%; text-align: center; line-height: 18px; font-size: 12px; cursor: help;
-            margin-left: 8px; position: relative; font-family: monospace; font-weight: normal;
+            display: inline-block;
+            background: #bdc3c7;
+            color: white;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 18px;
+            font-size: 12px;
+            cursor: help;
+            margin-left: 8px;
+            position: relative;
+            font-family: monospace;
+            font-weight: normal;
+            flex-shrink: 0;
         }
-        .info-icon .tooltip-text {
-            visibility: hidden; width: 220px; background-color: #333; color: #fff; text-align: left;
-            border-radius: 6px; padding: 10px; position: absolute; z-index: 10;
-            bottom: 125%; left: 50%; margin-left: -110px; opacity: 0; transition: opacity 0.3s;
-            font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; font-weight: normal; line-height: 1.4;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        }
-        .info-icon .tooltip-text::after {
-            content: ""; position: absolute; top: 100%; left: 50%; margin-left: -5px;
-            border-width: 5px; border-style: solid; border-color: #333 transparent transparent transparent;
-        }
-        .info-icon:hover { background: #8e44ad; }
-        .info-icon:hover .tooltip-text { visibility: visible; opacity: 1; }
 
+        .info-icon .tooltip-text {
+            visibility: hidden;
+            width: 220px;
+            background-color: #333;
+            color: #fff;
+            text-align: left;
+            border-radius: 6px;
+            padding: 10px;
+            position: absolute;
+            z-index: 10;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -110px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 0.8rem;
+            font-weight: normal;
+            line-height: 1.4;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .info-icon .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+
+        .info-icon:hover {
+            background: #8e44ad;
+        }
+
+        .info-icon:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        /* Only on very small screens: goal input goes full width */
+        @media (max-width: 400px) {
+            .goal-input {
+                width: 100%;
+            }
+        }
     </style>
 </head>
+
 <body>
 
-<div class="container">
-    <div class="header">
-        <h1>📊 My Learning Journey</h1>
-        <a href="index.html" class="back-btn">💬 Back to Chat</a>
-    </div>
+    <div class="container">
+        <div class="header">
+            <h1>📊 My Learning Journey</h1>
+            <a href="index.html" class="back-btn">💬 Back to Chat</a>
+        </div>
 
-    <!-- 1. Goal Section -->
-    <div class="goal-box">
-        <div class="goal-top">
-            <span class="goal-label">🎯 Current Objective</span>
-            <button onclick="toggleEdit()" class="goal-btn">Edit Goal</button>
-        </div>
-        <div id="goalDisplay" class="goal-text">Loading...</div>
-        <div id="goalEdit" style="display:none; margin-top:10px;">
-            <input type="text" id="goalInput" class="goal-input" placeholder="E.g. Build a Calculator">
-            <button onclick="saveGoal()" class="goal-btn" style="background:white; color:#16a085;">Save</button>
-        </div>
-    </div>
-    <!-- 1.5 Active Challenges Section -->
-    <div class="card full-width" id="challengesSection" style="display:none; margin-bottom: 20px; border-left: 5px solid #8e44ad;">
-        <h2>
-            🚀 Active Challenges
-            <div class="info-icon">ⓘ
-                <span class="tooltip-text">
-                    Custom exercises sent by your teacher. Complete them to prove your mastery!
-                </span>
+        <!-- 1. Goal Section -->
+        <div class="goal-box">
+            <div class="goal-top">
+                <span class="goal-label">🎯 Current Objective</span>
+                <button onclick="toggleEdit()" class="goal-btn">Edit Goal</button>
             </div>
-        </h2>
-        <div id="challengeList">
-            <!-- Items will be loaded here via JS -->
-        </div>
-    </div>
-
-    <div class="dash-grid">
-        <!-- 2. Interaction Patterns -->
-        <div class="card">
-            <h2>
-                🧩 Interaction Habits
-                <div class="info-icon">ⓘ
-                    <span class="tooltip-text">
-                        Shows <strong>how</strong> you use the AI.<br>
-                        • <strong>Concept:</strong> Asking "What is..."<br>
-                        • <strong>Problem:</strong> Asking "How to write..."<br>
-                        • <strong>Review:</strong> Pasting code for checks.<br>
-                        • <strong>Debug:</strong> Asking for help with errors.
-                    </span>
-                </div>
-            </h2>
-            <div style="height:250px"><canvas id="donutChart"></canvas></div>
-        </div>
-
-        <!-- 3. Radar Chart -->
-        <div class="card">
-            <h2>
-                ⚖️ Topic Proficiency Radar
-                <div class="info-icon">ⓘ
-                    <span class="tooltip-text">
-                        Visualizes the <strong>balance</strong> of your skills.<br>
-                        A balanced shape means you are learning all topics equally. Spikes indicate specialization.
-                    </span>
-                </div>
-            </h2>
-            <div style="height:250px"><canvas id="radarChart"></canvas></div>
-        </div>
-
-        <!-- 4. Mastery Bars -->
-        <div class="card full-width">
-            <h2>
-                🌲 Skill Progress (XP)
-                <div class="info-icon">ⓘ
-                    <span class="tooltip-text">
-                        <strong>How to earn XP:</strong><br>
-                        • Reading Explanations: +5 pts<br>
-                        • Asking for Plans: +10 pts<br>
-                        • Submitting Code for Review: +15 pts (Best way to learn!)
-                    </span>
-                </div>
-            </h2>
-            <div class="skill-list" id="skillList"></div>
-        </div>
-
-        <!-- 5. AI Insights -->
-        <div class="card full-width">
-            <h2>🤖 Personal Tutor Assessment</h2>
-            <div id="loadingReport" style="text-align:center; padding:20px; color:#999;">Generating insights...</div>
-            <div id="reportContent" class="report-grid" style="display:none;">
-                <div class="report-col">
-                    <h3>🔍 Current Focus</h3>
-                    <div id="rep-focus" class="report-content"></div>
-                </div>
-                <div class="report-col">
-                    <h3>💪 Strengths</h3>
-                    <div id="rep-strengths" class="report-content"></div>
-                </div>
-                <div class="report-col">
-                    <h3>🚧 Needs Work</h3>
-                    <div id="rep-weakness" class="report-content"></div>
-                </div>
-                <div class="report-col">
-                    <h3>📚 Recommended</h3>
-                    <div id="rep-reading" class="report-content"></div>
-                </div>
+            <div id="goalDisplay" class="goal-text">Loading...</div>
+            <div id="goalEdit" style="display:none; margin-top:10px;">
+                <input type="text" id="goalInput" class="goal-input" placeholder="E.g. Build a Calculator">
+                <button onclick="saveGoal()" class="goal-btn" style="background:white; color:#16a085;">Save</button>
             </div>
         </div>
+        <!-- 1.5 Active Challenges Section -->
+        <div class="card full-width" id="challengesSection"
+            style="display:none; margin-bottom: 20px; border-left: 5px solid #8e44ad;">
+            <h2>
+                🚀 Active Challenges
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        Custom exercises sent by your teacher. Complete them to prove your mastery!
+                    </span>
+                </div>
+            </h2>
+            <div id="challengeList">
+                <!-- Items will be loaded here via JS -->
+            </div>
+        </div>
+
+        <div class="dash-grid">
+            <!-- 2. Interaction Patterns -->
+            <div class="card">
+                <h2>
+                    🧩 Interaction Habits
+                    <div class="info-icon">ⓘ
+                        <span class="tooltip-text">
+                            Shows <strong>how</strong> you use the AI.<br>
+                            • <strong>Concept:</strong> Asking "What is..."<br>
+                            • <strong>Problem:</strong> Asking "How to write..."<br>
+                            • <strong>Review:</strong> Pasting code for checks.<br>
+                            • <strong>Debug:</strong> Asking for help with errors.
+                        </span>
+                    </div>
+                </h2>
+                <div style="height:250px"><canvas id="donutChart"></canvas></div>
+            </div>
+
+            <!-- 3. Radar Chart -->
+            <div class="card">
+                <h2>
+                    ⚖️ Topic Proficiency Radar
+                    <div class="info-icon">ⓘ
+                        <span class="tooltip-text">
+                            Visualizes the <strong>balance</strong> of your skills.<br>
+                            A balanced shape means you are learning all topics equally. Spikes indicate specialization.
+                        </span>
+                    </div>
+                </h2>
+                <div style="height:250px"><canvas id="radarChart"></canvas></div>
+            </div>
+
+            <!-- 4. Mastery Bars -->
+            <div class="card full-width">
+                <h2>
+                    🌲 Skill Progress (XP)
+                    <div class="info-icon">ⓘ
+                        <span class="tooltip-text">
+                            <strong>How to earn XP:</strong><br>
+                            • Reading Explanations: +5 pts<br>
+                            • Asking for Plans: +10 pts<br>
+                            • Submitting Code for Review: +15 pts (Best way to learn!)
+                        </span>
+                    </div>
+                </h2>
+                <div class="skill-list" id="skillList"></div>
+            </div>
+
+            <!-- 5. AI Insights -->
+            <div class="card full-width">
+                <h2>🤖 Personal Tutor Assessment</h2>
+                <div id="loadingReport" style="text-align:center; padding:20px; color:#999;">Generating insights...
+                </div>
+                <div id="reportContent" class="report-grid" style="display:none;">
+                    <div class="report-col">
+                        <h3>🔍 Current Focus</h3>
+                        <div id="rep-focus" class="report-content"></div>
+                    </div>
+                    <div class="report-col">
+                        <h3>💪 Strengths</h3>
+                        <div id="rep-strengths" class="report-content"></div>
+                    </div>
+                    <div class="report-col">
+                        <h3>🚧 Needs Work</h3>
+                        <div id="rep-weakness" class="report-content"></div>
+                    </div>
+                    <div class="report-col">
+                        <h3>📚 Recommended</h3>
+                        <div id="rep-reading" class="report-content"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-</div>
 
-<script>
-    const API_URL = "";
-    const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
-    
-    // Auth Guard
-    if (!currentUser) window.location.href = 'index.html';
+    <script>
+        const API_URL = "";
+        const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
 
-    const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings", "Pointers", "Structures"];
+        // Auth Guard
+        if (!currentUser) window.location.href = 'index.html';
 
-    // --- MAIN INIT ---
-    function initDashboard() {
-        // 1. Load Fast Data (Charts & Stats)
-        loadStats();
-        // 2. Load Slow Data (LLM Report) - Running in parallel
-        loadReport();
-        loadAssignments();
-    }
+        const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings", "Pointers", "Structures"];
 
-    // --- FAST DATA LOADER ---
-    async function loadStats() {
-        try {
-            const resStats = await fetch(`${API_URL}/api/v1/analytics/student/${currentUser.username}`);
-            const data = await resStats.json();
-
-            // Goal
-            document.getElementById('goalDisplay').innerText = data.goal || "Set a goal (e.g. Master Pointers)";
-
-            // Visuals
-            renderCharts(data); 
-            
-            // FIX: Pass empty dict if null to prevent skill bar crash
-            renderSkillBars(data.mastery || {}); 
-        } catch(e) { 
-            console.error("Stats load failed", e); 
+        // --- MAIN INIT ---
+        function initDashboard() {
+            // 1. Load Fast Data (Charts & Stats)
+            loadStats();
+            // 2. Load Slow Data (LLM Report) - Running in parallel
+            loadReport();
+            loadAssignments();
         }
-    }
 
-    // --- SLOW DATA LOADER ---
-    async function loadReport() {
-        try {
-            const resReport = await fetch(`${API_URL}/api/v1/analytics/report/${currentUser.username}`);
-            const rep = await resReport.json();
-            
-            // Show Content
-            document.getElementById('loadingReport').style.display = 'none';
-            document.getElementById('reportContent').style.display = 'grid';
-            
-            // Populate Text
-            document.getElementById('rep-focus').innerText = rep.focus || "No data";
-            document.getElementById('rep-strengths').innerText = rep.strengths || "N/A";
-            document.getElementById('rep-weakness').innerText = rep.weakness || "N/A";
-            
-            // Populate Chips
-            const readDiv = document.getElementById('rep-reading');
-            readDiv.innerHTML = '';
-            if(rep.reading && Array.isArray(rep.reading)) {
-                rep.reading.forEach(item => {
-                    readDiv.innerHTML += `<span class="reading-chip">📖 ${item}</span>`;
-                });
-            } else {
-                readDiv.innerText = "Keep practicing basic concepts.";
+        // --- FAST DATA LOADER ---
+        async function loadStats() {
+            try {
+                const resStats = await fetch(`${API_URL}/api/v1/analytics/student/${currentUser.username}`);
+                const data = await resStats.json();
+
+                // Goal
+                document.getElementById('goalDisplay').innerText = data.goal || "Set a goal (e.g. Master Pointers)";
+
+                // Visuals
+                renderCharts(data);
+
+                // FIX: Pass empty dict if null to prevent skill bar crash
+                renderSkillBars(data.mastery || {});
+            } catch (e) {
+                console.error("Stats load failed", e);
             }
-        } catch (e) { 
-            console.error("Report load failed", e);
-            document.getElementById('loadingReport').innerText = "Analysis unavailable.";
         }
-    }
 
-    // --- CHART RENDERER ---
-    function renderCharts(data) {
-        // 1. Safety Check: Default to empty object if null/undefined
-        const stats = data.stats || { CONCEPT: 0, PROBLEM: 0, DEBUG: 0, REVIEW: 0 };
-        const mastery = data.mastery || {}; 
+        // --- SLOW DATA LOADER ---
+        async function loadReport() {
+            try {
+                const resReport = await fetch(`${API_URL}/api/v1/analytics/report/${currentUser.username}`);
+                const rep = await resReport.json();
 
-        // Destroy existing charts to prevent canvas reuse errors (glitching)
-        if(window.topicChartRef) window.topicChartRef.destroy();
-        if(window.radarChartRef) window.radarChartRef.destroy();
+                // Show Content
+                document.getElementById('loadingReport').style.display = 'none';
+                document.getElementById('reportContent').style.display = 'grid';
 
-        // 2. Donut Chart (Habits)
-        const ctxDonut = document.getElementById('donutChart').getContext('2d');
-        window.topicChartRef = new Chart(ctxDonut, {
-            type: 'doughnut',
-            data: {
-                labels: ['Concept (Reading)', 'Problem (Planning)', 'Debug (Fixing)', 'Review (Coding)'],
-                datasets: [{
-                    data: [
-                        stats.CONCEPT || 0, 
-                        stats.PROBLEM || 0, 
-                        stats.DEBUG || 0, 
-                        stats.REVIEW || 0
-                    ],
-                    backgroundColor: ['#3498db', '#9b59b6', '#e74c3c', '#f1c40f'],
-                    borderWidth: 0
-                }]
-            },
-            options: { 
-                maintainAspectRatio: false,
-                plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } 
+                // Populate Text
+                document.getElementById('rep-focus').innerText = rep.focus || "No data";
+                document.getElementById('rep-strengths').innerText = rep.strengths || "N/A";
+                document.getElementById('rep-weakness').innerText = rep.weakness || "N/A";
+
+                // Populate Chips
+                const readDiv = document.getElementById('rep-reading');
+                readDiv.innerHTML = '';
+                if (rep.reading && Array.isArray(rep.reading)) {
+                    rep.reading.forEach(item => {
+                        readDiv.innerHTML += `<span class="reading-chip">📖 ${item}</span>`;
+                    });
+                } else {
+                    readDiv.innerText = "Keep practicing basic concepts.";
+                }
+            } catch (e) {
+                console.error("Report load failed", e);
+                document.getElementById('loadingReport').innerText = "Analysis unavailable.";
             }
-        });
+        }
 
-        // 3. Radar Chart (Proficiency)
-        // CRITICAL FIX: Use the safe 'mastery' object we defined at the top
-        const masteryScores = TOPICS.map(t => mastery[t] || 0);
-        
-        const ctxRadar = document.getElementById('radarChart').getContext('2d');
-        window.radarChartRef = new Chart(ctxRadar, {
-            type: 'radar',
-            data: {
-                labels: TOPICS,
-                datasets: [{
-                    label: 'Proficiency Level',
-                    data: masteryScores,
-                    backgroundColor: 'rgba(46, 204, 113, 0.2)',
-                    borderColor: '#2ecc71',
-                    pointBackgroundColor: '#2ecc71',
-                    borderWidth: 2
-                }]
-            },
-            options: { 
-                maintainAspectRatio: false,
-                scales: { 
-                    r: { 
-                        min: 0, 
-                        max: 100, 
-                        ticks: { display: false },
-                        grid: { color: 'rgba(0,0,0,0.05)' }
-                    } 
+        // --- CHART RENDERER ---
+        function renderCharts(data) {
+            // 1. Safety Check: Default to empty object if null/undefined
+            const stats = data.stats || { CONCEPT: 0, PROBLEM: 0, DEBUG: 0, REVIEW: 0 };
+            const mastery = data.mastery || {};
+
+            // Destroy existing charts to prevent canvas reuse errors (glitching)
+            if (window.topicChartRef) window.topicChartRef.destroy();
+            if (window.radarChartRef) window.radarChartRef.destroy();
+
+            // 2. Donut Chart (Habits)
+            const ctxDonut = document.getElementById('donutChart').getContext('2d');
+            window.topicChartRef = new Chart(ctxDonut, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Concept (Reading)', 'Problem (Planning)', 'Debug (Fixing)', 'Review (Coding)'],
+                    datasets: [{
+                        data: [
+                            stats.CONCEPT || 0,
+                            stats.PROBLEM || 0,
+                            stats.DEBUG || 0,
+                            stats.REVIEW || 0
+                        ],
+                        backgroundColor: ['#3498db', '#9b59b6', '#e74c3c', '#f1c40f'],
+                        borderWidth: 0
+                    }]
                 },
-                plugins: { legend: { display: false } }
-            }
-        });
-    }
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } }
+                }
+            });
 
-    // --- SKILL BAR RENDERER ---
-    function renderSkillBars(mastery) {
-        const skillDiv = document.getElementById('skillList');
-        skillDiv.innerHTML = '';
-        
-        TOPICS.forEach((t) => {
-            const score = mastery[t] || 0;
-            // Color Logic
-            let color = '#e74c3c'; // Red
-            if(score > 30) color = '#f1c40f'; // Yellow
-            if(score > 70) color = '#2ecc71'; // Green
+            // 3. Radar Chart (Proficiency)
+            // CRITICAL FIX: Use the safe 'mastery' object we defined at the top
+            const masteryScores = TOPICS.map(t => mastery[t] || 0);
 
-            skillDiv.innerHTML += `
+            const ctxRadar = document.getElementById('radarChart').getContext('2d');
+            window.radarChartRef = new Chart(ctxRadar, {
+                type: 'radar',
+                data: {
+                    labels: TOPICS,
+                    datasets: [{
+                        label: 'Proficiency Level',
+                        data: masteryScores,
+                        backgroundColor: 'rgba(46, 204, 113, 0.2)',
+                        borderColor: '#2ecc71',
+                        pointBackgroundColor: '#2ecc71',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            min: 0,
+                            max: 100,
+                            ticks: { display: false },
+                            grid: { color: 'rgba(0,0,0,0.05)' }
+                        }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        // --- SKILL BAR RENDERER ---
+        function renderSkillBars(mastery) {
+            const skillDiv = document.getElementById('skillList');
+            skillDiv.innerHTML = '';
+
+            TOPICS.forEach((t) => {
+                const score = mastery[t] || 0;
+                // Color Logic
+                let color = '#e74c3c'; // Red
+                if (score > 30) color = '#f1c40f'; // Yellow
+                if (score > 70) color = '#2ecc71'; // Green
+
+                skillDiv.innerHTML += `
                 <div class="skill-item">
                     <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-weight:600; font-size:0.9rem;">
                         <span>${t}</span>
@@ -354,81 +587,81 @@
                         <div class="fill" style="width:${score}%; background:${color};"></div>
                     </div>
                 </div>`;
-        });
-    }
-
-    // --- GOAL LOGIC ---
-    function toggleEdit() {
-        const display = document.getElementById('goalDisplay');
-        const edit = document.getElementById('goalEdit');
-        if (edit.style.display === 'none') {
-            edit.style.display = 'block';
-            display.style.display = 'none';
-            document.getElementById('goalInput').value = display.innerText;
-        } else {
-            edit.style.display = 'none';
-            display.style.display = 'block';
+            });
         }
-    }
 
-    async function saveGoal() {
-        const newGoal = document.getElementById('goalInput').value;
-        await fetch(`${API_URL}/api/v1/user/goal`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ username: currentUser.username, goal: newGoal })
-        });
-        location.reload();
-    }
-
-    // --- ASSIGNMENT LOGIC ---
-    async function loadAssignments() {
-        try {
-            const res = await fetch(`${API_URL}/api/v1/assignments/student/${currentUser.username}`);
-            const assignments = await res.json();
-            
-            const container = document.getElementById('challengesSection');
-            const list = document.getElementById('challengeList');
-            
-            if (assignments.length === 0) {
-                container.style.display = 'none'; // Hide if empty
-                return;
+        // --- GOAL LOGIC ---
+        function toggleEdit() {
+            const display = document.getElementById('goalDisplay');
+            const edit = document.getElementById('goalEdit');
+            if (edit.style.display === 'none') {
+                edit.style.display = 'block';
+                display.style.display = 'none';
+                document.getElementById('goalInput').value = display.innerText;
+            } else {
+                edit.style.display = 'none';
+                display.style.display = 'block';
             }
-            
-            container.style.display = 'block'; // Show if data exists
-            list.innerHTML = '';
-            
-            // Sort: PENDING first, then others
-            assignments.sort((a, b) => (a.status === 'PENDING' ? -1 : 1));
+        }
 
-            assignments.forEach(item => {
-                let statusBadge = '';
-                let contentHtml = '';
+        async function saveGoal() {
+            const newGoal = document.getElementById('goalInput').value;
+            await fetch(`${API_URL}/api/v1/user/goal`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: currentUser.username, goal: newGoal })
+            });
+            location.reload();
+        }
 
-                // 1. PENDING STATE (Input Box)
-                if (item.status === 'PENDING') {
-                    statusBadge = '<span class="challenge-status st-pending">Wait for Reply</span>'; // Actually 'Action Required'
-                    contentHtml = `
+        // --- ASSIGNMENT LOGIC ---
+        async function loadAssignments() {
+            try {
+                const res = await fetch(`${API_URL}/api/v1/assignments/student/${currentUser.username}`);
+                const assignments = await res.json();
+
+                const container = document.getElementById('challengesSection');
+                const list = document.getElementById('challengeList');
+
+                if (assignments.length === 0) {
+                    container.style.display = 'none'; // Hide if empty
+                    return;
+                }
+
+                container.style.display = 'block'; // Show if data exists
+                list.innerHTML = '';
+
+                // Sort: PENDING first, then others
+                assignments.sort((a, b) => (a.status === 'PENDING' ? -1 : 1));
+
+                assignments.forEach(item => {
+                    let statusBadge = '';
+                    let contentHtml = '';
+
+                    // 1. PENDING STATE (Input Box)
+                    if (item.status === 'PENDING') {
+                        statusBadge = '<span class="challenge-status st-pending">Wait for Reply</span>'; // Actually 'Action Required'
+                        contentHtml = `
                         <p style="font-size:1.1rem; font-weight:500; margin-bottom:15px;">${item.question}</p>
                         <textarea id="ans-${item.id}" rows="4" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; font-family:inherit;" placeholder="Type your solution here..."></textarea>
                         <button onclick="submitChallenge('${item.id}')" style="margin-top:10px; background:#8e44ad; color:white; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-weight:bold;">Submit Answer</button>
                     `;
-                } 
-                // 2. SUBMITTED STATE (Read Only)
-                else if (item.status === 'SUBMITTED') {
-                    statusBadge = '<span class="challenge-status st-submitted">Under Review</span>';
-                    contentHtml = `
+                    }
+                    // 2. SUBMITTED STATE (Read Only)
+                    else if (item.status === 'SUBMITTED') {
+                        statusBadge = '<span class="challenge-status st-submitted">Under Review</span>';
+                        contentHtml = `
                         <p style="font-weight:500; color:#555;">Q: ${item.question}</p>
                         <div style="background:#f9f9f9; padding:10px; border-radius:6px; color:#333;">
                             <b>Your Answer:</b><br>${item.student_answer}
                         </div>
                         <div style="margin-top:10px; font-size:0.9rem; color:#7f8c8d;">Wait for teacher feedback...</div>
                     `;
-                } 
-                // 3. GRADED STATE (Show Feedback)
-                else if (item.status === 'GRADED') {
-                    statusBadge = '<span class="challenge-status st-graded">Completed</span>';
-                    contentHtml = `
+                    }
+                    // 3. GRADED STATE (Show Feedback)
+                    else if (item.status === 'GRADED') {
+                        statusBadge = '<span class="challenge-status st-graded">Completed</span>';
+                        contentHtml = `
                         <p style="font-weight:500; color:#555;">Q: ${item.question}</p>
                         <div style="background:#f9f9f9; padding:10px; border-radius:6px; color:#333; margin-bottom:10px;">
                             <b>Your Answer:</b><br>${item.student_answer}
@@ -438,9 +671,9 @@
                             ${item.teacher_feedback}
                         </div>
                     `;
-                }
+                    }
 
-                list.innerHTML += `
+                    list.innerHTML += `
                     <div class="challenge-item">
                         <div class="challenge-header">
                             <span style="color:#777; font-size:0.8rem;">📅 ${new Date(item.timestamp).toLocaleDateString()}</span>
@@ -449,33 +682,34 @@
                         ${contentHtml}
                     </div>
                 `;
-            });
+                });
 
-        } catch (e) { console.error("Assignment load failed", e); }
-    }
+            } catch (e) { console.error("Assignment load failed", e); }
+        }
 
-    async function submitChallenge(id) {
-        const answer = document.getElementById(`ans-${id}`).value;
-        if (!answer.trim()) return alert("Please write an answer first.");
+        async function submitChallenge(id) {
+            const answer = document.getElementById(`ans-${id}`).value;
+            if (!answer.trim()) return alert("Please write an answer first.");
 
-        try {
-            const res = await fetch(`${API_URL}/api/v1/assignments/submit`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ assignment_id: id, answer: answer })
-            });
-            
-            if (res.ok) {
-                // Reload to show "Submitted" state
-                loadAssignments(); 
-            } else {
-                alert("Submission failed.");
-            }
-        } catch (e) { console.error(e); }
-    }
+            try {
+                const res = await fetch(`${API_URL}/api/v1/assignments/submit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ assignment_id: id, answer: answer })
+                });
 
-    // Start!
-    initDashboard();
-</script>
+                if (res.ok) {
+                    // Reload to show "Submitted" state
+                    loadAssignments();
+                } else {
+                    alert("Submission failed.");
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        // Start!
+        initDashboard();
+    </script>
 </body>
+
 </html>

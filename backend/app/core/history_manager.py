@@ -39,10 +39,13 @@ class HistoryManager:
         if not sess:
             self.create_session(username) 
 
-        # 2. Update Title if first user message
+        # 2. Update Title based on first USER message (ignore bot greeting)
         if role == "user":
-            count = db.fetch_one("SELECT count(*) as c FROM messages WHERE session_id = ?", (session_id,))
-            if count['c'] == 0:
+            user_count = db.fetch_one(
+                "SELECT count(*) as c FROM messages WHERE session_id = ? AND role = 'user'",
+                (session_id,)
+            )
+            if user_count['c'] == 0:
                 new_title = content[:40] + "..."
                 db.execute("UPDATE sessions SET title = ? WHERE session_id = ?", (new_title, session_id))
 
@@ -74,10 +77,16 @@ class HistoryManager:
 
     def get_user_sessions_list(self, username: str) -> List[Dict]:
         rows = db.fetch_all("""
-            SELECT session_id, title, created_at 
-            FROM sessions 
-            WHERE username = ? AND deleted = 0 
-            ORDER BY created_at DESC
+            SELECT s.session_id, s.title, s.created_at 
+            FROM sessions s
+            WHERE s.username = ? AND s.deleted = 0
+            AND EXISTS (
+                SELECT 1 FROM messages m 
+                WHERE m.session_id = s.session_id 
+                AND m.role = 'user' 
+                AND m.content != '[INIT_SESSION]'
+            )
+            ORDER BY s.created_at DESC
         """, (username,))
         
         return [{"id": r['session_id'], "title": r['title'], "date": r['created_at']} for r in rows]

@@ -263,7 +263,11 @@ async def chat_stream(request: ChatRequest):
     # --- 2. SESSION MANAGEMENT ---
     session_id = request.session_id
     if not session_id:
-        session_id = history_manager.create_session(request.username)
+        # Don't create a fresh session just for the greeting trigger
+        if request.message.strip() == "[INIT_SESSION]":
+            session_id = history_manager.create_session(request.username)
+        else:
+            session_id = history_manager.create_session(request.username)
 
     # --- 3. FETCH CONTEXT ---
     session_data = history_manager.get_session_details(request.username, session_id)
@@ -275,7 +279,11 @@ async def chat_stream(request: ChatRequest):
                 break
 
     # --- 4. SAVE USER MESSAGE & GET ID ---
-    user_msg_id = history_manager.add_message(request.username, session_id, "user", request.message)
+    # Skip saving the special greeting trigger — it's an internal signal, not a real question
+    if request.message.strip() == "[INIT_SESSION]":
+        user_msg_id = None
+    else:
+        user_msg_id = history_manager.add_message(request.username, session_id, "user", request.message)
 
     async def generate_stream():
         full_bot_response = ""
@@ -347,11 +355,12 @@ async def chat_stream(request: ChatRequest):
                             # Pick most common topic from the retrieved chunks
                             detected_topic = Counter(topics).most_common(1)[0][0]
                     try:
-                        history_manager.log_interaction(
-                            user_msg_id, 
-                            final_data['intent'], 
-                            detected_topic 
-                        )
+                        if user_msg_id is not None:
+                            history_manager.log_interaction(
+                                user_msg_id, 
+                                final_data['intent'], 
+                                detected_topic 
+                            )
                     except Exception as analytics_err:
                         logger.error(f"Analytics logging failed: {analytics_err}")
 
