@@ -6,6 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Tutor</title>
 
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap"
+        rel="stylesheet">
+
     <!-- Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
@@ -19,27 +26,31 @@
 
     <style>
         :root {
-            /* Gemini-inspired Dark Palette */
-            --bg-color: #131314;
-            --sidebar-bg: #1e1f20;
-            --sidebar-hover: #2c2d2e;
-            --input-bg: #282a2c;
-            --text-primary: #e3e3e3;
+            /* Bespoke Educational Product Palette */
+            --bg-color: #0f1115;
+            --sidebar-bg: #161920;
+            --sidebar-hover: #1e2330;
+            --input-bg: #1a1e28;
+            --text-primary: #e2e8f0;
             --text-secondary: #a8c7fa;
+            --text-muted: #94a3b8;
             --accent-color: #a8c7fa;
-            --user-msg-bg: #282a2c;
+            --user-msg-bg: #1e293b;
             --bot-msg-bg: transparent;
-            --border-color: #444746;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(255, 255, 255, 0.15);
         }
 
         body {
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
             background-color: var(--bg-color);
             margin: 0;
             display: flex;
             height: 100vh;
             color: var(--text-primary);
             overflow: hidden;
+            font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+            -webkit-font-smoothing: antialiased;
         }
 
         /* --- SIDEBAR --- */
@@ -95,12 +106,13 @@
             justify-content: space-between;
             align-items: center;
             padding: 10px 15px;
-            margin-bottom: 5px;
+            margin-bottom: 3px;
             cursor: pointer;
-            border-radius: 18px;
-            color: #ccc;
-            font-size: 0.9rem;
-            transition: background 0.1s;
+            border-radius: 10px;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+            border-left: 3px solid transparent;
         }
 
         .history-item span {
@@ -112,11 +124,13 @@
 
         .history-item:hover {
             background: var(--sidebar-hover);
+            color: var(--text-primary);
         }
 
         .history-item.active {
-            background: #004a77;
-            color: white;
+            background: rgba(168, 199, 250, 0.08);
+            border-left-color: var(--accent-color);
+            color: var(--text-primary);
         }
 
         /* Delete Button (Hidden by default, shown on hover) */
@@ -258,6 +272,7 @@
             background: var(--sidebar-bg);
             border-bottom: 1px solid var(--border-color);
             flex-shrink: 0;
+            min-height: 56px;
         }
 
         .menu-btn {
@@ -345,19 +360,46 @@
 
         .message {
             max-width: 95%;
-            padding: 10px 10px;
-            border-radius: 18px;
-            line-height: 1.6;
-            font-size: 1rem;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.7;
+            font-size: 0.95rem;
             color: var(--text-primary);
             pointer-events: auto;
-            /* Restores clicking for the chat bubbles */
+            animation: fadeSlideIn 0.3s ease-out both;
+        }
+
+        .msg-sender {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .msg-sender.bot {
+            color: var(--accent-color);
+        }
+
+        @keyframes fadeSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .message.user {
             align-self: flex-end;
-            background-color: #282a2c;
+            background-color: var(--user-msg-bg);
+            border: 1px solid rgba(168, 199, 250, 0.1);
             border-bottom-right-radius: 4px;
+            max-width: 75%;
         }
 
         .message.bot {
@@ -366,33 +408,118 @@
             padding-left: 0;
         }
 
-        /* Markdown Code Styles */
+        .message.bot strong {
+            color: var(--accent-color);
+            font-weight: 600;
+        }
+
+        .message.bot em {
+            color: #c4a8ff;
+            font-style: italic;
+        }
+
+        .message.bot h1,
+        .message.bot h2,
+        .message.bot h3,
+        .message.bot h4,
+        .message.bot h5 {
+            color: #f0f0f0;
+            border-left: 3px solid var(--accent-color);
+            padding-left: 10px;
+            margin-top: 20px;
+            margin-bottom: 8px;
+        }
+
+        .message.bot a {
+            color: var(--accent-color);
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: border-color 0.2s;
+        }
+
+        .message.bot a:hover {
+            border-bottom-color: var(--accent-color);
+        }
+
+        .message.bot code:not([class*="language-"]) {
+            background: rgba(168, 199, 250, 0.1);
+            color: #c4dafb;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .message.bot ul,
+        .message.bot ol {
+            padding-left: 20px;
+        }
+
+        .message.bot li {
+            margin-bottom: 4px;
+        }
+
+        .message.bot li::marker {
+            color: var(--accent-color);
+        }
+
+        .message.bot blockquote {
+            border-left: 3px solid #1abc9c;
+            margin: 12px 0;
+            padding: 8px 14px;
+            background: rgba(26, 188, 156, 0.06);
+            border-radius: 0 8px 8px 0;
+            color: #ccc;
+        }
+
+        /* Code Blocks — VS Code inspired */
         pre[class*="language-"] {
-            background: #1e1f20 !important;
-            border: 1px solid #333;
-            border-radius: 12px;
-            margin: 15px 0;
+            background: #0d1117 !important;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+            margin: 16px 0;
+            padding: 16px !important;
+            position: relative;
+        }
+
+        pre[class*="language-"]::before {
+            content: attr(data-lang);
+            position: absolute;
+            top: 0;
+            right: 12px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            font-family: 'Inter', sans-serif;
+            padding: 2px 8px;
+            border-radius: 0 0 6px 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         code {
-            font-family: 'Consolas', monospace;
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 0.88rem;
         }
 
-        /* Input Area */
         .input-wrapper {
             position: absolute;
             bottom: 30px;
             left: 15%;
             right: 15%;
             background: var(--input-bg);
-            border-radius: 30px;
+            border-radius: 24px;
             padding: 10px 20px;
             display: flex;
             align-items: flex-end;
             gap: 10px;
             z-index: 20;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-            border: 1px solid #444;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-color);
+            transition: border-color 0.2s;
+        }
+
+        .input-wrapper:focus-within {
+            border-color: var(--border-hover);
         }
 
         textarea {
@@ -437,18 +564,19 @@
         }
 
         .suggestion-chip {
-            background: #2a2b2d;
+            background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--border-color);
-            color: var(--text-secondary);
+            color: var(--text-muted);
             padding: 12px 24px;
-            border-radius: 24px;
+            border-radius: 12px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
         }
 
         .suggestion-chip:hover {
-            background: #333;
-            border-color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.06);
+            border-color: var(--border-hover);
             color: var(--text-primary);
         }
 
@@ -701,10 +829,11 @@
 
         .feedback-bar {
             display: flex;
-            gap: 8px;
-            margin-top: 10px;
-            opacity: 0.7;
-            transition: opacity 0.2s;
+            gap: 12px;
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            opacity: 0.9;
         }
 
         .feedback-bar:hover {
@@ -712,27 +841,35 @@
         }
 
         .feedback-btn {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-            border-radius: 6px;
-            padding: 4px 8px;
-            font-size: 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            border-radius: 8px;
+            padding: 6px 12px;
+            font-size: 0.8rem;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 4px;
+            gap: 6px;
+            transition: all 0.2s ease;
         }
 
         .feedback-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: var(--text-primary);
+            background: rgba(168, 199, 250, 0.15);
+            border-color: rgba(168, 199, 250, 0.3);
+            color: var(--accent-color);
         }
 
         .feedback-btn.active {
-            background: var(--accent-color);
-            color: #000;
-            border-color: var(--accent-color);
+            background: rgba(52, 211, 153, 0.15);
+            border-color: rgba(52, 211, 153, 0.3);
+            color: var(--success-color);
+        }
+
+        .feedback-btn.active.downvote {
+            background: rgba(248, 113, 113, 0.15);
+            border-color: rgba(248, 113, 113, 0.3);
+            color: #f87171;
         }
 
         /* Different widths to look like real text paragraphs */
@@ -1170,7 +1307,7 @@
                 if (rawText.includes('{') || rawText.includes(';')) {
                     displayText = `<pre><code class="language-c">${rawText.replace(/</g, '&lt;')}</code></pre>`;
                 }
-                userDiv.innerHTML = displayText;
+                userDiv.innerHTML = `<div class="msg-sender">You</div>` + displayText;
                 document.getElementById('messages').appendChild(userDiv);
                 Prism.highlightAllUnder(userDiv);
             }
@@ -1186,6 +1323,7 @@
             botDiv.className = 'message bot';
             const progId = `prog-${Date.now()}`;
             botDiv.innerHTML = `
+            <div class="msg-sender bot">Tutor</div>
             <div id="text-${progId}"></div> 
             <div class="loading-container" id="${progId}">
                 <div class="loading-status">
@@ -1258,7 +1396,7 @@
                                     if (data.data.session_id) currentSessionId = data.data.session_id;
 
                                     // Overwrite the entire bubble (which automatically destroys the spinner)
-                                    botDiv.innerHTML = marked.parse(data.data.answer);
+                                    botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(data.data.answer);
                                     displaySources(data.data.sources);
                                     renderDiagrams(botDiv);
                                     Prism.highlightAllUnder(botDiv);
@@ -1555,9 +1693,9 @@
                     if (msg.role === 'user') {
                         let text = msg.content.replace(/\n/g, '<br>');
                         if (text.includes('{') || text.includes(';')) text = `<pre><code class="language-c">${text.replace(/</g, '&lt;')}</code></pre>`;
-                        div.innerHTML = text;
+                        div.innerHTML = `<div class="msg-sender">You</div>` + text;
                     } else {
-                        div.innerHTML = marked.parse(msg.content);
+                        div.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(msg.content);
                         renderDiagrams(div);
                     }
                     msgDiv.appendChild(div);

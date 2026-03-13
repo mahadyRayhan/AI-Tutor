@@ -5,18 +5,37 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Learning Journey</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
+        :root {
+            /* Bespoke Educational Product Palette */
+            --bg-color: #0f1115;
+            --surface-bg: rgba(255, 255, 255, 0.03);
+            --input-bg: rgba(255, 255, 255, 0.05);
+            --text-primary: #e2e8f0;
+            --text-muted: #94a3b8;
+            --accent-color: #a8c7fa;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(255, 255, 255, 0.15);
+            --success-color: #34d399;
+            --warning-color: #f87171;
+        }
+
         * {
             box-sizing: border-box;
         }
 
         body {
-            font-family: 'Segoe UI', sans-serif;
-            background: #f4f4f9;
-            /* Fluid padding: scales between 12px and 40px based on viewport */
-            padding: clamp(12px, 4vw, 40px);
-            color: #333;
+            font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            padding: clamp(16px, 4vw, 48px);
+            color: var(--text-primary);
+            margin: 0;
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.6;
         }
 
         .container {
@@ -24,47 +43,81 @@
             margin: 0 auto;
         }
 
-        /* Header */
+        /* Header — matches chat top-bar */
         .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            /* wraps naturally when too narrow */
             gap: 12px;
             margin-bottom: 25px;
+            min-height: 56px;
         }
 
         .header h1 {
-            font-size: clamp(1.2rem, 3vw, 1.8rem);
-            /* fluid font */
+            font-size: clamp(1.3rem, 3vw, 1.8rem);
             margin: 0;
+            font-weight: 600;
+            color: var(--text-primary);
         }
 
         .back-btn {
-            padding: clamp(8px, 1.5vw, 10px) clamp(14px, 2vw, 20px);
-            background: #2c3e50;
-            color: white;
+            padding: 10px 22px;
+            background: var(--input-bg);
+            color: var(--accent-color);
             text-decoration: none;
-            border-radius: 6px;
-            font-weight: bold;
+            border-radius: 10px;
+            font-weight: 500;
             white-space: nowrap;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
         }
 
-        /* Card */
+        .back-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--border-hover);
+        }
+
+        /* Card — soft glass effect */
         .card {
-            background: white;
-            padding: clamp(16px, 3vw, 25px);
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            background: var(--surface-bg);
+            padding: clamp(20px, 3vw, 28px);
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
             position: relative;
+            animation: fadeSlideIn 0.4s ease-out both;
+        }
+
+        .card:nth-child(2) {
+            animation-delay: 0.05s;
+        }
+
+        .card:nth-child(3) {
+            animation-delay: 0.1s;
+        }
+
+        .card:nth-child(4) {
+            animation-delay: 0.15s;
+        }
+
+        @keyframes fadeSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         h2 {
             margin: 0 0 15px 0;
-            color: #2c3e50;
+            color: var(--text-primary);
             font-size: clamp(0.95rem, 2vw, 1.2rem);
-            border-bottom: 2px solid #f0f0f0;
+            border-bottom: 1px solid var(--border-color);
             padding-bottom: 10px;
             display: flex;
             align-items: center;
@@ -72,12 +125,12 @@
 
         /* Goal Section */
         .goal-box {
-            background: linear-gradient(135deg, #1abc9c, #16a085);
+            background: linear-gradient(135deg, #1a7a63, #14705a);
             color: white;
             padding: clamp(16px, 3vw, 25px);
             border-radius: 12px;
             margin-bottom: 30px;
-            box-shadow: 0 4px 15px rgba(26, 188, 156, 0.2);
+            border: 1px solid rgba(46, 204, 113, 0.2);
         }
 
         .goal-top {
@@ -102,32 +155,34 @@
         }
 
         .goal-input {
-            padding: 8px;
-            border-radius: 4px;
-            border: none;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--input-bg);
+            color: var(--text-primary);
             width: min(60%, 400px);
-            /* fluid but capped */
             font-size: 1rem;
         }
 
         .goal-btn {
-            background: rgba(0, 0, 0, 0.2);
+            background: rgba(255, 255, 255, 0.15);
             border: none;
             color: white;
             padding: 8px 15px;
-            border-radius: 4px;
+            border-radius: 8px;
             cursor: pointer;
             font-weight: bold;
+            transition: background 0.2s;
         }
 
         .goal-btn:hover {
-            background: rgba(0, 0, 0, 0.3);
+            background: rgba(255, 255, 255, 0.25);
         }
 
         /* Challenge Card */
         .challenge-item {
-            background: #fdfdfd;
-            border: 1px solid #eee;
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
             padding: 20px;
             border-radius: 8px;
             margin-bottom: 15px;
@@ -150,33 +205,36 @@
             border-radius: 12px;
         }
 
+        /* Dark-mode status badges */
         .st-pending {
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeeba;
+            background: rgba(251, 191, 36, 0.08);
+            color: #fbbf24;
+            border: 1px solid rgba(251, 191, 36, 0.15);
         }
 
         .st-submitted {
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
+            background: rgba(168, 199, 250, 0.08);
+            color: var(--accent-color);
+            border: 1px solid rgba(168, 199, 250, 0.15);
         }
 
         .st-graded {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+            background: rgba(52, 211, 153, 0.08);
+            color: var(--success-color);
+            border: 1px solid rgba(52, 211, 153, 0.15);
         }
 
         .teacher-feedback {
-            background: #f8f9fa;
-            border-left: 4px solid #2ecc71;
-            padding: 10px 15px;
+            background: rgba(52, 211, 153, 0.04);
+            border-left: 3px solid var(--success-color);
+            padding: 12px 16px;
             margin-top: 15px;
             font-size: 0.9rem;
+            color: var(--text-primary);
+            border-radius: 0 8px 8px 0;
         }
 
-        /* Main Dashboard Grid — fluid: 2 columns on wide, 1 on narrow */
+        /* Main Dashboard Grid */
         .dash-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
@@ -184,12 +242,11 @@
             margin-bottom: 20px;
         }
 
-        /* Full-width spans all columns (auto-fit means this auto collapses) */
         .full-width {
             grid-column: 1 / -1;
         }
 
-        /* Skill Tree — intrinsically fluid */
+        /* Skill Tree */
         .skill-list {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
@@ -197,26 +254,32 @@
         }
 
         .skill-item {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #e9ecef;
+            background: var(--input-bg);
+            padding: 16px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            transition: border-color 0.2s;
+        }
+
+        .skill-item:hover {
+            border-color: var(--border-hover);
         }
 
         .progress-bar {
-            height: 8px;
-            background: #ddd;
-            border-radius: 4px;
-            margin-top: 8px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 999px;
+            margin-top: 10px;
             overflow: hidden;
         }
 
         .fill {
             height: 100%;
-            transition: width 1s;
+            transition: width 1s ease-out;
+            border-radius: 999px;
         }
 
-        /* AI Report — fluid: 4 → 2 → 1 columns naturally */
+        /* AI Report */
         .report-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
@@ -225,70 +288,79 @@
 
         .report-col h3 {
             font-size: clamp(0.85rem, 1.5vw, 1rem);
-            color: #2980b9;
+            color: var(--accent-color);
             margin-bottom: 10px;
             display: flex;
             align-items: center;
             gap: 8px;
+            font-weight: 600;
         }
 
         .report-content {
-            font-size: 0.95rem;
-            line-height: 1.5;
-            color: #555;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            color: var(--text-muted);
         }
 
         .reading-chip {
             display: inline-block;
-            background: #e8f6f3;
-            color: #16a085;
-            padding: 4px 10px;
-            border-radius: 15px;
-            font-size: 0.85rem;
-            margin-right: 5px;
-            margin-bottom: 5px;
-            border: 1px solid #a3e4d7;
+            background: rgba(52, 211, 153, 0.08);
+            color: var(--success-color);
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            margin-right: 6px;
+            margin-bottom: 6px;
+            border: 1px solid rgba(52, 211, 153, 0.15);
+            transition: background 0.2s;
         }
 
-        /* Tooltips */
+        .reading-chip:hover {
+            background: rgba(52, 211, 153, 0.14);
+        }
+
+        /* Tooltips — refined */
         .info-icon {
             display: inline-block;
-            background: #bdc3c7;
-            color: white;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-muted);
             width: 18px;
             height: 18px;
             border-radius: 50%;
             text-align: center;
             line-height: 18px;
-            font-size: 12px;
+            font-size: 11px;
             cursor: help;
             margin-left: 8px;
             position: relative;
-            font-family: monospace;
-            font-weight: normal;
+            font-family: 'Inter', sans-serif;
+            font-weight: 500;
             flex-shrink: 0;
+            transition: all 0.2s ease;
         }
 
         .info-icon .tooltip-text {
             visibility: hidden;
             width: 220px;
-            background-color: #333;
-            color: #fff;
+            background-color: #1a1e28;
+            color: var(--text-primary);
             text-align: left;
-            border-radius: 6px;
-            padding: 10px;
+            border-radius: 10px;
+            padding: 12px;
             position: absolute;
             z-index: 10;
-            bottom: 125%;
+            bottom: 130%;
             left: 50%;
             margin-left: -110px;
             opacity: 0;
-            transition: opacity 0.3s;
-            font-family: 'Segoe UI', sans-serif;
-            font-size: 0.8rem;
-            font-weight: normal;
-            line-height: 1.4;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            transition: all 0.25s ease;
+            transform: translateY(4px);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.78rem;
+            font-weight: 400;
+            line-height: 1.5;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border-color);
         }
 
         .info-icon .tooltip-text::after {
@@ -299,19 +371,20 @@
             margin-left: -5px;
             border-width: 5px;
             border-style: solid;
-            border-color: #333 transparent transparent transparent;
+            border-color: #1a1e28 transparent transparent transparent;
         }
 
         .info-icon:hover {
-            background: #8e44ad;
+            background: rgba(168, 199, 250, 0.15);
+            color: var(--accent-color);
         }
 
         .info-icon:hover .tooltip-text {
             visibility: visible;
             opacity: 1;
+            transform: translateY(0);
         }
 
-        /* Only on very small screens: goal input goes full width */
         @media (max-width: 400px) {
             .goal-input {
                 width: 100%;
@@ -337,7 +410,8 @@
             <div id="goalDisplay" class="goal-text">Loading...</div>
             <div id="goalEdit" style="display:none; margin-top:10px;">
                 <input type="text" id="goalInput" class="goal-input" placeholder="E.g. Build a Calculator">
-                <button onclick="saveGoal()" class="goal-btn" style="background:white; color:#16a085;">Save</button>
+                <button onclick="saveGoal()" class="goal-btn"
+                    style="background:#a8c7fa; color:#0f1115; font-family:Inter,sans-serif;">Save</button>
             </div>
         </div>
         <!-- 1.5 Active Challenges Section -->
@@ -522,13 +596,14 @@
                             stats.DEBUG || 0,
                             stats.REVIEW || 0
                         ],
-                        backgroundColor: ['#3498db', '#9b59b6', '#e74c3c', '#f1c40f'],
-                        borderWidth: 0
+                        backgroundColor: ['#60a5fa', '#a78bfa', '#f87171', '#fbbf24'],
+                        borderWidth: 2,
+                        borderColor: '#0f1115'
                     }]
                 },
                 options: {
                     maintainAspectRatio: false,
-                    plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } }
+                    plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11, family: 'Inter' }, color: '#e2e8f0' } } }
                 }
             });
 
@@ -544,9 +619,9 @@
                     datasets: [{
                         label: 'Proficiency Level',
                         data: masteryScores,
-                        backgroundColor: 'rgba(46, 204, 113, 0.2)',
-                        borderColor: '#2ecc71',
-                        pointBackgroundColor: '#2ecc71',
+                        backgroundColor: 'rgba(52, 211, 153, 0.15)',
+                        borderColor: '#34d399',
+                        pointBackgroundColor: '#34d399',
                         borderWidth: 2
                     }]
                 },
@@ -557,7 +632,9 @@
                             min: 0,
                             max: 100,
                             ticks: { display: false },
-                            grid: { color: 'rgba(0,0,0,0.05)' }
+                            grid: { color: 'rgba(255,255,255,0.06)' },
+                            pointLabels: { color: '#94a3b8', font: { size: 11, family: 'Inter' } },
+                            angleLines: { color: 'rgba(255,255,255,0.04)' }
                         }
                     },
                     plugins: { legend: { display: false } }
@@ -572,19 +649,19 @@
 
             TOPICS.forEach((t) => {
                 const score = mastery[t] || 0;
-                // Color Logic
-                let color = '#e74c3c'; // Red
-                if (score > 30) color = '#f1c40f'; // Yellow
-                if (score > 70) color = '#2ecc71'; // Green
+                // Gradient fills for game-style bars
+                let gradient = 'linear-gradient(90deg, #f87171, #fb923c)'; // Red-orange
+                if (score > 30) gradient = 'linear-gradient(90deg, #fbbf24, #facc15)'; // Amber-yellow
+                if (score > 70) gradient = 'linear-gradient(90deg, #34d399, #2dd4bf)'; // Teal-green
 
                 skillDiv.innerHTML += `
                 <div class="skill-item">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-weight:600; font-size:0.9rem;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-weight:500; font-size:0.85rem;">
                         <span>${t}</span>
-                        <span>${score}/100 XP</span>
+                        <span style="color:#94a3b8;">${score}/100 XP</span>
                     </div>
                     <div class="progress-bar">
-                        <div class="fill" style="width:${score}%; background:${color};"></div>
+                        <div class="fill" style="width:${score}%; background:${gradient};"></div>
                     </div>
                 </div>`;
             });
@@ -642,28 +719,28 @@
                     if (item.status === 'PENDING') {
                         statusBadge = '<span class="challenge-status st-pending">Wait for Reply</span>'; // Actually 'Action Required'
                         contentHtml = `
-                        <p style="font-size:1.1rem; font-weight:500; margin-bottom:15px;">${item.question}</p>
-                        <textarea id="ans-${item.id}" rows="4" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; font-family:inherit;" placeholder="Type your solution here..."></textarea>
-                        <button onclick="submitChallenge('${item.id}')" style="margin-top:10px; background:#8e44ad; color:white; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-weight:bold;">Submit Answer</button>
+                        <p style="font-size:1.05rem; font-weight:500; margin-bottom:15px;">${item.question}</p>
+                        <textarea id="ans-${item.id}" rows="4" style="width:100%; padding:12px; border:1px solid rgba(255,255,255,0.08); border-radius:8px; font-family:inherit; background:rgba(255,255,255,0.03); color:#e2e8f0;" placeholder="Type your solution here..."></textarea>
+                        <button onclick="submitChallenge('${item.id}')" style="margin-top:10px; background:#a78bfa; color:#0f1115; border:none; padding:8px 20px; border-radius:8px; cursor:pointer; font-weight:600; font-family:Inter,sans-serif;">Submit Answer</button>
                     `;
                     }
                     // 2. SUBMITTED STATE (Read Only)
                     else if (item.status === 'SUBMITTED') {
                         statusBadge = '<span class="challenge-status st-submitted">Under Review</span>';
                         contentHtml = `
-                        <p style="font-weight:500; color:#555;">Q: ${item.question}</p>
-                        <div style="background:#f9f9f9; padding:10px; border-radius:6px; color:#333;">
+                        <p style="font-weight:500; color:#94a3b8;">Q: ${item.question}</p>
+                        <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; color:#e2e8f0; border:1px solid rgba(255,255,255,0.08);">
                             <b>Your Answer:</b><br>${item.student_answer}
                         </div>
-                        <div style="margin-top:10px; font-size:0.9rem; color:#7f8c8d;">Wait for teacher feedback...</div>
+                        <div style="margin-top:10px; font-size:0.9rem; color:#94a3b8;">Wait for teacher feedback...</div>
                     `;
                     }
                     // 3. GRADED STATE (Show Feedback)
                     else if (item.status === 'GRADED') {
                         statusBadge = '<span class="challenge-status st-graded">Completed</span>';
                         contentHtml = `
-                        <p style="font-weight:500; color:#555;">Q: ${item.question}</p>
-                        <div style="background:#f9f9f9; padding:10px; border-radius:6px; color:#333; margin-bottom:10px;">
+                        <p style="font-weight:500; color:#94a3b8;">Q: ${item.question}</p>
+                        <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; color:#e2e8f0; margin-bottom:10px; border:1px solid rgba(255,255,255,0.08);">
                             <b>Your Answer:</b><br>${item.student_answer}
                         </div>
                         <div class="teacher-feedback">
