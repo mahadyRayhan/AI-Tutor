@@ -1593,8 +1593,50 @@
 
             loadChatHistory();
 
-            // --- NEW: Automatically greet the user on login ---
-            startNewChat();
+            // Check for deep-link initial message from Dashboard
+            const urlParams = new URLSearchParams(window.location.search);
+            const initialMsg = urlParams.get('initial_msg');
+
+            if (initialMsg) {
+                // Clear UI manually to skip startNewChat() and avoid creating an extra session
+                currentSessionId = null;
+                document.getElementById('messages').innerHTML = '';
+                document.getElementById('sourcesList').innerHTML = '';
+                const welcome = document.getElementById('welcome-view');
+                if (welcome) welcome.style.display = 'none';
+                const initialSug = document.getElementById('initialSuggestions');
+                if (initialSug) initialSug.style.display = 'none';
+                document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
+
+                if (initialMsg.startsWith('[START_TOPIC]')) {
+                    // Extract concept and goal
+                    const match = initialMsg.match(/\[START_TOPIC\]\s+(.*?)\s+\[GOAL\]\s+(.*)/);
+                    if (match) {
+                        const concept = match[1];
+                        const goal = match[2];
+                        const fakeUserMsg = `I am ready to learn ${concept} to help me reach my goal of ${goal}. Where do we start?`;
+
+                        // Visually insert the user's question so the chat doesn't look empty
+                        const userDiv = document.createElement('div');
+                        userDiv.className = 'message user';
+                        userDiv.innerHTML = `<div class="msg-sender">You</div>` + fakeUserMsg;
+                        document.getElementById('messages').appendChild(userDiv);
+                        scrollToBottom();
+                    }
+
+                    // Send hidden tag silently to trigger actual backend routing
+                    setTimeout(() => window.sendMessage(initialMsg, true), 50);
+                } else {
+                    document.getElementById('userInput').value = initialMsg;
+                    document.getElementById('userInput').focus();
+                }
+
+                // Clear the URL parameter without reloading
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else {
+                // Automatically greet the user on login if no initial msg
+                startNewChat();
+            }
         }
 
         function logout() { localStorage.removeItem('c_tutor_user'); location.reload(); }

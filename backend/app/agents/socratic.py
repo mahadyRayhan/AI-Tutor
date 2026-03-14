@@ -68,6 +68,9 @@ class SocraticTutorAgent(BaseAgent):
         if state.intent == "DEBUG": 
             # Reuse Socratic Plan prompt for debugging logic as it encourages step-by-step thinking
             prompt = self._build_socratic_plan_prompt(state.query, context_text, state.user_goal)
+        elif state.intent == "COMPLEX_PROBLEM":
+            # Provide a high-level architectural plan without scaffolding
+            prompt = self._build_complex_plan_prompt(state.query, context_text, state.user_goal)
         else: 
             # Default to Concept Explanation
             prompt = self._build_concept_prompt(state.query, context_text, state.user_goal, state.profile, state.original_query)
@@ -363,4 +366,59 @@ class SocraticTutorAgent(BaseAgent):
         
         ## Guiding Question
         [A thoughtful question to check their understanding]
+        """
+
+    def _build_complex_plan_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+        goal_instruction = ""
+        if user_goal:
+            goal_instruction = f"""
+            5. **Goal Alignment:** Briefly mention how building this connects to their goal: "{user_goal}".
+            """
+
+        return f"""
+        You are an expert Software Architect and C Programming Tutor.
+        
+        **YOUR TASK:** The student wants to build a complex system or solve a large problem: "{query}".
+        They do NOT want to be guided step-by-step interactively. They want a high-level, precise plan mapping out how to build it from start to finish.
+
+        Reference Material: {context}
+
+        **CRITICAL RULES:**
+        1. **NO INTERACTIVE GUIDANCE:** Do not ask them "What do you think is next?". Give them the complete plan upfront.
+        2. **BE PRECISE & CONCISE:** Do not write long essays. Use bullet points and clear technical language.
+        3. **ARCHITECTURE FIRST:** Start with a Mermaid graph showing the data flow, module structure, or state machine of the complex system.
+        4. **CODE SKELETONS ONLY:** Do NOT provide the complete working code. Provide the architectural skeleton (structs, function signatures, main loop).
+        {goal_instruction}
+
+        **STRICT RESPONSE FORMAT:**
+        
+        ## Architectural Overview
+        [2-3 sentences explaining the core design pattern or approach to solving the problem.]
+
+        ## System Design (Diagram)
+        ```mermaid
+        graph TD
+           ...
+        ```
+        (CRITICAL: NO () [] or "" inside node labels to prevent syntax errors. Use generic labels like A[Main Menu])
+
+        ## Implementation Phases
+        ### Phase 1: [Name]
+        - **Objective:** [What this phase accomplishes]
+        - **Key Components:** [e.g., Structs, specific functions needed]
+        
+        ### Phase 2: [Name]
+        - **Objective:** [What this phase accomplishes]
+        - **Key Components:** [e.g., File I/O, specific algorithms]
+        
+        ... [Add more phases as needed, up to 4-5 max]
+
+        ## Starter Skeleton
+        ```c
+        // Define the core data structures and function prototypes here
+        // Leave the implementation logic blank for the student to fill in
+        ```
+        
+        ## Why this approach works
+        [1-2 sentences explaining why this specific architecture or plan is robust for C programming.]
         """

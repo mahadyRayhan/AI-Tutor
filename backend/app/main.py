@@ -229,6 +229,8 @@ class ChatRequest(BaseModel):
     enable_validation: Optional[bool] = True
     enable_correction: Optional[bool] = True
 
+LEARNING_PATH_CACHE = {}
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
@@ -381,6 +383,8 @@ async def chat_stream(request: ChatRequest):
             if full_bot_response.strip():
                 try:
                     history_manager.add_message(request.username, session_id, "bot", full_bot_response, final_sources)
+                    # Invalidate learning path cache so it immediately updates based on new history/mastery
+                    LEARNING_PATH_CACHE.pop(request.username, None)
                 except Exception as save_err:
                     logger.error(f"Failed to save bot message: {save_err}")
 
@@ -418,7 +422,7 @@ async def get_student_stats(username: str):
     }
 
 @app.get("/api/v1/analytics/report/{username}")
-async def get_student_report(username: str):
+def get_student_report(username: str):
     """SLOW Endpoint: Returns LLM advice using the Smart Model."""
     history = history_manager.get_student_history(username)
     recent_logs = history[-15:]
@@ -583,8 +587,35 @@ async def update_user(req: AdminUserUpdate):
         return {"status": "success"}
     raise HTTPException(status_code=404, detail="User not found")
 
+@app.get("/api/v1/analytics/learning_path/{username}")
+def get_learning_path_endpoint(username: str):
+    # FAST PATH: Instantly return if cached
+    cached = LEARNING_PATH_CACHE.get(username)
+    if cached:
+        return {"goal": cached["goal"], "path": cached["path"]}
+        
+    # SLOW PATH: First time or invalidated
+    goal = knowledge_manager.get_goal(username)
+    if not goal or goal == "No Goal Yet" or not graph_db:
+        return {"goal": None, "path": []}
+        
+    history = history_manager.get_student_history(username)
+    mastery = _calculate_mastery(history)
+    known_concepts = [topic for topic, score in mastery.items() if score >= 30]
+        
+    try:
+        path = graph_db.get_learning_path(goal, known_concepts)
+        LEARNING_PATH_CACHE[username] = {
+            "goal": goal,
+            "path": path
+        }
+        return {"goal": goal, "path": path}
+    except Exception as e:
+        logger.error(f"Error fetching learning path: {e}")
+        return {"goal": goal, "path": []}
+
 @app.get("/api/v1/analytics/student/{username}")
-async def get_student_analytics(username: str):
+def get_student_analytics(username: str):
     # Start timer
     import time
     t0 = time.time()
@@ -914,6 +945,8 @@ async def delete_session(session_id: str, username: str):
 async def set_user_goal(req: GoalRequest):
     from app.core.user_knowledge_manager import knowledge_manager
     knowledge_manager.set_goal(req.username, req.goal)
+    # Invalidate cache when the goal updates
+    LEARNING_PATH_CACHE.pop(req.username, None)
     return {"status": "success", "goal": req.goal}
 
 @app.post("/api/v1/chat/feedback")

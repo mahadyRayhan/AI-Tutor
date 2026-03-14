@@ -225,3 +225,70 @@ class Neo4jGraphDB:
                 }
             } for record in results if record['text']
         ]
+
+    def get_learning_path(self, target_goal: str, known_concepts: List[str]) -> List[Dict[str, str]]:
+        """
+        Calculates a prerequisite learning path to reach the target_goal.
+        Returns an ordered list of concepts with statuses: mastered, next, or locked.
+        """
+        # Query to find all prerequisite paths up to 5 levels deep
+        query = """
+        MATCH path = (goal:Entity)-[:REQUIRES_UNDERSTANDING_OF*1..5]->(prereq:Entity)
+        WHERE toLower(goal.name) = toLower($goal)
+        // Calculate depth (distance from goal) to establish learning order
+        RETURN prereq.name AS concept, length(path) as depth
+        ORDER BY depth DESC
+        """
+        parameters = {"goal": target_goal}
+        results = self.execute_query(query, parameters)
+        
+        # Extract unique concepts in reverse-dependency order (deepest prerequisites first)
+        ordered_concepts = []
+        seen = set()
+        for record in results:
+            concept = record['concept']
+            if concept not in seen:
+                ordered_concepts.append(concept)
+                seen.add(concept)
+                
+        # Always include the goal itself at the end
+        target_display_name = target_goal.title()
+        if not ordered_concepts:
+            target_lower = target_goal.lower()
+            if target_lower in ['function', 'functions']:
+                ordered_concepts = ['Variables', 'Control Flow']
+            elif target_lower in ['pointer', 'pointers']:
+                ordered_concepts = ['Variables', 'Control Flow', 'Functions', 'Memory Allocation']
+            elif target_lower in ['array', 'arrays']:
+                ordered_concepts = ['Variables', 'Control Flow']
+            elif target_lower in ['structure', 'structures', 'struct']:
+                ordered_concepts = ['Variables', 'Arrays']
+            else:
+                ordered_concepts = ['Fundamentals']
+        
+        # Ensure the final goal is the last step
+        if target_display_name not in [c.title() for c in ordered_concepts]:
+            ordered_concepts.append(target_display_name)
+            
+        # State mapping: mastered, next, locked
+        known_lower = [k.lower() for k in known_concepts]
+        
+        path_result = []
+        found_next = False
+        
+        for concept in ordered_concepts:
+            status = ""
+            if concept.lower() in known_lower:
+                status = "mastered"
+            elif not found_next:
+                status = "next"
+                found_next = True
+            else:
+                status = "locked"
+                
+            path_result.append({
+                "concept": concept,
+                "status": status
+            })
+            
+        return path_result

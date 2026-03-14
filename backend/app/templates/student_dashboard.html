@@ -379,6 +379,117 @@
             color: var(--accent-color);
         }
 
+        /* Learning Path Tree */
+        .learning-path-container {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 0;
+            margin-top: 15px;
+            margin-bottom: 10px;
+            padding: 10px 20px 40px 20px;
+            /* Increased bottom padding to prevent label clipping */
+            overflow-x: auto;
+            scrollbar-width: none;
+            /* Firefox */
+        }
+
+        .learning-path-container::-webkit-scrollbar {
+            display: none;
+            /* Safari and Chrome */
+        }
+
+        .path-node-wrapper {
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+
+        .path-node {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            position: relative;
+            z-index: 2;
+            flex-shrink: 0;
+            transition: all 0.2s ease;
+        }
+
+        .path-node-label {
+            position: absolute;
+            top: 55px;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .path-line {
+            height: 4px;
+            width: 50px;
+            background: rgba(255, 255, 255, 0.1);
+            position: relative;
+            z-index: 1;
+            margin: 0 -4px;
+            transition: background 0.3s;
+        }
+
+        /* States */
+        .path-node.mastered {
+            background: rgba(52, 211, 153, 0.15);
+            border: 2px solid var(--success-color);
+            color: var(--success-color);
+        }
+
+        .path-line.mastered {
+            background: var(--success-color);
+        }
+
+        .path-node.locked {
+            background: rgba(255, 255, 255, 0.03);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            color: #555;
+        }
+
+        .path-node.next {
+            background: rgba(168, 199, 250, 0.15);
+            border: 2px solid var(--accent-color);
+            color: var(--accent-color);
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(168, 199, 250, 0.3);
+            animation: pulse-node 2s infinite;
+        }
+
+        .path-node.next:hover {
+            transform: scale(1.1);
+            background: rgba(168, 199, 250, 0.25);
+        }
+
+        .path-node.next .path-node-label {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        @keyframes pulse-node {
+            0% {
+                box-shadow: 0 0 0 0 rgba(168, 199, 250, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(168, 199, 250, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(168, 199, 250, 0);
+            }
+        }
+
         .info-icon:hover .tooltip-text {
             visibility: visible;
             opacity: 1;
@@ -414,6 +525,23 @@
                     style="background:#a8c7fa; color:#0f1115; font-family:Inter,sans-serif;">Save</button>
             </div>
         </div>
+
+        <!-- 1.2 Learning Path Skill Tree -->
+        <div class="card full-width" id="learningPathCard" style="display:none; margin-bottom: 20px;">
+            <h2>
+                🗺️ Learning Path
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        The prerequisite concepts you need to master your goal. Click the pulsing node to start
+                        learning!
+                    </span>
+                </div>
+            </h2>
+            <div id="learningPathTree" class="learning-path-container">
+                <!-- Javascript will render the tree here -->
+            </div>
+        </div>
+
         <!-- 1.5 Active Challenges Section -->
         <div class="card full-width" id="challengesSection"
             style="display:none; margin-bottom: 20px; border-left: 5px solid #8e44ad;">
@@ -521,6 +649,7 @@
             // 2. Load Slow Data (LLM Report) - Running in parallel
             loadReport();
             loadAssignments();
+            fetchLearningPath();
         }
 
         // --- FAST DATA LOADER ---
@@ -674,7 +803,13 @@
             if (edit.style.display === 'none') {
                 edit.style.display = 'block';
                 display.style.display = 'none';
-                document.getElementById('goalInput').value = display.innerText;
+                // Don't pre-fill if it's the default "Loading..." or "Set a goal..." text
+                const currentText = display.innerText;
+                if (!currentText.includes("Loading") && !currentText.includes("Set a goal")) {
+                    document.getElementById('goalInput').value = currentText;
+                } else {
+                    document.getElementById('goalInput').value = ""; // Let placeholder show
+                }
             } else {
                 edit.style.display = 'none';
                 display.style.display = 'block';
@@ -689,6 +824,57 @@
                 body: JSON.stringify({ username: currentUser.username, goal: newGoal })
             });
             location.reload();
+        }
+
+        // --- LEARNING PATH LOGIC ---
+        async function fetchLearningPath() {
+            try {
+                const res = await fetch(`${API_URL}/api/v1/analytics/learning_path/${currentUser.username}`);
+                const data = await res.json();
+
+                const container = document.getElementById('learningPathCard');
+                const tree = document.getElementById('learningPathTree');
+
+                if (!data.path || data.path.length === 0) {
+                    container.style.display = 'none';
+                    return;
+                }
+
+                container.style.display = 'block';
+                tree.innerHTML = '';
+
+                data.path.forEach((node, index) => {
+                    let icon = '';
+                    if (node.status === 'mastered') icon = '✓';
+                    else if (node.status === 'locked') icon = '🔒';
+                    else icon = '⭐'; // Next
+
+                    let clickAttr = '';
+                    if (node.status === 'next') {
+                        // Deep link to chat
+                        clickAttr = `onclick="startLearning('${node.concept.replace(/'/g, "\\'")}', '${data.goal.replace(/'/g, "\\'")}')"`;
+                    }
+
+                    tree.innerHTML += `
+                        <div class="path-node-wrapper">
+                            <div class="path-node ${node.status}" ${clickAttr} title="${node.status}">
+                                ${icon}
+                                <span class="path-node-label">${node.concept}</span>
+                            </div>
+                            ${index < data.path.length - 1 ? `<div class="path-line ${node.status}"></div>` : ''}
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.error("Learning path load failed", e);
+            }
+        }
+
+        function startLearning(concept, goal) {
+            // Use a specific hidden tag so the backend tutor knows this is a fresh start
+            // and doesn't mistake it for a complex architectural problem.
+            const msg = encodeURIComponent(`[START_TOPIC] ${concept} [GOAL] ${goal}`);
+            window.location.href = `index.html?initial_msg=${msg}`;
         }
 
         // --- ASSIGNMENT LOGIC ---

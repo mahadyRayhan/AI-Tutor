@@ -57,7 +57,8 @@ class ScaffoldingAgent(BaseAgent):
         # Simple heuristic: If query is long (>8 words), it might need breakdown
         is_complex = len(state.query.split()) > 8 
         
-        should_trigger = (state.intent == "PROBLEM" and is_complex) or is_explicit_problem
+        # NOTE: We ONLY trigger for normal PROBLEM. COMPLEX_PROBLEM goes to the Socratic agent for an unguided plan.
+        should_trigger = (state.intent == "PROBLEM" and is_complex) or (state.intent == "PROBLEM" and is_explicit_problem)
 
         if should_trigger:
             # Force intent to PROBLEM for consistency

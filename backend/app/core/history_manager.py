@@ -46,7 +46,10 @@ class HistoryManager:
                 (session_id,)
             )
             if user_count['c'] == 0:
-                new_title = content[:40] + "..."
+                import re
+                # Clean up system tags for a clean sidebar title
+                clean_content = re.sub(r'\[START_TOPIC\]\s+(.*?)\s+\[GOAL\].*', r'Learning \1', content)
+                new_title = clean_content[:40] + "..." if len(clean_content) > 40 else clean_content
                 db.execute("UPDATE sessions SET title = ? WHERE session_id = ?", (new_title, session_id))
 
         # 3. Insert Message with DEFAULTS

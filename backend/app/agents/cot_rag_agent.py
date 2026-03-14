@@ -566,6 +566,9 @@ class ChainOfThoughtRAGAgent:
             final_answer = self._generate_code_review(query, context_text, user_goal)
         elif intent == "PROBLEM" or intent == "DEBUG":
             final_answer = self._generate_socratic_plan(query, context_text, user_goal)
+        elif intent == "COMPLEX_PROBLEM":
+            # Handled directly by Socratic agent now, but if this legacy run() is called:
+            final_answer = "This should be handled by the Socratic Agent."
         else:
             final_answer = self._generate_concept_explanation(query, context_text, user_goal)
         
@@ -825,9 +828,8 @@ class ChainOfThoughtRAGAgent:
             
             greeting = ""
             suggestions = ["Help me get started", "I have a specific question"]
-            
             if user_goal:
-                greeting += f"Your current goal is to **{user_goal}**.<br>"
+                greeting += f"Your Current Goal is to Master <b><i>{user_goal}</i></b><br>"
             
             if known_concepts:
                 last_known = known_concepts[-1] 
@@ -844,6 +846,29 @@ class ChainOfThoughtRAGAgent:
                 "intent": "GREETING",
                 "suggestions": suggestions,
                 "entities": ["General"],
+                "session_id": session_id
+            }}
+            return
+            
+        if query.strip().startswith("[START_TOPIC]"):
+            import re
+            match = re.search(r"\[START_TOPIC\]\s+(.*?)\s+\[GOAL\]\s+(.*)", query.strip())
+            if match:
+                concept = match.group(1).strip()
+                goal = match.group(2).strip()
+                greeting = f"Awesome! Let's dive into **{concept}** to help you reach your goal of **{goal}**.<br><br>Before we start, what do you currently know about {concept}? Are you completely new to it, or have you seen it before?"
+            else:
+                concept = query.replace("[START_TOPIC]", "").strip()
+                greeting = f"Awesome! Let's dive into **{concept}**.<br><br>Before we start, what do you currently know about {concept}? Are you completely new to it, or have you seen it before?"
+            
+            suggestions = ["I'm a complete beginner", "I know a little bit", "What is the syntax?"]
+            
+            yield {"type": "complete", "data": {
+                "answer": greeting,
+                "sources": [],
+                "intent": "GREETING",
+                "suggestions": suggestions,
+                "entities": [concept],
                 "session_id": session_id
             }}
             return
