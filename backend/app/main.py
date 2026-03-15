@@ -1012,7 +1012,6 @@ async def handle_feedback(req: FeedbackRequest):
     """
     Logs feedback to SQL and optionally returns a trigger for a new answer.
     """
-    # 1. Log the Feedback to SQLite (No more CSV!)
     history_manager.log_feedback(
         username=req.username,
         session_id=req.session_id,
@@ -1021,17 +1020,13 @@ async def handle_feedback(req: FeedbackRequest):
         feedback_text=req.feedback_text
     )
 
-    # 2. Handle Re-Generation (Simplify / Deep Dive)
+    # --- FIX 1: Add distinct system tags and simplify the rewrite request ---
     if req.feedback_type in ["simplify", "deep_dive"]:
-        instruction = ""
         if req.feedback_type == "simplify":
-            instruction = "Explain this again, but extremely simple. Use 5th-grader language. Keep it under 3 sentences."
+            modified_query = f"[SIMPLIFY] Explain the last concept again, but make it extremely simple for a beginner."
         elif req.feedback_type == "deep_dive":
-            instruction = "Explain this again, but go very deep. Cover memory management, advanced edge cases, and best practices."
+            modified_query = f"[DEEP_DIVE] Explain the last concept again, but go into advanced technical detail, covering memory and edge cases."
             
-        modified_query = f"{instruction} Query: {req.original_query}"
-        
-        # Return flag to frontend to trigger the new stream
         return {"action": "regenerate", "modified_query": modified_query}
 
     return {"status": "recorded"}

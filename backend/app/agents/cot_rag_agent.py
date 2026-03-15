@@ -790,6 +790,16 @@ class ChainOfThoughtRAGAgent:
         username = kwargs.get('username', 'anonymous')
         user_goal = kwargs.get('user_goal')
         session_id = kwargs.get('session_id')
+
+        # --- FIX 2: EXTRACT FEEDBACK TAGS ---
+        feedback_mode = None
+        if query.startswith("[SIMPLIFY]"):
+            feedback_mode = "simplify"
+            query = query.replace("[SIMPLIFY]", "").strip()
+        elif query.startswith("[DEEP_DIVE]"):
+            feedback_mode = "deep_dive"
+            query = query.replace("[DEEP_DIVE]", "").strip()
+        # ------------------------------------
         
         # --- 1. STATE FETCH & DEBUG ---
         current_state = {}
@@ -912,6 +922,10 @@ class ChainOfThoughtRAGAgent:
         # --- 4. LOAD PROFILE & SETUP STATE ---
         user_row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
         learning_profile = json.loads(user_row['learning_profile']) if user_row and user_row['learning_profile'] else {}
+
+        # Inject the feedback mode if a button was clicked
+        if feedback_mode:
+            learning_profile['feedback_mode'] = feedback_mode
 
         state = AgentState(
             query=search_query,
