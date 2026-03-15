@@ -46,11 +46,19 @@ class SocraticTutorAgent(BaseAgent):
         q_search = f"{' '.join(state.entities)} in C" if len(state.query.split()) > 5 else state.query
         chunks = self._execute_retrieval(q_search, state.intent, state.user_role, state.entities)
         
+        # 2. Build Context (Graceful Fallback)
+        yield {"type": "status", "message": "Drafting response...", "percent": 80}
+        
+        known = knowledge_manager.get_known_concepts(state.user_id)
+        user_context = f"USER CONTEXT: Student knows: {', '.join(known)}." if known else ""
+        
         if not chunks:
-             msg = f"I don't have specific info on {state.entities[0] if state.entities else 'that'}."
-             yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": state.intent}}
-             state.stop_processing = True
-             return
+            # If the database is empty for this broad topic (like "Fundamentals"), rely on LLM baseline
+            context_text = f"{user_context}\n\n--- Source: Baseline AI Knowledge ---\nExplain the core concepts based on your general knowledge of C programming."
+            sources_payload = []
+        else:
+            context_text = f"{user_context}\n\n" + "\n".join([f"--- Source: {c['metadata']['document_name']} ---\n{c['text']}" for c in chunks])
+            sources_payload = [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks]
 
         # 2. Build Context
         yield {"type": "status", "message": "Drafting response...", "percent": 80}
@@ -94,10 +102,10 @@ class SocraticTutorAgent(BaseAgent):
             "type": "complete",
             "data": {
                 "answer": full_answer, 
-                "sources": [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks],
+                "sources": sources_payload, # <--- Updated
                 "suggestions": await suggest_task,
                 "intent": state.intent,
-                "entities": state.entities, # <--- ADD THIS
+                "entities": state.entities,
                 "session_id": state.session_id
             }
         }

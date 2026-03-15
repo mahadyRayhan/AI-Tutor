@@ -255,7 +255,13 @@ class Neo4jGraphDB:
         target_display_name = target_goal.title()
         if not ordered_concepts:
             target_lower = target_goal.lower()
-            if target_lower in ['function', 'functions']:
+            if 'calculator' in target_lower or 'math' in target_lower:
+                ordered_concepts = ['Variables', 'Control Flow', 'Functions']
+            elif 'game' in target_lower or 'tic-tac-toe' in target_lower or 'chess' in target_lower:
+                ordered_concepts = ['Variables', 'Control Flow', 'Arrays', 'Functions']
+            elif 'system' in target_lower or 'database' in target_lower or 'file' in target_lower:
+                ordered_concepts = ['Variables', 'Structures', 'Pointers', 'File I/O']
+            elif target_lower in ['function', 'functions']:
                 ordered_concepts = ['Variables', 'Control Flow']
             elif target_lower in ['pointer', 'pointers']:
                 ordered_concepts = ['Variables', 'Control Flow', 'Functions', 'Memory Allocation']

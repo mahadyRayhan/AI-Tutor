@@ -589,29 +589,87 @@ async def update_user(req: AdminUserUpdate):
 
 @app.get("/api/v1/analytics/learning_path/{username}")
 def get_learning_path_endpoint(username: str):
-    # FAST PATH: Instantly return if cached
-    cached = LEARNING_PATH_CACHE.get(username)
-    if cached:
-        return {"goal": cached["goal"], "path": cached["path"]}
-        
-    # SLOW PATH: First time or invalidated
+    # 1. Fetch Goal and Mastery
     goal = knowledge_manager.get_goal(username)
-    if not goal or goal == "No Goal Yet" or not graph_db:
+    if not goal or goal == "No Goal Yet":
         return {"goal": None, "path": []}
         
     history = history_manager.get_student_history(username)
     mastery = _calculate_mastery(history)
+    
+    # We consider a topic "known" if XP >= 30
     known_concepts = [topic for topic, score in mastery.items() if score >= 30]
         
+    # 2. Dynamic Cache Key (Invalidates automatically if mastery or goal changes)
+    cache_key = f"{username}_{goal}_{','.join(sorted(known_concepts))}"
+    cached = LEARNING_PATH_CACHE.get(cache_key)
+    
+    if cached:
+        return {"goal": goal, "path": cached}
+        
+    # 3. SLOW PATH: Use LLM to generate the curriculum
+    print(f"🐢 Generating AI Learning Path for {username}...")
+    
+    prompt = f"""
+    You are an expert C Programming Tutor mapping out a curriculum.
+    
+    Student's Goal: "{goal}"
+    Concepts they have already mastered: {known_concepts}
+    
+    Standard Course Topics: Fundamentals, Variables, Control Flow, Functions, Arrays, Strings, Pointers, Structures, Memory Allocation, File I/O.
+    
+    TASK: 
+    Create a logical, chronological learning path (3 to 6 steps) that leads up to their goal.
+    1. Include necessary prerequisite topics from the Standard Course Topics.
+    2. The FINAL step must be a clean, concise, title-cased name for their goal (e.g. "Tic-Tac-Toe", "Functions", "Calculator").
+    
+    Return ONLY a valid JSON list of objects with a "concept" key:
+    [
+      {{"concept": "Variables"}},
+      {{"concept": "Control Flow"}},
+      {{"concept": "Tic-Tac-Toe"}}
+    ]
+    """
+    
     try:
-        path = graph_db.get_learning_path(goal, known_concepts)
-        LEARNING_PATH_CACHE[username] = {
-            "goal": goal,
-            "path": path
-        }
-        return {"goal": goal, "path": path}
+        # Use the smart LLM for reliable JSON formatting
+        response = llm_smart.generate_response(prompt)
+        
+        # Clean the JSON output
+        clean_text = response.replace("```json", "").replace("```", "").strip()
+        start = clean_text.find('[')
+        end = clean_text.rfind(']') + 1
+        path_data = json.loads(clean_text[start:end])
+        
+        # 4. Enforce Statuses securely in Python (Prevents UI breaking)
+        found_next = False
+        for step in path_data:
+            # Check if this step is in their known concepts
+            is_known = any(k.lower() in step['concept'].lower() for k in known_concepts)
+            
+            if is_known and not found_next:
+                step['status'] = 'mastered'
+            elif not found_next:
+                step['status'] = 'next'
+                found_next = True
+            else:
+                step['status'] = 'locked'
+                
+        # Force the final goal node to never be "mastered" implicitly unless they literally just finished it
+        if path_data and path_data[-1]['status'] == 'mastered':
+             path_data[-1]['status'] = 'next'
+             
+        # 5. Update Cache (Clear old caches for this user to save memory)
+        keys_to_delete = [k for k in LEARNING_PATH_CACHE.keys() if k.startswith(f"{username}_")]
+        for k in keys_to_delete:
+            del LEARNING_PATH_CACHE[k]
+            
+        LEARNING_PATH_CACHE[cache_key] = path_data
+        
+        return {"goal": goal, "path": path_data}
+        
     except Exception as e:
-        logger.error(f"Error fetching learning path: {e}")
+        logger.error(f"Error generating learning path via LLM: {e}")
         return {"goal": goal, "path": []}
 
 @app.get("/api/v1/analytics/student/{username}")

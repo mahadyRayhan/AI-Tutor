@@ -811,10 +811,31 @@ class ChainOfThoughtRAGAgent:
         
         should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan or is_raw_code
 
-        # --- 3. CONTEXTUALIZATION ---
+        # --- 3. CONTEXTUALIZATION & ONBOARDING INTERCEPT ---
         yield {"type": "status", "message": "Understanding context...", "percent": 5}
         
-        if not should_skip_context:
+        onboarding_chips = ["i'm a complete beginner", "i know a little bit", "what is the syntax?"]
+        
+        # Check if the user clicked one of our initial greeting buttons
+        if query.strip().lower() in onboarding_chips:
+            self.logger.info(f"💡 Intercepted Onboarding Response: {query}")
+            target_concept = "C Programming" # Default fallback
+            
+            # Find the topic from the bot's previous greeting message
+            if current_state and current_state.get("messages"):
+                last_bot_msg = next((m for m in reversed(current_state["messages"]) if m["role"] == "bot"), None)
+                if last_bot_msg:
+                    import re
+                    # Extracts the bolded concept from "Let's dive into **Concept**"
+                    match = re.search(r"\*\*([^*]+)\*\*", last_bot_msg["content"])
+                    if match:
+                        target_concept = match.group(1)
+            
+            # Translate the conversational click into a technical search query
+            search_query = f"Explain {target_concept} for a beginner."
+            should_skip_context = True # Skip LLM contextualization
+            
+        elif not should_skip_context:
             search_query = await self._contextualize_query(query, username, session_id)
         else:
             self.logger.info(f"⏭️ Skipping Contextualization for: '{query}'")
@@ -828,8 +849,22 @@ class ChainOfThoughtRAGAgent:
             
             greeting = ""
             suggestions = ["Help me get started", "I have a specific question"]
+            
             if user_goal:
-                greeting += f"Your Current Goal is to Master <b><i>{user_goal}</i></b><br>"
+                # --- FIX: Dynamic Goal Phrasing ---
+                goal_lower = user_goal.strip().lower()
+                action_verbs = ['build', 'create', 'make', 'write', 'code', 'develop', 'learn', 'master', 'finish', 'complete']
+                
+                # Check if the goal starts with an action verb
+                starts_with_action = any(goal_lower.startswith(verb) for verb in action_verbs)
+                
+                if starts_with_action:
+                    # Example: "Your Current Goal is to build a Tic-Tac-Toe Game."
+                    greeting += f"Your Current Goal is to <b><i>{user_goal}</i></b><br>"
+                else:
+                    # Example: "Your Current Goal is to master Functions."
+                    greeting += f"Your Current Goal is to master <b><i>{user_goal}</i></b><br>"
+                # ----------------------------------
             
             if known_concepts:
                 last_known = known_concepts[-1] 
@@ -838,7 +873,7 @@ class ChainOfThoughtRAGAgent:
             else:
                 greeting += "We have a blank slate! What topic should we dive into first?"
                 suggestions = ["What is a Variable?", "How does C work?", "I need help with an assignment"]
-                
+
             # Only yield the complete data package. No token stream.
             yield {"type": "complete", "data": {
                 "answer": greeting,
