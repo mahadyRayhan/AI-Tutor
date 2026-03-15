@@ -62,3 +62,8 @@ Go to your project folder and double-click **`index.html`** to open it in your b
     *   **Username:** `teacher1`
     *   **Password:** `admin123`
 2.  **Or Signup:** Create a new student account via the "Create Account" link.
+
+Copy DB from inside the docker container to the host machine:
+```bash
+scp -i ~/.ssh/my_aws_key.pem ubuntu@123.45.67.89:~/AI-Tutor/backend/database/ai_tutor.db ~/Desktop/
+```

@@ -3,11 +3,13 @@
 import sqlite3
 import json
 import os
+from app.core import config
 from datetime import datetime
 
 # Define path relative to backend root
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "database", "ai_tutor.db")
+# BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+# DB_PATH = os.path.join(BASE_DIR, "database", "ai_tutor.db")
+DB_PATH = os.path.join(config.DB_DIR, "ai_tutor.db")
 
 class SQLiteDB:
     def __init__(self):
