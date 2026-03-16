@@ -197,77 +197,20 @@ class SocraticTutorAgent(BaseAgent):
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())
         except: return ["Tell me more", "Example code", "Challenge: Write it"]
 
-    # def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}) -> str:
-    #     goal_section = ""
-    #     if user_goal:
-    #         goal_section = f"""
-    #         6. **GOAL CONNECTION (CRITICAL):** The student's goal is: "{user_goal}". 
-    #            - You MUST explicitly explain how the current concept helps them achieve "{user_goal}".
-    #         """
-    #     # Dynamic Style Injection
-    #     style_instruction = "Standard academic tone."
-    #     if profile.get("attention_span") == "short":
-    #         style_instruction = "EXTREMELY CONCISE. Use bullet points. No paragraphs longer than 2 sentences. The user loses focus easily."
-        
-    #     if profile.get("preferred_modality") == "visual":
-    #         style_instruction += " PRIORITY: Generate a Mermaid Diagram FIRST, then explain textually."
-            
-    #     if profile.get("frustration_level") == "high":
-    #         style_instruction += " TONE: Highly encouraging, patient, and gentle. Validate their effort."
-
-    #     return f"""
-    #     You are an expert C Programming Tutor.
-        
-    #     Student Query: "{query}"
-    #     User's Goal: "{user_goal if user_goal else 'None'}"
-    #     Reference Material: {context}
-    #     **ADAPTIVE STYLE INSTRUCTIONS:**{style_instruction}
-
-    #     **MANDATORY RULES:**
-    #     1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information..."
-    #     2. **PERSONALIZATION:** Acknowledge known concepts from USER CONTEXT.
-    #     3. **TEXT PRIORITY:** Clear text explanation FIRST (min 3 sentences). Use analogies.
-    #     4. **VISUALIZATION:** Generate a Mermaid.js diagram (`graph TD`).
-    #        - **CRITICAL SYNTAX:** 
-    #          - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
-    #          - ABSOLUTELY NO BRACKETS `[]` inside node labels.
-    #          - ABSOLUTELY NO QUOTES `"` inside node labels.
-    #          - **GOOD:** `A[Start] --> B[Declare Array]`
-    #     5. **SOURCE GROUNDING:** Quote specific examples from text.
-    #     6. **GOAL ALIGNMENT:** If the user has a goal, you MUST explain how this concept applies to it.
-        
-    #     **STRICT RESPONSE FORMAT:**
-        
-    #     ## Explanation
-    #     [Start by bridging from known concepts if applicable. Then explain the new concept using text and analogies.]
-        
-    #     ## Use Cases
-    #     [Explain WHEN and WHY this concept is used in real programming.]
-
-    #     {goal_section}
-
-    #     ## Visual Model
-    #     ```mermaid
-    #     graph TD
-    #        A["Start"] --> B{{"Condition?"}}
-    #        B -- "Yes" --> C["Action"]
-    #        B -- "No" --> D["End"]
-    #     ```
-        
-    #     ## Example from Class
-    #     [Reference specific code from text]
-    #     """
-
     def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "") -> str:
         goal_section = ""
         if user_goal:
-            goal_section = f"\n## Connection to Your Goal\nExplain explicitly how this helps achieve: '{user_goal}'\n"
+            goal_section = f"## Connection to Your Goal\nExplain explicitly how this helps achieve: '{user_goal}'"
 
         # 1. Determine if the user is impatient OR explicitly asked for a short answer
         q_lower = original_query.lower()
         is_impatient = profile.get("attention_span") == "short" or any(w in q_lower for w in ["short", "brief", "just", "quick", "syntax only", "too long"])
         
         print(f"🕵️‍♂️ [SOCRATIC DEBUG] is_impatient: {is_impatient} | Original: '{original_query}'")
+
+        # Extract Custom Preferences from the User Profile
+        prefs = profile.get("tutor_preferences", {})
+        custom_inst = prefs.get("custom_instructions", "").strip()
 
         # 2. Build the Format Block based on state
         if is_impatient:
@@ -281,37 +224,46 @@ class SocraticTutorAgent(BaseAgent):
             """
             style_instruction = "TONE: Extremely concise, code-first, no fluff."
         else:
-            format_rules = f"""
-            **STRICT RESPONSE FORMAT (STANDARD MODE):**
-            
-            ## Explanation
-            [Clear text explanation. Min 3 sentences. Use analogies.]
-            
-            ## Use Cases
-            [Explain WHEN and WHY this concept is used in real programming.]
-            
-            {goal_section}
-            
-            ## Visual Model
-            ```mermaid
-            graph TD
-               ...
-            ```
-            (CRITICAL SYNTAX: NO () [] or "" inside node labels. Use A[Label].)
-            
-            ## Example from Class
-            [Reference specific code from text]
+            # === DYNAMIC FORMAT BUILDER ===
+            prefs = profile.get("tutor_preferences", {})
+            custom_inst = prefs.get("custom_instructions", "").strip()
 
-            ## Your Turn! (Micro-Challenge)
-            [End your explanation by asking the student to write exactly ONE line of code based on what you just taught. Do not give them the answer.]
-            Example: "Now it's your turn. How would you declare an integer variable named 'score' and set it to 100?"
-            """
+            format_builder = ["**STRICT RESPONSE FORMAT (STANDARD MODE):**"]
+            format_builder.append("You MUST use ONLY the exact Markdown headers (##) requested below. Do not add introductory fluff before the first header.")
+            
+            if prefs.get("show_explanation", True):
+                format_builder.append("## Explanation\n[Clear text explanation. Min 3 sentences. Use analogies.]")
+                
+            if prefs.get("show_use_cases", True):
+                format_builder.append("## Use Cases\n[Explain WHEN and WHY this concept is used in real programming.]")
+                
+            if user_goal:
+                format_builder.append(goal_section)
+                
+            if prefs.get("show_visual_model", True):
+                format_builder.append("## Visual Model\n[Generate a Mermaid.js flowchart explaining the concept.]\n```mermaid\ngraph TD\n   ...\n```\n(CRITICAL SYNTAX: NO () [] or \"\" inside node labels. Use A[Label].)")
+                
+            if prefs.get("show_example_code", True):
+                format_builder.append("## Example from Class\n[Reference specific code from text]")
+
+            # 🔒 ALWAYS ENFORCED: The Micro-Challenge
+            # FIX: Stronger phrasing to prevent the LLM from answering its own question and tripping the safety filter.
+            format_builder.append("## Your Turn! (Micro-Challenge)\n[Ask the student to write ONE line of code. Stop generating immediately after asking the question. NEVER provide the answer.]\nExample: \"How would you declare an integer variable named 'score' and set it to 100?\"")
+            
+            # Join the requested blocks with double line breaks
+            format_rules = "\n\n".join(format_builder)
+
+            # Build Standard Style Instructions
             style_instruction = "TONE: Standard academic tone, encouraging, structured."
             
             if profile.get("preferred_modality") == "visual":
                 style_instruction += " PRIORITY: Focus heavily on the Mermaid Diagram and visual analogies."
             if profile.get("frustration_level") == "high":
                 style_instruction += " TONE: Highly encouraging, patient, and gentle. Validate their effort."
+
+        # Apply the User's Custom Free-Text Instructions to BOTH modes
+        if custom_inst:
+            style_instruction += f"\n\n**STUDENT'S CUSTOM INSTRUCTIONS:**\n{custom_inst}"
 
         # 3. Assemble the final prompt
         return f"""

@@ -109,7 +109,6 @@ class FeedbackRequest(BaseModel):
     original_query: str # Needed for re-generation
     feedback_text: Optional[str] = None
 
-# --- ASSIGNMENT DATA MODELS ---
 class ChallengeRequest(BaseModel):
     teacher: str
     student: str
@@ -123,6 +122,17 @@ class SubmissionRequest(BaseModel):
 class AssignmentGradeRequest(BaseModel):
     assignment_id: str
     feedback: str
+
+class TutorPreferences(BaseModel):
+    custom_instructions: str = ""
+    show_explanation: bool = True
+    show_use_cases: bool = True
+    show_visual_model: bool = True
+    show_example_code: bool = True
+
+class PreferencesUpdateRequest(BaseModel):
+    username: str
+    preferences: TutorPreferences
 
 def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
     """
@@ -1095,6 +1105,38 @@ async def ai_check_assignment(req: SubmissionRequest):
     
     feedback = llm_fast.generate_response(review_prompt)
     return {"ai_feedback": feedback}
+
+@app.get("/api/v1/user/preferences/{username}")
+async def get_user_preferences(username: str):
+    row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
+    profile = {}
+    if row and row['learning_profile']:
+        profile = json.loads(row['learning_profile'])
+    
+    # Return just the tutor_preferences part, or defaults
+    return profile.get("tutor_preferences", {
+        "custom_instructions": "",
+        "show_explanation": True,
+        "show_use_cases": True,
+        "show_visual_model": True,
+        "show_example_code": True
+    })
+
+@app.post("/api/v1/user/preferences")
+async def update_user_preferences(req: PreferencesUpdateRequest):
+    row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (req.username,))
+    profile = {}
+    if row and row['learning_profile']:
+        profile = json.loads(row['learning_profile'])
+    
+    # Update only the tutor_preferences, preserve other profiler data
+    profile["tutor_preferences"] = req.preferences.dict()
+    
+    db.execute(
+        "UPDATE users SET learning_profile = ? WHERE username = ?", 
+        (json.dumps(profile), req.username)
+    )
+    return {"status": "success"}
 
 if __name__ == "__main__":
     import uvicorn

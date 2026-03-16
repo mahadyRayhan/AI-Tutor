@@ -73,6 +73,7 @@
                 </div>
                 <div>
                     <button class="top-toggle" onclick="toggleResources()" title="Toggle sources">📚</button>
+                    <button class="nav-btn" onclick="openPreferencesModal()">⚙️ Custom Instructions</button>
                     <button class="nav-btn" onclick="openDashboard()">Dashboard</button>
                     <button class="nav-btn" onclick="logout()">Logout</button>
                 </div>
@@ -135,7 +136,48 @@
             </div>
         </div>
     </div>
+    <!-- PREFERENCES MODAL -->
+    <div id="preferencesModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:3000; justify-content:center; align-items:center;">
+        <div style="background: var(--sidebar-bg); padding: 30px; border-radius: 16px; width: 90%; max-width: 500px; border: 1px solid var(--border-color); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 style="margin:0; font-size:1.4rem;">⚙️ Custom Instructions</h2>
+                <button onclick="closePreferencesModal()" style="background:none; border:none; color:#aaa; font-size:1.5rem; cursor:pointer;">&times;</button>
+            </div>
+            
+            <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:15px;">
+                What would you like the AI to know about you to provide better responses?
+            </p>
+            <textarea id="customInstText" rows="3" placeholder="e.g. 'I already know Python, explain things by comparing them to Python.' or 'Be slightly sarcastic.'" style="width:100%; padding:10px; border-radius:8px; background:var(--input-bg); color:var(--text-primary); border:1px solid var(--border-color); font-family:inherit; resize:vertical; margin-bottom:20px;"></textarea>
 
+            <h3 style="font-size:1rem; margin-bottom:10px; border-bottom:1px solid var(--border-color); padding-bottom:5px;">Response Layout</h3>
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:15px;">Uncheck sections you don't want to read to keep responses shorter.</p>
+            
+            <div style="display:flex; flex-direction:column; gap:10px; font-size:0.95rem;">
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                    <input type="checkbox" id="chkExplanation" checked style="width:16px; height:16px; cursor:pointer;"> 📖 Detailed Explanation
+                </label>
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                    <input type="checkbox" id="chkUseCases" checked style="width:16px; height:16px; cursor:pointer;"> 🌍 Real-World Use Cases
+                </label>
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                    <input type="checkbox" id="chkVisual" checked style="width:16px; height:16px; cursor:pointer;"> 📊 Visual Diagram (Mermaid)
+                </label>
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                    <input type="checkbox" id="chkExample" checked style="width:16px; height:16px; cursor:pointer;"> 💻 Example Code Snippet
+                </label>
+                
+                <!-- LOCKED OPTION -->
+                <label style="display:flex; align-items:center; gap:10px; color:#777; cursor:not-allowed; margin-top:5px; padding-top:10px; border-top: 1px dashed rgba(255,255,255,0.1);">
+                    <input type="checkbox" checked disabled style="width:16px; height:16px;"> 🎯 <b>Your Turn (Micro-Challenge)</b> 
+                    <span style="font-size:0.75rem; background:rgba(255,255,255,0.1); padding:2px 6px; border-radius:4px;">Locked for Learning</span>
+                </label>
+            </div>
+
+            <button id="savePrefsBtn" onclick="savePreferences()" style="width:100%; padding:12px; background:var(--accent-color); color:#000; border:none; border-radius:8px; font-weight:600; cursor:pointer; margin-top:25px; font-size:1rem; transition:opacity 0.2s;">
+                Save Preferences
+            </button>
+        </div>
+    </div>
     <script src="/static/js/chat.js" defer></script>
 </body>
 

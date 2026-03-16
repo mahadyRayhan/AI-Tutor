@@ -702,6 +702,72 @@ async function startNewChat() {
     }
 }
 
+// --- CUSTOM INSTRUCTIONS / PREFERENCES LOGIC ---
+async function openPreferencesModal() {
+    const modal = document.getElementById('preferencesModal');
+    modal.style.display = 'flex'; // Show modal
+    
+    // Load current settings from backend
+    try {
+        const res = await fetch(`${API_URL}/api/v1/user/preferences/${currentUser.username}`);
+        const prefs = await res.json();
+        
+        document.getElementById('customInstText').value = prefs.custom_instructions || "";
+        document.getElementById('chkExplanation').checked = prefs.show_explanation !== false;
+        document.getElementById('chkUseCases').checked = prefs.show_use_cases !== false;
+        document.getElementById('chkVisual').checked = prefs.show_visual_model !== false;
+        document.getElementById('chkExample').checked = prefs.show_example_code !== false;
+    } catch (e) {
+        console.error("Failed to load preferences", e);
+    }
+}
+
+function closePreferencesModal() {
+    document.getElementById('preferencesModal').style.display = 'none';
+}
+
+async function savePreferences() {
+    const btn = document.getElementById('savePrefsBtn');
+    const originalText = btn.innerText;
+    btn.innerText = "Saving... ⏳";
+    btn.style.opacity = "0.7";
+    
+    const payload = {
+        username: currentUser.username,
+        preferences: {
+            custom_instructions: document.getElementById('customInstText').value,
+            show_explanation: document.getElementById('chkExplanation').checked,
+            show_use_cases: document.getElementById('chkUseCases').checked,
+            show_visual_model: document.getElementById('chkVisual').checked,
+            show_example_code: document.getElementById('chkExample').checked
+        }
+    };
+    
+    try {
+        await fetch(`${API_URL}/api/v1/user/preferences`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        btn.innerText = "✅ Saved!";
+        btn.style.background = "#34d399"; // Green success
+        
+        setTimeout(() => {
+            closePreferencesModal();
+            // Reset button style
+            btn.innerText = originalText;
+            btn.style.background = "var(--accent-color)";
+            btn.style.opacity = "1";
+        }, 1000);
+        
+    } catch (e) {
+        console.error("Failed to save preferences", e);
+        btn.innerText = "❌ Error";
+        setTimeout(() => { btn.innerText = originalText; btn.style.opacity = "1"; }, 2000);
+    }
+}
+
 // Init
 const stored = localStorage.getItem('c_tutor_user');
 if (stored) { currentUser = JSON.parse(stored); routeUser(); }
