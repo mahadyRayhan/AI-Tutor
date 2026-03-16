@@ -56,8 +56,12 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent  # Points to backend/app/
 TEMPLATES_DIR = BASE_DIR / "templates"      # Points to backend/app/templates/
+STATIC_DIR = BASE_DIR / "static"          # Points to backend/app/static/
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# Mount the static directory
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # --- Data Models ---
 class SignupRequest(BaseModel):
