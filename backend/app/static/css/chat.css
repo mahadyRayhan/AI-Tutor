@@ -26,6 +26,36 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
+/* --- ACCESSIBILITY CLASSES --- */
+
+/* Dyslexia Friendly: Irregular weighting, distinct letter shapes, wider tracking */
+body.a11y-dyslexia * {
+    font-family: "Comic Sans MS", "Lexend Deca", "OpenDyslexic", sans-serif !important;
+    letter-spacing: 0.05em !important;
+}
+
+/* Extra Spacing: Reduces visual crowding for ADHD/Cognitive Overload */
+body.a11y-spacing .message {
+    line-height: 2.0 !important;
+    margin-bottom: 25px !important;
+}
+body.a11y-spacing .message p {
+    margin-bottom: 1.2em !important;
+}
+
+/* High Contrast Code: Better readability for Astigmatism/Visual Processing */
+body.a11y-contrast pre[class*="language-"] {
+    background: #000000 !important;
+    border: 2px solid #ffff00 !important; /* High contrast yellow border */
+}
+body.a11y-contrast code {
+    color: #ffffff !important;
+    font-weight: bold !important;
+}
+body.a11y-contrast .message.bot {
+    color: #ffffff !important;
+}
+
 /* --- SIDEBAR --- */
 .sidebar {
     width: 260px;

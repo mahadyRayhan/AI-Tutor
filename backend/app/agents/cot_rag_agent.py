@@ -1065,11 +1065,6 @@ class ChainOfThoughtRAGAgent:
         asyncio.create_task(
             self.profiler.analyze_sentiment(username, query)
         )
-        
-        if random.random() < 0.1:
-            asyncio.create_task(
-                self.profiler.update_learning_profile(username)
-            )
 
         # HANDLE THE PENDING GOAL IMMEDIATELY
         pending = current_state.get("pending_goal")

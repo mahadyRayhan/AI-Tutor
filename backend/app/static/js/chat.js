@@ -420,6 +420,7 @@ function initializeApp() {
     document.getElementById('roleBadge').innerText = currentUser.role.toUpperCase();
 
     loadChatHistory();
+    loadInitialPreferences();
 
     // Check for deep-link initial message from Dashboard
     const urlParams = new URLSearchParams(window.location.search);
@@ -703,11 +704,24 @@ async function startNewChat() {
 }
 
 // --- CUSTOM INSTRUCTIONS / PREFERENCES LOGIC ---
+let breakTimer = null;
+function applyAccessibility(prefs) {
+    // Toggle CSS classes on the body
+    document.body.classList.toggle('a11y-dyslexia', prefs.dyslexia_font === true);
+    document.body.classList.toggle('a11y-spacing', prefs.extra_spacing === true);
+    document.body.classList.toggle('a11y-contrast', prefs.high_contrast === true);
+
+    // Handle ADHD Break Timer (45 mins = 2700000 ms)
+    if (breakTimer) clearTimeout(breakTimer);
+    if (prefs.break_reminders === true) {
+        breakTimer = setTimeout(() => {
+            alert("🧘 Break Time! You've been crushing it for 45 minutes. Working memory needs time to process. Step away from the screen for 5 minutes and grab some water!");
+        }, 2700000);
+    }
+}
+
 async function openPreferencesModal() {
-    const modal = document.getElementById('preferencesModal');
-    modal.style.display = 'flex'; // Show modal
-    
-    // Load current settings from backend
+    document.getElementById('preferencesModal').style.display = 'flex';
     try {
         const res = await fetch(`${API_URL}/api/v1/user/preferences/${currentUser.username}`);
         const prefs = await res.json();
@@ -717,9 +731,15 @@ async function openPreferencesModal() {
         document.getElementById('chkUseCases').checked = prefs.show_use_cases !== false;
         document.getElementById('chkVisual').checked = prefs.show_visual_model !== false;
         document.getElementById('chkExample').checked = prefs.show_example_code !== false;
-    } catch (e) {
-        console.error("Failed to load preferences", e);
-    }
+        
+        // New A11y fields
+        document.getElementById('chkLiteral').checked = prefs.literal_mode === true;
+        document.getElementById('chkConcise').checked = prefs.concise_mode === true;
+        document.getElementById('chkDyslexia').checked = prefs.dyslexia_font === true;
+        document.getElementById('chkSpacing').checked = prefs.extra_spacing === true;
+        document.getElementById('chkContrast').checked = prefs.high_contrast === true;
+        document.getElementById('chkBreaks').checked = prefs.break_reminders === true;
+    } catch (e) { console.error("Load failed", e); }
 }
 
 function closePreferencesModal() {
@@ -732,15 +752,25 @@ async function savePreferences() {
     btn.innerText = "Saving... ⏳";
     btn.style.opacity = "0.7";
     
+    // Capture ALL preferences, including the new neurodiversity ones
+    const prefs = {
+        custom_instructions: document.getElementById('customInstText').value,
+        show_explanation: document.getElementById('chkExplanation').checked,
+        show_use_cases: document.getElementById('chkUseCases').checked,
+        show_visual_model: document.getElementById('chkVisual').checked,
+        show_example_code: document.getElementById('chkExample').checked,
+        // New Accessibility & Pacing Settings
+        literal_mode: document.getElementById('chkLiteral').checked,
+        concise_mode: document.getElementById('chkConcise').checked,
+        dyslexia_font: document.getElementById('chkDyslexia').checked,
+        extra_spacing: document.getElementById('chkSpacing').checked,
+        high_contrast: document.getElementById('chkContrast').checked,
+        break_reminders: document.getElementById('chkBreaks').checked
+    };
+    
     const payload = {
         username: currentUser.username,
-        preferences: {
-            custom_instructions: document.getElementById('customInstText').value,
-            show_explanation: document.getElementById('chkExplanation').checked,
-            show_use_cases: document.getElementById('chkUseCases').checked,
-            show_visual_model: document.getElementById('chkVisual').checked,
-            show_example_code: document.getElementById('chkExample').checked
-        }
+        preferences: prefs
     };
     
     try {
@@ -752,6 +782,9 @@ async function savePreferences() {
         
         btn.innerText = "✅ Saved!";
         btn.style.background = "#34d399"; // Green success
+        
+        // Instantly apply visual CSS changes (like Dyslexia font or Spacing)
+        applyAccessibility(prefs); 
         
         setTimeout(() => {
             closePreferencesModal();
@@ -768,6 +801,12 @@ async function savePreferences() {
     }
 }
 
+async function loadInitialPreferences() {
+    if(!currentUser) return;
+    const res = await fetch(`${API_URL}/api/v1/user/preferences/${currentUser.username}`);
+    const prefs = await res.json();
+    applyAccessibility(prefs);
+}
 // Init
 const stored = localStorage.getItem('c_tutor_user');
 if (stored) { currentUser = JSON.parse(stored); routeUser(); }

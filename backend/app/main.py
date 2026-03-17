@@ -129,6 +129,13 @@ class TutorPreferences(BaseModel):
     show_use_cases: bool = True
     show_visual_model: bool = True
     show_example_code: bool = True
+    # NEW: Neurodiversity & Pacing Settings
+    literal_mode: bool = False
+    concise_mode: bool = False
+    dyslexia_font: bool = False
+    extra_spacing: bool = False
+    high_contrast: bool = False
+    break_reminders: bool = False
 
 class PreferencesUpdateRequest(BaseModel):
     username: str
@@ -1113,13 +1120,18 @@ async def get_user_preferences(username: str):
     if row and row['learning_profile']:
         profile = json.loads(row['learning_profile'])
     
-    # Return just the tutor_preferences part, or defaults
     return profile.get("tutor_preferences", {
         "custom_instructions": "",
         "show_explanation": True,
         "show_use_cases": True,
         "show_visual_model": True,
-        "show_example_code": True
+        "show_example_code": True,
+        "literal_mode": False,
+        "concise_mode": False,
+        "dyslexia_font": False,
+        "extra_spacing": False,
+        "high_contrast": False,
+        "break_reminders": False
     })
 
 @app.post("/api/v1/user/preferences")

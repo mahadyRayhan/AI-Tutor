@@ -202,17 +202,24 @@ class SocraticTutorAgent(BaseAgent):
         if user_goal:
             goal_section = f"## Connection to Your Goal\nExplain explicitly how this helps achieve: '{user_goal}'"
 
-        # 1. Determine if the user is impatient OR explicitly asked for a short answer
-        q_lower = original_query.lower()
-        is_impatient = profile.get("attention_span") == "short" or any(w in q_lower for w in ["short", "brief", "just", "quick", "syntax only", "too long"])
-        
-        print(f"🕵️‍♂️ [SOCRATIC DEBUG] is_impatient: {is_impatient} | Original: '{original_query}'")
-
         # Extract Custom Preferences from the User Profile
         prefs = profile.get("tutor_preferences", {})
         custom_inst = prefs.get("custom_instructions", "").strip()
 
-        # 2. Build the Format Block based on state
+        # 1. Check for Impatience (Combines AI Profiler, User Query, AND UI Checkbox)
+        q_lower = original_query.lower()
+        is_impatient = (
+            prefs.get("concise_mode", False) or 
+            profile.get("attention_span") == "short" or 
+            any(w in q_lower for w in ["short", "brief", "just", "quick", "syntax only", "too long"])
+        )
+        
+        # 2. Check for Literal Mode (Autism/Neurodivergent Setting)
+        is_literal = prefs.get("literal_mode", False)
+        
+        print(f"🕵️‍♂️ [SOCRATIC DEBUG] is_impatient: {is_impatient} | is_literal: {is_literal}")
+
+        # 3. Build the Format Block based on state
         if is_impatient:
             format_rules = """
             **STRICT RESPONSE FORMAT (CONCISE MODE):**
@@ -225,14 +232,19 @@ class SocraticTutorAgent(BaseAgent):
             style_instruction = "TONE: Extremely concise, code-first, no fluff."
         else:
             # === DYNAMIC FORMAT BUILDER ===
-            prefs = profile.get("tutor_preferences", {})
-            custom_inst = prefs.get("custom_instructions", "").strip()
-
             format_builder = ["**STRICT RESPONSE FORMAT (STANDARD MODE):**"]
             format_builder.append("You MUST use ONLY the exact Markdown headers (##) requested below. Do not add introductory fluff before the first header.")
             
-            if prefs.get("show_explanation", True):
-                format_builder.append("## Explanation\n[Clear text explanation. Min 3 sentences. Use analogies.]")
+            # If Literal Mode is ON, ban analogies. If OFF, use normal analogies.
+            if is_literal:
+                style_instruction = "TONE: Highly technical, literal, and precise. DO NOT use metaphors, analogies, or real-world comparisons. Explain using direct computer science terminology."
+                if prefs.get("show_explanation", True):
+                    format_builder.append("## Explanation\n[Clear, literal, technical definition. Min 3 sentences. NO ANALOGIES.]")
+            else:
+                # THIS IS THE DEFAULT NEUROTYPICAL BEHAVIOR
+                style_instruction = "TONE: Standard academic tone, encouraging, structured."
+                if prefs.get("show_explanation", True):
+                    format_builder.append("## Explanation\n[Clear text explanation. Min 3 sentences. Use relatable real-world analogies.]")
                 
             if prefs.get("show_use_cases", True):
                 format_builder.append("## Use Cases\n[Explain WHEN and WHY this concept is used in real programming.]")
@@ -247,15 +259,12 @@ class SocraticTutorAgent(BaseAgent):
                 format_builder.append("## Example from Class\n[Reference specific code from text]")
 
             # 🔒 ALWAYS ENFORCED: The Micro-Challenge
-            # FIX: Stronger phrasing to prevent the LLM from answering its own question and tripping the safety filter.
             format_builder.append("## Your Turn! (Micro-Challenge)\n[Ask the student to write ONE line of code. Stop generating immediately after asking the question. NEVER provide the answer.]\nExample: \"How would you declare an integer variable named 'score' and set it to 100?\"")
             
             # Join the requested blocks with double line breaks
             format_rules = "\n\n".join(format_builder)
-
-            # Build Standard Style Instructions
-            style_instruction = "TONE: Standard academic tone, encouraging, structured."
             
+            # Add existing visual/frustration logic
             if profile.get("preferred_modality") == "visual":
                 style_instruction += " PRIORITY: Focus heavily on the Mermaid Diagram and visual analogies."
             if profile.get("frustration_level") == "high":
@@ -265,7 +274,7 @@ class SocraticTutorAgent(BaseAgent):
         if custom_inst:
             style_instruction += f"\n\n**STUDENT'S CUSTOM INSTRUCTIONS:**\n{custom_inst}"
 
-        # 3. Assemble the final prompt
+        # 4. Assemble the final prompt
         return f"""
         You are an expert C Programming Tutor.
         
@@ -277,7 +286,7 @@ class SocraticTutorAgent(BaseAgent):
 
         **MANDATORY RULES:**
         1. **STRICT LIMITATION:** Check the Reference Material. If the concept is NOT present, say: "I don't have information..."
-        2. **PERSONALIZATION:** Acknowledge known concepts from USER CONTEXT.
+        2. **PERSONALIZATION:** You MAY briefly acknowledge concepts from the USER CONTEXT, but ONLY if they naturally connect to the current topic. Do not randomly list previous topics they know.
         3. **SOURCE GROUNDING:** Quote specific examples from text.
         
         {format_rules}

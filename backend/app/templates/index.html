@@ -136,44 +136,47 @@
             </div>
         </div>
     </div>
-    <!-- PREFERENCES MODAL -->
+    <!-- PREFERENCES & ACCESSIBILITY MODAL -->
     <div id="preferencesModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:3000; justify-content:center; align-items:center;">
-        <div style="background: var(--sidebar-bg); padding: 30px; border-radius: 16px; width: 90%; max-width: 500px; border: 1px solid var(--border-color); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+        <div style="background: var(--sidebar-bg); padding: 30px; border-radius: 16px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y: auto; border: 1px solid var(--border-color); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                <h2 style="margin:0; font-size:1.4rem;">⚙️ Custom Instructions</h2>
+                <h2 style="margin:0; font-size:1.4rem;">⚙️ Settings & Accessibility</h2>
                 <button onclick="closePreferencesModal()" style="background:none; border:none; color:#aaa; font-size:1.5rem; cursor:pointer;">&times;</button>
             </div>
             
-            <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:15px;">
-                What would you like the AI to know about you to provide better responses?
-            </p>
-            <textarea id="customInstText" rows="3" placeholder="e.g. 'I already know Python, explain things by comparing them to Python.' or 'Be slightly sarcastic.'" style="width:100%; padding:10px; border-radius:8px; background:var(--input-bg); color:var(--text-primary); border:1px solid var(--border-color); font-family:inherit; resize:vertical; margin-bottom:20px;"></textarea>
+            <!-- Custom Instructions -->
+            <h3 style="font-size:1rem; margin-bottom:10px; color:var(--accent-color);">💬 Custom Instructions</h3>
+            <textarea id="customInstText" rows="2" placeholder="e.g. 'I already know Python, compare things to Python.'" style="width:100%; padding:10px; border-radius:8px; background:var(--input-bg); color:var(--text-primary); border:1px solid var(--border-color); margin-bottom:20px;"></textarea>
 
-            <h3 style="font-size:1rem; margin-bottom:10px; border-bottom:1px solid var(--border-color); padding-bottom:5px;">Response Layout</h3>
-            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:15px;">Uncheck sections you don't want to read to keep responses shorter.</p>
-            
-            <div style="display:flex; flex-direction:column; gap:10px; font-size:0.95rem;">
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                    <input type="checkbox" id="chkExplanation" checked style="width:16px; height:16px; cursor:pointer;"> 📖 Detailed Explanation
-                </label>
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                    <input type="checkbox" id="chkUseCases" checked style="width:16px; height:16px; cursor:pointer;"> 🌍 Real-World Use Cases
-                </label>
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                    <input type="checkbox" id="chkVisual" checked style="width:16px; height:16px; cursor:pointer;"> 📊 Visual Diagram (Mermaid)
-                </label>
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                    <input type="checkbox" id="chkExample" checked style="width:16px; height:16px; cursor:pointer;"> 💻 Example Code Snippet
-                </label>
-                
-                <!-- LOCKED OPTION -->
-                <label style="display:flex; align-items:center; gap:10px; color:#777; cursor:not-allowed; margin-top:5px; padding-top:10px; border-top: 1px dashed rgba(255,255,255,0.1);">
-                    <input type="checkbox" checked disabled style="width:16px; height:16px;"> 🎯 <b>Your Turn (Micro-Challenge)</b> 
-                    <span style="font-size:0.75rem; background:rgba(255,255,255,0.1); padding:2px 6px; border-radius:4px;">Locked for Learning</span>
-                </label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <!-- Column 1: Learning Style -->
+                <div>
+                    <h3 style="font-size:1rem; margin-bottom:10px; color:var(--accent-color);">🧠 Learning Style</h3>
+                    <div style="display:flex; flex-direction:column; gap:10px; font-size:0.9rem;">
+                        <label title="Strips analogies/metaphors. Gives direct, literal computer science definitions."><input type="checkbox" id="chkLiteral"> Literal / Technical Mode</label>
+                        <label title="Forces the AI to give the shortest possible answer."><input type="checkbox" id="chkConcise"> Concise (TL;DR) Mode</label>
+                        <hr style="border:0; border-top:1px solid var(--border-color); margin: 5px 0;">
+                        <label><input type="checkbox" id="chkExplanation"> Include Theory/Explanation</label>
+                        <label><input type="checkbox" id="chkUseCases"> Include Real-world Uses</label>
+                        <label><input type="checkbox" id="chkVisual"> Include Visual Diagrams</label>
+                        <label><input type="checkbox" id="chkExample"> Include Code Examples</label>
+                    </div>
+                </div>
+
+                <!-- Column 2: Neurodiversity & Pacing -->
+                <div>
+                    <h3 style="font-size:1rem; margin-bottom:10px; color:var(--accent-color);">👁️ Accessibility & Pacing</h3>
+                    <div style="display:flex; flex-direction:column; gap:10px; font-size:0.9rem;">
+                        <label title="Changes font to a Dyslexia-friendly typeface."><input type="checkbox" id="chkDyslexia"> Dyslexia-Friendly Font</label>
+                        <label title="Increases line height to reduce visual crowding."><input type="checkbox" id="chkSpacing"> Extra Line Spacing</label>
+                        <label title="Makes code blocks high-contrast."><input type="checkbox" id="chkContrast"> High Contrast Code</label>
+                        <hr style="border:0; border-top:1px solid var(--border-color); margin: 5px 0;">
+                        <label title="Gentle reminder to hydrate/stretch after 45 mins."><input type="checkbox" id="chkBreaks"> 45-Min Break Reminders</label>
+                    </div>
+                </div>
             </div>
 
-            <button id="savePrefsBtn" onclick="savePreferences()" style="width:100%; padding:12px; background:var(--accent-color); color:#000; border:none; border-radius:8px; font-weight:600; cursor:pointer; margin-top:25px; font-size:1rem; transition:opacity 0.2s;">
+            <button id="savePrefsBtn" onclick="savePreferences()" style="width:100%; padding:12px; background:var(--accent-color); color:#000; border:none; border-radius:8px; font-weight:600; cursor:pointer; margin-top:25px; font-size:1rem;">
                 Save Preferences
             </button>
         </div>

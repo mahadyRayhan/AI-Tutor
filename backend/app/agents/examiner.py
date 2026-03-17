@@ -179,13 +179,15 @@ class ExaminerAgent(BaseAgent):
 
         if result['is_correct']:
             knowledge_manager.mark_concept_as_known(state.user_id, check_topic)
-            msg = f"✅ **{result['feedback']}**\n\nGreat! You've mastered **{check_topic}**."
-            suggestions = ["What should I learn next?"]
-            
+            # --- SRL FEYNMAN TECHNIQUE ---
+            msg = f"✅ **{result['feedback']}**\n\nGreat! You've officially mastered **{check_topic}**.\n\n"
+            msg += f"🧠 **Feynman Challenge:** To truly lock this into your long-term memory, try explaining **{check_topic}** back to me in your own words, as if I were a 5-year-old!"
+            suggestions = ["I'll try explaining it!", "What should I learn next?"]
             if pending_goal:
-                msg += f"\n\nNow that you're ready, shall we go back to: **\"{pending_goal}\"**?"
-                suggestions.insert(0, pending_goal)
+                msg += f"\n\nOr, if you prefer, shall we go back to your goal: **\"{pending_goal}\"**?"
+                suggestions.append(f"Back to: {pending_goal}")
                 history_manager.update_session_state(state.user_id, state.session_id, {"pending_goal": None})            
+            
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": suggestions, "intent": "EVALUATION"}}
         else:
             # FAILURE or PARTIAL Logic
