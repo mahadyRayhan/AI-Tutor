@@ -116,8 +116,6 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
     const input = document.getElementById('userInput');
     const rawText = overrideText || input.value.trim();
 
-    console.log("Sending:", rawText);
-
     if (!rawText) return;
 
     // Hide Welcome Screen
@@ -126,13 +124,19 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
     const initialSug = document.getElementById('initialSuggestions');
     if (initialSug) initialSug.style.display = 'none';
 
-    // --- NEW LOGIC: Only show bubble if NOT hidden ---
+    // --- STRIP TAGS FOR UI DISPLAY ---
+    let displayUserText = rawText;
+    if (rawText.startsWith("[WARMUP_ANSWER]")) {
+        displayUserText = rawText.replace("[WARMUP_ANSWER]", "").trim();
+    }
+
+    // Only show bubble if NOT hidden
     if (!hidden) {
         const userDiv = document.createElement('div');
         userDiv.className = 'message user';
-        let displayText = rawText.replace(/\n/g, '<br>');
-        if (rawText.includes('{') || rawText.includes(';')) {
-            displayText = `<pre><code class="language-c">${rawText.replace(/</g, '&lt;')}</code></pre>`;
+        let displayText = displayUserText.replace(/\n/g, '<br>');
+        if (displayUserText.includes('{') || displayUserText.includes(';')) {
+            displayText = `<pre><code class="language-c">${displayUserText.replace(/</g, '&lt;')}</code></pre>`;
         }
         userDiv.innerHTML = `<div class="msg-sender">You</div>` + displayText;
         document.getElementById('messages').appendChild(userDiv);
@@ -225,13 +229,29 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                             botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(data.data.answer);
                             displaySources(data.data.sources);
                             
-                            renderDiagrams(botDiv);          // Renders Mermaid
-                            Prism.highlightAllUnder(botDiv); // Colors syntax
-                            injectCopyButtons(botDiv);       // <--- NEW: ADD THIS HERE
+                            renderDiagrams(botDiv);         
+                            Prism.highlightAllUnder(botDiv); 
+                            injectCopyButtons(botDiv);       
                             
                             displaySuggestions(data.data.suggestions, botDiv);
                             addFeedbackButtons(botDiv, rawText);
                             loadChatHistory();
+
+                            if (data.data.warmup_topic) {
+                                const topicSpan = document.getElementById('warmupTopicName');
+                                const modal = document.getElementById('warmupModal');
+                                const input = document.getElementById('warmupInput');
+                                
+                                if (topicSpan && modal && input) {
+                                    topicSpan.innerText = data.data.warmup_topic;
+                                    input.value = ""; // clear old input
+                                    modal.style.display = 'flex';
+                                    // Focus after a tiny delay to ensure display is complete
+                                    setTimeout(() => input.focus(), 50); 
+                                } else {
+                                    console.error("Warmup Modal HTML elements not found!");
+                                }
+                            }
                         }
                         // 4. PROFILER
                         else if (data.type === 'profiler_report') {
@@ -246,6 +266,20 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
         botDiv.innerHTML = "<span style='color:#ff897d'>Connection failed.</span>";
     }
 };
+
+function submitWarmup() {
+    const ans = document.getElementById('warmupInput').value.trim();
+    if (!ans) return;
+    document.getElementById('warmupModal').style.display = 'none';
+    // Send to backend with the special tag so the grader catches it
+    window.sendMessage(`[WARMUP_ANSWER] ${ans}`, false); 
+}
+
+function skipWarmup() {
+    document.getElementById('warmupModal').style.display = 'none';
+    // Send hidden skip to backend so it doesn't clutter chat
+    window.sendMessage(`[WARMUP_ANSWER] skip`, true); 
+}
 
 // --- 2. SUGGESTION RENDERER (Crucial) ---
 function displaySuggestions(suggestions, container) {
@@ -463,8 +497,8 @@ function initializeApp() {
         // Clear the URL parameter without reloading
         window.history.replaceState({}, document.title, window.location.pathname);
     } else {
-        // Automatically greet the user on login if no initial msg
-        startNewChat();
+        // Automatically greet the user ON LOGIN and trigger warm-up
+        startNewChat(true); 
     }
 }
 
@@ -626,30 +660,30 @@ function injectCopyButtons(container) {
     });
 }
 
-async function startNewChat() {
-    currentSessionId = null;
-    document.getElementById('messages').innerHTML = '';
-    document.getElementById('sourcesList').innerHTML = '';
+async function startNewChat(isLogin = false) {
+        currentSessionId = null;
+        document.getElementById('messages').innerHTML = '';
+        document.getElementById('sourcesList').innerHTML = '';
 
-    // Show the centered welcome view
-    document.getElementById('welcome-view').style.display = 'flex';
-    document.getElementById('initialSuggestions').style.display = 'flex';
+        document.getElementById('welcome-view').style.display = 'flex';
+        document.getElementById('initialSuggestions').style.display = 'flex';
 
-    document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
 
-    // Fetch the dynamic greeting silently
-    try {
-        const res = await fetch(`${API_URL}/api/v1/chat/stream`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            // Use the special [INIT_SESSION] trigger
-            body: JSON.stringify({
-                message: '[INIT_SESSION]',
-                user_role: currentUser.role,
-                username: currentUser.username,
-                session_id: null
-            })
-        });
+        // Decide which system tag to send
+        const triggerMessage = isLogin ? '[INIT_SESSION]' : '[NEW_CHAT]';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/chat/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: triggerMessage, // <--- Sends the correct tag
+                    user_role: currentUser.role,
+                    username: currentUser.username,
+                    session_id: null
+                })
+            });
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -682,17 +716,29 @@ async function startNewChat() {
                                 const chip = document.createElement('div');
                                 chip.className = 'suggestion-chip';
                                 chip.innerText = text;
-
-                                // Make sure CSS pointers are enabled
                                 chip.style.pointerEvents = 'auto';
-
-                                // Add the click listener
                                 chip.addEventListener('click', function () {
                                     window.startTopic(text);
                                 });
-
                                 suggestionsDiv.appendChild(chip);
                             });
+
+                            // =================================================
+                            // 3. TRIGGER THE WARM-UP MODAL
+                            // =================================================
+                            if (data.data.warmup_topic) {
+                                const topicSpan = document.getElementById('warmupTopicName');
+                                const modal = document.getElementById('warmupModal');
+                                const input = document.getElementById('warmupInput');
+                                
+                                if (topicSpan && modal && input) {
+                                    topicSpan.innerText = data.data.warmup_topic;
+                                    input.value = ""; // clear old input
+                                    modal.style.display = 'flex';
+                                    // Focus the input box so they can type immediately
+                                    setTimeout(() => input.focus(), 50); 
+                                }
+                            }
                         }
                     } catch (e) { }
                 }

@@ -61,60 +61,6 @@ class ChainOfThoughtRAGAgent:
         self.socratic = SocraticTutorAgent(llm_fast, logger, vector_store, graph_db)
         self.profiler = ProfilerAgent(llm_fast, logger)
 
-    # async def _contextualize_query(self, current_query: str, username: str, session_id: str) -> str:
-    #     """
-    #     Rewrites the query to include context.
-    #     """
-    #     if not session_id: return current_query
-
-    #     session_data = history_manager.get_session_details(username, session_id)
-    #     if not session_data or not session_data.get('messages'): return current_query
-
-    #     # Get last 4 messages
-    #     msgs = session_data['messages'][-4:] 
-    #     history_str = ""
-    #     for m in msgs:
-    #         role = "Student" if m['role'] == 'user' else "Tutor"
-    #         history_str += f"{role}: {m['content']}\n"
-
-    #     self.logger.info(f"📜 Context History Length: {len(msgs)}")
-    #     if msgs:
-    #         self.logger.info(f"📜 Last Message: {msgs[-1]['content'][:500]}...")
-
-    #     # --- FIX: STRICTER CONTEXT PROMPT ---
-    #     prompt = f"""
-    #     Chat History:
-    #     {history_str}
-        
-    #     Latest Student Question: {current_query}
-        
-    #     Task: Rewrite the "Latest Student Question" into a standalone sentence.
-        
-    #     CRITICAL RULES:
-    #     1. If the student uses pronouns (it, this, that), refer back to the *STUDENT'S* previous topic, NOT the Tutor's technical explanation.
-    #        - Example History: 
-    #          Student: What is a loop? 
-    #          Tutor: A loop is Control Flow...
-    #          Student: What is its use case?
-    #        - CORRECT Rewrite: "What is the use case of a loop?"
-    #        - WRONG Rewrite: "What is the use case of Control Flow?"
-    #     2. Keep the original intent exactly.
-    #     3. Do NOT answer the question.
-        
-    #     Rewritten Question:
-    #     """
-        
-    #     try:
-    #         rewritten = await asyncio.to_thread(self.llm_interface.generate_response, prompt)
-    #         rewritten = rewritten.strip().replace('"', '')
-    #         # --- ADD THIS PRINT STATEMENT ---
-    #         print(f"\n🔍 [CONTEXTUALIZER] Input: '{current_query}' -> Rewritten: '{rewritten}'\n")
-    #         # --------------------------------
-    #         self.logger.info(f"🔄 Contextualized: '{current_query}' -> '{rewritten}'")
-    #         return rewritten
-    #     except Exception as e:
-    #         return current_query
-
     async def _contextualize_query(self, current_query, username, session_id):
         if not session_id: return current_query
 
@@ -806,7 +752,12 @@ class ChainOfThoughtRAGAgent:
         if session_id:
             current_state = history_manager.get_session_state(username, session_id)
             
-        self.logger.info(f"🔄 [ORCHESTRATOR] Session: {session_id} | State: {current_state}")
+        # Create a clean copy for logging so we don't spam the terminal with giant vectors
+        log_state = current_state.copy()
+        if "quiz_vector" in log_state:
+            log_state["quiz_vector"] = "<Vector Data Omitted for Readability>"
+            
+        self.logger.info(f"🔄 [ORCHESTRATOR] Session: {session_id} | State: {log_state}")
         
         # --- 2. CONTEXT SKIP RULES ---
         is_in_quiz = current_state.get("awaiting_quiz_answer", False)
@@ -854,67 +805,65 @@ class ChainOfThoughtRAGAgent:
         # =========================================================
         # --- NEW: PROACTIVE GREETING (STAGE 4) ---
         # =========================================================
-        if query.strip() == "[INIT_SESSION]":
-            known_concepts = knowledge_manager.get_known_concepts(username)
+        # Accept BOTH tags
+        if query.strip() in ["[INIT_SESSION]", "[NEW_CHAT]"]:
+            is_initial_login = (query.strip() == "[INIT_SESSION]")
             
+            known_concepts = knowledge_manager.get_known_concepts(username)
             greeting = ""
-            suggestions = ["Help me get started", "I have a specific question"]
+            suggestions = []
             
             if user_goal:
-                # --- FIX: Dynamic Goal Phrasing ---
                 goal_lower = user_goal.strip().lower()
                 action_verbs = ['build', 'create', 'make', 'write', 'code', 'develop', 'learn', 'master', 'finish', 'complete']
-                
-                # Check if the goal starts with an action verb
                 starts_with_action = any(goal_lower.startswith(verb) for verb in action_verbs)
-                
                 if starts_with_action:
-                    # Example: "Your Current Goal is to build a Tic-Tac-Toe Game."
-                    greeting += f"Your Current Goal is to <b><i>{user_goal}</i></b><br>"
+                    greeting += f"Your Current Goal is to <b><i>{user_goal}</i></b><br><br>"
                 else:
-                    # Example: "Your Current Goal is to master Functions."
-                    greeting += f"Your Current Goal is to master <b><i>{user_goal}</i></b><br>"
-                # ----------------------------------
+                    greeting += f"Your Current Goal is to master <b><i>{user_goal}</i></b><br><br>"
             
+            warmup_topic = None
             if known_concepts:
                 last_known = known_concepts[-1] 
                 greeting += f"Last time, you successfully mastered <b>{last_known}</b>. Awesome job! 🚀<br>"
                 suggestions = [f"Review {last_known}", "Teach me something new", "I need to debug code"]
+                
+                # ONLY trigger the warmup modal if this is an initial login!
+                if is_initial_login:
+                    import random
+                    warmup_topic = random.choice(known_concepts)
+                    history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": warmup_topic})
             else:
                 greeting += "We have a blank slate! What topic should we dive into first?"
                 suggestions = ["What is a Variable?", "How does C work?", "I need help with an assignment"]
-
-            # Only yield the complete data package. No token stream.
+                
             yield {"type": "complete", "data": {
-                "answer": greeting,
-                "sources": [],
-                "intent": "GREETING",
-                "suggestions": suggestions,
-                "entities": ["General"],
-                "session_id": session_id
+                "answer": greeting, 
+                "warmup_topic": warmup_topic, 
+                "sources": [], "intent": "GREETING", "suggestions": suggestions, "entities": ["General"], "session_id": session_id
             }}
             return
+
+        # =========================================================
+        # --- 1B: WARM-UP GRADER (STRICT TAG) ---
+        # =========================================================
+        if query.strip().startswith("[WARMUP_ANSWER]"):
+            user_ans = query.replace("[WARMUP_ANSWER]", "").strip()
+            warmup_topic = current_state.get("awaiting_warmup_topic", "a previous concept")
+            history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": None})
+
+            if "skip" in user_ans.lower() or not user_ans:
+                yield {"type": "complete", "data": {"answer": f"No problem! We'll skip the warm-up for now. What would you like to work on?", "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new"]}}
+                return
+
+            yield {"type": "status", "message": "Evaluating your memory...", "percent": 50}
+            prompt = f"The student was asked to briefly explain '{warmup_topic}' as a brain warm-up. Their answer: '{user_ans}'. Evaluate it in 1-2 friendly, conversational sentences. If correct, praise them. If wrong, gently correct them. End by asking what they want to learn today."
             
-        if query.strip().startswith("[START_TOPIC]"):
-            import re
-            match = re.search(r"\[START_TOPIC\]\s+(.*?)\s+\[GOAL\]\s+(.*)", query.strip())
-            if match:
-                concept = match.group(1).strip()
-                goal = match.group(2).strip()
-                greeting = f"Awesome! Let's dive into **{concept}** to help you reach your goal of **{goal}**.<br><br>Before we start, what do you currently know about {concept}? Are you completely new to it, or have you seen it before?"
-            else:
-                concept = query.replace("[START_TOPIC]", "").strip()
-                greeting = f"Awesome! Let's dive into **{concept}**.<br><br>Before we start, what do you currently know about {concept}? Are you completely new to it, or have you seen it before?"
-            
-            suggestions = ["I'm a complete beginner", "I know a little bit", "What is the syntax?"]
+            eval_ans = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
             
             yield {"type": "complete", "data": {
-                "answer": greeting,
-                "sources": [],
-                "intent": "GREETING",
-                "suggestions": suggestions,
-                "entities": [concept],
-                "session_id": session_id
+                "answer": f"**🧠 Warm-Up Review ({warmup_topic}):**\n\n{eval_ans}", 
+                "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new", "I have a specific question"]
             }}
             return
         # =========================================================
@@ -1043,6 +992,46 @@ class ChainOfThoughtRAGAgent:
         if gatekeeper_result:
             yield {"type": "complete", "data": gatekeeper_result}
             return
+
+        # =========================================================
+        # --- FEATURE 4: SOCRATIC WITHHOLDING ---
+        # =========================================================
+        known_concepts = knowledge_manager.get_known_concepts(username)
+        
+        if state.intent in ["CONCEPT", "PROBLEM"]:
+            # Safely grab the topic
+            topic = state.entities[0] if state.entities else state.original_query
+            
+            # Robust matching: check if topic is in known OR known is in topic
+            is_known = False
+            matched_concept = ""
+            for k in known_concepts:
+                if len(k) > 3 and (k.lower() in topic.lower() or topic.lower() in k.lower()):
+                    is_known = True
+                    matched_concept = k
+                    break
+
+            has_bypassed = current_state.get("bypassed_withholding", False)
+            is_asking_for_reminder = any(w in state.original_query.lower() for w in ["remind", "forgot", "explain", "don't remember", "help", "how"])
+            
+            if is_known and not has_bypassed and not is_asking_for_reminder:
+                msg = f"Wait a minute... my records show you already mastered **{matched_concept}**! 😉\n\n"
+                msg += "Before I just give you the answer, look back at your code or notes. Based on what we learned before, how do *you* think we should approach this?"
+                
+                # Flag that we pushed back, so if they ask again, we let it through
+                history_manager.update_session_state(username, session_id, {"bypassed_withholding": True})
+                
+                yield {"type": "complete", "data": {
+                    "answer": msg, 
+                    "sources": [], 
+                    "intent": "GUIDANCE", 
+                    "suggestions": [f"I completely forgot {matched_concept}, please remind me.", "Oh right, let me try!"]
+                }}
+                return
+            elif has_bypassed:
+                # Clear the bypass flag if they successfully moved past it
+                history_manager.update_session_state(username, session_id, {"bypassed_withholding": False})
+        # =========================================================
 
         # 8. SOCRATIC TUTOR (Standard RAG)
         async for event in self.socratic.process(state):

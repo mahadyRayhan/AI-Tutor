@@ -126,15 +126,6 @@ class CodeReviewerAgent(BaseAgent):
             return None
 
     def _build_review_prompt(self, query: str, context: str, user_goal: str = None) -> str:
-        """
-        Constructs the system prompt for the LLM to generate a code review.
-        
-        Enforces:
-        - Pedagogical tone (Supportive).
-        - Feedback structure (Sandwich Method).
-        - Goal alignment (Checking if code moves user towards their goal).
-        - Source grounding (Using variable names from context).
-        """
         goal_prompt = ""
         if user_goal:
             goal_prompt = f"6. **GOAL CHECK:** Does this code show progress towards their goal: '{user_goal}'? If yes, mention it."
@@ -150,7 +141,7 @@ class CodeReviewerAgent(BaseAgent):
         2. **RSD SAFETY (CRITICAL):** Never use the words "Wrong", "Incorrect", "Failed", or "Bad". Always validate their logic first ("I see what you were trying to do!"), then gently point out the syntax rule that got in the way. This is called "Fail-Forward" feedback.
         3. **SANDWICH METHOD:** Positive -> Improvement -> Hint.
         4. **SOURCE GROUNDING:** Use variable names from Reference Material where possible.
-        5. **NO SOLUTIONS:** Do not rewrite the full code for them. Guide them to fix it.
+        5. **ABSOLUTELY NO SOLUTIONS (CRITICAL):** Do NOT rewrite the code for them. Do NOT provide the correct code block. Only provide a text hint. If you provide the answer, you will be penalized.
         {goal_prompt}
 
         Format:
