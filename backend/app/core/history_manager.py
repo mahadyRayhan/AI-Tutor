@@ -40,15 +40,15 @@ class HistoryManager:
             self.create_session(username) 
 
         # 2. Update Title based on first USER message (ignore bot greeting)
-        if role == "user":
+        # Ignore system messages that start with "["
+        if role == "user" and not content.strip().startswith("["):
             user_count = db.fetch_one(
-                "SELECT count(*) as c FROM messages WHERE session_id = ? AND role = 'user'",
+                "SELECT count(*) as c FROM messages WHERE session_id = ? AND role = 'user' AND content NOT LIKE '[%]'",
                 (session_id,)
             )
             if user_count['c'] == 0:
                 import re
-                # Clean up system tags for a clean sidebar title
-                clean_content = re.sub(r'\[START_TOPIC\]\s+(.*?)\s+\[GOAL\].*', r'Learning \1', content)
+                clean_content = content.strip()
                 new_title = clean_content[:40] + "..." if len(clean_content) > 40 else clean_content
                 db.execute("UPDATE sessions SET title = ? WHERE session_id = ?", (new_title, session_id))
 
@@ -87,7 +87,7 @@ class HistoryManager:
                 SELECT 1 FROM messages m 
                 WHERE m.session_id = s.session_id 
                 AND m.role = 'user' 
-                AND m.content != '[INIT_SESSION]'
+                AND m.content NOT LIKE '[%]' -- <--- FIX: Ignore all system tags
             )
             ORDER BY s.created_at DESC
         """, (username,))

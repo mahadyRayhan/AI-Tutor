@@ -303,7 +303,12 @@ async def chat_stream(request: ChatRequest):
 
     # --- 4. SAVE USER MESSAGE & GET ID ---
     # Skip saving the special greeting trigger — it's an internal signal, not a real question
-    if request.message.strip() == "[INIT_SESSION]":
+    msg_text = request.message.strip()
+    
+    # Do not save system triggers or skipped warmups to the database
+    skip_save = msg_text in ["[INIT_SESSION]", "[NEW_CHAT]"] or msg_text.startswith("[WARMUP_ANSWER] skip")
+    
+    if skip_save:
         user_msg_id = None
     else:
         user_msg_id = history_manager.add_message(request.username, session_id, "user", request.message)
@@ -610,6 +615,9 @@ async def update_user(req: AdminUserUpdate):
 
 @app.get("/api/v1/analytics/learning_path/{username}")
 def get_learning_path_endpoint(username: str):
+    import string
+    import json
+    
     # 1. Fetch Goal and Mastery
     goal = knowledge_manager.get_goal(username)
     if not goal or goal == "No Goal Yet":
@@ -617,70 +625,115 @@ def get_learning_path_endpoint(username: str):
         
     history = history_manager.get_student_history(username)
     mastery = _calculate_mastery(history)
-    
-    # We consider a topic "known" if XP >= 30
-    known_concepts = [topic for topic, score in mastery.items() if score >= 30]
+    known_concepts = [topic for topic, score in mastery.items() if score >= 70]
         
-    # 2. Dynamic Cache Key (Invalidates automatically if mastery or goal changes)
-    cache_key = f"{username}_{goal}_{','.join(sorted(known_concepts))}"
+    # Normalize the goal to prevent cache misses on punctuation
+    clean_goal = goal.translate(str.maketrans('', '', string.punctuation)).strip().lower()
+    
+    # 2. Dynamic Cache Key
+    cache_key = f"{username}_{clean_goal}_{','.join(sorted(known_concepts))}"
     cached = LEARNING_PATH_CACHE.get(cache_key)
     
     if cached:
         return {"goal": goal, "path": cached}
         
-    # 3. SLOW PATH: Use LLM to generate the curriculum
-    print(f"🐢 Generating AI Learning Path for {username}...")
+    print(f"🐢 Generating Strict AI Curriculum for {username}...")
     
+    # =========================================================
+    # --- THE FIX: ANTI-HALLUCINATION CURRICULUM PROMPT ---
+    # =========================================================
     prompt = f"""
-    You are an expert C Programming Tutor mapping out a curriculum.
+    You are an expert C Programming University Professor designing a linear curriculum for a beginner.
     
-    Student's Goal: "{goal}"
-    Concepts they have already mastered: {known_concepts}
+    Student's Goal: "{clean_goal}"
     
-    Standard Course Topics: Fundamentals, Variables, Control Flow, Functions, Arrays, Strings, Pointers, Structures, Memory Allocation, File I/O.
+    Standard Topics Available:
+    1. Fundamentals (Main function, basic I/O)
+    2. Variables
+    3. Control Flow (If/Else, Loops)
+    4. Functions
+    5. Arrays
+    6. Strings
+    7. Pointers
+    8. Structures
+    9. Memory Allocation
+    10. File I/O
+
+    TASK:
+    Create a logical, step-by-step learning path that takes the student from absolute beginner up to building their goal.
     
-    TASK: 
-    Create a logical, chronological learning path (3 to 6 steps) that leads up to their goal.
-    1. Include necessary prerequisite topics from the Standard Course Topics.
-    2. The FINAL step must be a clean, concise, title-cased name for their goal (e.g. "Tic-Tac-Toe", "Functions", "Calculator").
+    CRITICAL RULES:
+    1. START SIMPLE: Always start with Fundamentals and Variables.
+    2. MAXIMUM 6 STEPS: Keep the path focused. Do not over-engineer.
+    3. THE FINAL STEP must be a clean, title-cased name for their project.
     
-    Return ONLY a valid JSON list of objects with a "concept" key:
+    EXAMPLES OF PERFECT CURRICULUMS:
+    
+    Goal: "build a calculator"
     [
+      {{"concept": "Fundamentals"}},
       {{"concept": "Variables"}},
       {{"concept": "Control Flow"}},
-      {{"concept": "Tic-Tac-Toe"}}
+      {{"concept": "Functions"}},
+      {{"concept": "Build A Calculator"}}
     ]
+    
+    Goal: "learn pointers"
+    [
+      {{"concept": "Fundamentals"}},
+      {{"concept": "Variables"}},
+      {{"concept": "Control Flow"}},
+      {{"concept": "Functions"}},
+      {{"concept": "Pointers"}}
+    ]
+    
+    Goal: "tic-tac-toe game"
+    [
+      {{"concept": "Fundamentals"}},
+      {{"concept": "Variables"}},
+      {{"concept": "Control Flow"}},
+      {{"concept": "Arrays"}},
+      {{"concept": "Tic-Tac-Toe Game"}}
+    ]
+
+    Now, generate the JSON array for the Student's Goal: "{clean_goal}"
+    Return ONLY the valid JSON list.
     """
     
     try:
-        # Use the smart LLM for reliable JSON formatting
         response = llm_smart.generate_response(prompt)
-        
-        # Clean the JSON output
         clean_text = response.replace("```json", "").replace("```", "").strip()
         start = clean_text.find('[')
         end = clean_text.rfind(']') + 1
         path_data = json.loads(clean_text[start:end])
         
-        # 4. Enforce Statuses securely in Python (Prevents UI breaking)
+        # 4. Enforce Statuses (Mastered / Next / Locked)
         found_next = False
         for step in path_data:
-            # Check if this step is in their known concepts
+            # Check if this step is mastered
             is_known = any(k.lower() in step['concept'].lower() for k in known_concepts)
             
-            if is_known and not found_next:
+            # Smart Fallback: If they already know Variables, they implicitly know Fundamentals!
+            if step['concept'].lower() == 'fundamentals' and any('variable' in k.lower() for k in known_concepts):
+                is_known = True
+
+            # If they know it, give them the Checkmark!
+            if is_known:
                 step['status'] = 'mastered'
+            # If they DON'T know it, and we haven't found the "Next" step yet, assign it the Star!
             elif not found_next:
                 step['status'] = 'next'
                 found_next = True
+            # Otherwise, lock it.
             else:
                 step['status'] = 'locked'
                 
-        # Force the final goal node to never be "mastered" implicitly unless they literally just finished it
+        # Force the final goal node to never be "mastered" implicitly
         if path_data and path_data[-1]['status'] == 'mastered':
              path_data[-1]['status'] = 'next'
+
              
-        # 5. Update Cache (Clear old caches for this user to save memory)
+        # 5. Update Cache
         keys_to_delete = [k for k in LEARNING_PATH_CACHE.keys() if k.startswith(f"{username}_")]
         for k in keys_to_delete:
             del LEARNING_PATH_CACHE[k]
@@ -690,7 +743,7 @@ def get_learning_path_endpoint(username: str):
         return {"goal": goal, "path": path_data}
         
     except Exception as e:
-        logger.error(f"Error generating learning path via LLM: {e}")
+        print(f"Error generating learning path via LLM: {e}")
         return {"goal": goal, "path": []}
 
 @app.get("/api/v1/analytics/student/{username}")

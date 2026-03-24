@@ -498,7 +498,17 @@ function initializeApp() {
         window.history.replaceState({}, document.title, window.location.pathname);
     } else {
         // Automatically greet the user ON LOGIN and trigger warm-up
-        startNewChat(true); 
+        // --- FIX 1: Check if they already saw the warmup this session ---
+        const hasSeenWarmup = sessionStorage.getItem('has_seen_warmup');
+        
+        if (!hasSeenWarmup) {
+            // First time opening the chat this session
+            sessionStorage.setItem('has_seen_warmup', 'true');
+            startNewChat(true); // Triggers [INIT_SESSION] and the modal
+        } else {
+            // Just navigating back from the dashboard
+            startNewChat(false); // Triggers [NEW_CHAT] (silent greeting)
+        }
     }
 }
 

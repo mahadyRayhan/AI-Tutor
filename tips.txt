@@ -307,3 +307,47 @@ If you include this in your literature review and framework, it elevates your pa
 > *While foundation model developers utilize internal Activation Capping to mitigate this, we propose an **Agentic Persona Anchor**. Our framework's Omniscient Judge explicitly evaluates the Tutor's **Persona Stability Score (PSS)** against adversarial, highly emotional simulated students, ensuring the pedagogical boundary remains intact.*
 
 **Summary:** The video perfectly validates *why* you are building the test bench. It proves mathematically that just telling an AI "You are a tutor" in the system prompt is not enough. The AI *will* drift, and your testing framework is exactly what the industry needs to catch that drift before it hurts students!
+
+
+TODO in Future
+### 1. 🛡️ Advancing Security & Reliability
+Right now, your `SentinelAgent` evaluates single prompts for safety. However, the biggest vulnerability in LLM tutors today is **Multi-Turn Jailbreaking** (where a student slowly tricks the AI over 5 or 6 messages) and **Code Execution Risks**.
+
+*   **Multi-Turn Context Sentinel:**
+    *   *The Concept:* Instead of just checking the current query, the Sentinel should briefly evaluate the *trajectory* of the last 3 messages. Attackers often use a technique called "Decomposition" (breaking a malicious request like "give me the exam answers" into tiny, seemingly innocent hypothetical questions).
+    *   *Implementation:* Pass the `history_manager.get_session_details()` string to the Sentinel's LLM Judge so it evaluates the *conversation's intent*, not just the isolated prompt.
+*   **The "Execution Sandbox" (Code Verification):**
+    *   *The Concept:* Currently, your `ReviewerAgent` *looks* at the code and guesses if it's right. The most reliable coding tutors actually *run* the code in the background.
+    *   *Implementation:* Integrate a lightweight, secure code-execution API (like Docker, Piston, or Judge0). When a student submits code for the Micro-Challenge, the backend actually compiles and runs it. The AI then feeds the real compiler errors (or success output) back into the prompt. This reduces LLM coding hallucinations to 0%.
+
+### 2. 🧠 Making it "Human-Like" (Cognitive Science)
+A human tutor doesn't just know what a student got right; they remember *why* the student got it wrong. In educational psychology, this is called maintaining a **Student Misconception Model**.
+
+*   **Theory of Mind (Misconception Tracking):**
+    *   *The Concept:* Right now, your `user_knowledge` table tracks what they *mastered*. It should also track what they *misunderstand*.
+    *   *Implementation:* Add a `misconceptions` JSON column to your SQLite database. If a student consistently forgets semicolons, or confuses `&` (address-of) with `*` (dereference), the `ExaminerAgent` logs this. The next time they ask a question, the Socratic prompt includes: *"Note: This student historically confuses pointers and addresses. Keep an eye on that."* The AI will start anticipating their mistakes just like a real teacher.
+*   **The PRIMM Framework (Predict, Run, Investigate, Modify, Make):**
+    *   *The Concept:* Instead of just giving them a code snippet and saying "Read this," use the PRIMM method.
+    *   *Implementation:* When showing a new code block, the AI hides the output and asks: *"Before I explain this, what do you **Predict** this code will print?"* Once they guess, the AI reveals the answer. This creates intense curiosity and mimics the flow of a real classroom.
+
+### 3. 🎮 Gamification & Deep Engagement
+To keep dopamine levels high over weeks or months of learning, the system needs to move beyond simple XP bars and chat interfaces.
+
+*   **"Faded Worked Examples" (Scaffolding 2.0):**
+    *   *The Concept:* When teaching a complex algorithm (like a sorting algorithm), don't ask them to write it from scratch. 
+    *   *Implementation:* Ask the LLM to generate a complete, working C program, but replace 3 critical lines with `____`. The student has to type the missing lines to "fix" the code. As they level up, you "fade" out more of the code until they are writing it from scratch.
+*   **Parsons Problems (UI Upgrade):**
+    *   *The Concept:* Sometimes typing syntax is too high of a cognitive load for beginners. 
+    *   *Implementation:* In the frontend, if a student triggers the `[I'm Stuck]` button 3 times, the AI generates a "Parsons Problem"—it outputs the correct 5 lines of code, but scrambled out of order. The UI renders them as drag-and-drop blocks. The student just has to drag the code into the correct logical order.
+*   **Peer-to-Peer Simulation (Agentic Roleplay):**
+    *   *The Concept:* The best way to test mastery isn't a quiz; it's teaching someone else.
+    *   *Implementation:* Create a "Role Reversal" mode. The AI Tutor temporarily changes its system prompt to become **"Alex, a confused junior developer."** 
+    *   *The Prompt:* *"You are Alex. You wrote a broken C program. Ask the user for help. Make one logical mistake. Do not break character until the user successfully mentors you to the right answer."* The student has to debug the AI's code!
+
+### 4. 🗣️ Multimodal Interactivity (The Next Frontier)
+Text-based chat is great, but humans communicate in multiple modalities.
+*   **Voice-to-Text / Text-to-Speech:** Integrate the browser's native Web Speech API in `chat.js`. Let users click a microphone icon to talk through their coding logic out loud. For dyslexic users, have an option for the AI to read its explanations out loud.
+*   **Whiteboard Mode (Canvas):** Often, students need to draw memory allocation (boxes and arrows) to understand C Pointers. In the future, you could add a simple HTML5 Canvas drawing tool. The user draws their mental model of the memory, and you pass the image to Google Gemini 2.5 Vision (which natively supports image inputs) to evaluate their drawing!
+
+### Summary of Your Next Steps
+If you want to pick just one thing to build next that will have the highest ROI for your users, build **The Execution Sandbox**. If the AI can actually run the student's C code and see the Segfault for itself, the level of trust the student has in the Tutor will skyrocket.
