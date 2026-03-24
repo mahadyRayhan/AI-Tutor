@@ -48,6 +48,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
           script: |
             # Step A: Stop current services and CREATE BACKUP (using cp, not mv)
             if [ -d "/home/ubuntu/AI-Tutor" ]; then
