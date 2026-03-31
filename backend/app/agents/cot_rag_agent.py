@@ -770,7 +770,7 @@ class ChainOfThoughtRAGAgent:
         # If it has brackets or semicolons, it's code, leave it alone.
         is_raw_code = "{" in query or "}" in query or ";" in query
         
-        should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan or is_raw_code
+        should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan or is_raw_code or feedback_mode is not None
 
         # --- 3. CONTEXTUALIZATION & ONBOARDING INTERCEPT ---
         yield {"type": "status", "message": "Understanding context...", "percent": 5}
@@ -830,9 +830,11 @@ class ChainOfThoughtRAGAgent:
                 
                 # ONLY trigger the warmup modal if this is an initial login!
                 if is_initial_login:
-                    import random
-                    warmup_topic = random.choice(known_concepts)
-                    history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": warmup_topic})
+                    valid_warmups = [c for c in known_concepts if len(c.split()) <= 3 and "?" not in c]
+                    
+                    if valid_warmups:
+                        warmup_topic = random.choice(valid_warmups).title()
+                        history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": warmup_topic})
             else:
                 greeting += "We have a blank slate! What topic should we dive into first?"
                 suggestions = ["What is a Variable?", "How does C work?", "I need help with an assignment"]
@@ -924,41 +926,84 @@ class ChainOfThoughtRAGAgent:
 
         # 2. SENTINEL (Security & Classification)
         # Runs on all new queries that aren't part of an active plan
-        async for event in self.sentinel.process(state):
-            yield event
-        if state.stop_processing: return
+        if feedback_mode:
+            state.intent = "CONCEPT"
+            state.entities = [current_state.get("challenge_topic", "C Programming")]
+        else:
+            async for event in self.sentinel.process(state):
+                yield event
+            if state.stop_processing: return
+
+        # =========================================================
+        # --- FIX 1: STRICT INTENT SANITIZATION ---
+        # Prevent the ML Classifier from hallucinating heavy intents on simple text
+        # =========================================================
+        if state.intent == "REVIEW":
+            # If they didn't type a semicolon, bracket, or equals sign, it's NOT a code review.
+            has_code_indicators = any(c in state.original_query for c in [";", "{", "}", "="])
+            if not has_code_indicators:
+                state.intent = "CONCEPT" # Downgrade to standard explanation
+
+        if state.intent == "COMPLEX_PROBLEM":
+            # Only trigger complex architecture if they explicitly ask to build something
+            is_project_request = any(w in state.original_query.lower() for w in ["build", "create", "project", "app", "game", "system", "calculator"])
+            if not is_project_request:
+                state.intent = "CONCEPT" # Downgrade to standard explanation
 
         # 3. THE SOCRATIC LOCK
-        if current_state.get("awaiting_micro_challenge"):
+        if current_state.get("awaiting_micro_challenge") and not feedback_mode:
             user_input_lower = state.original_query.lower()
-            skip_phrases = ["skip", "idk", "i don't know", "no", "stop", "answer", "tell me", "hint"]
-            has_code = any(c in state.original_query for c in [";", "{", "}", "=", "(", ")", "int ", "char ", "float "])
-            
-            is_new_question = not any(p in user_input_lower for p in skip_phrases) and not has_code and ("?" in state.original_query or state.original_query.lower().startswith(("what", "how", "why")))
+            challenge_topic = current_state.get("challenge_topic", "that concept")
 
-            if is_new_question:
-                challenge_topic = current_state.get("challenge_topic", "that concept")
-                history_manager.update_session_state(username, session_id, {"pending_goal": state.original_query})
-                
-                msg = f"I'd be happy to explain **{state.original_query}** next! \n\nBut first, I want to make sure you understood **{challenge_topic}**. Give my micro-challenge a try! *(Or type 'skip' if you are stuck).* "
-                
-                yield {"type": "complete", "data": {
-                    "answer": msg,
-                    "sources": [],
-                    "intent": "GUIDANCE",
-                    "suggestions": ["I'm stuck (Skip)", "Can I have a hint?"]
-                }}
+            # 1. Did they click "Can I have a hint?"
+            if "hint" in user_input_lower:
+                msg = f"💡 **Hint for {challenge_topic}:**\nLook closely at the 'Example from Class' section above. How did they write the syntax? Give it a try, or click 'Skip' if you are truly stuck!"
+                yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDANCE", "suggestions": ["I'm stuck (Skip)"]}}
                 return
-            else:
+
+            # 2. Did they click "I'm stuck (Skip)"?
+            if "skip" in user_input_lower or "stuck" in user_input_lower or "idk" in user_input_lower:
                 history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
-                if has_code and not any(p in user_input_lower for p in skip_phrases):
-                    state.intent = "REVIEW" 
-                    pending = current_state.get("pending_goal")
-                    if pending:
-                        state.query = f"[CONTEXT: I am answering your micro-challenge: '{state.original_query}'] Review my code. If it is correct, please answer my next question: '{pending}'"
-                        history_manager.update_session_state(username, session_id, {"pending_goal": None})
-                    else:
-                        state.query = f"[CONTEXT: I am answering your micro-challenge: '{state.original_query}'] Review my code. Keep it brief."
+                pending = current_state.get("pending_goal")
+                
+                msg = "No worries at all! Learning C takes practice. Let's move on."
+                if pending:
+                    # Reroute directly back to their pending goal
+                    msg += f"\n\nNow, back to your question: **{pending}**"
+                    state.query = pending
+                    state.original_query = pending
+                    state.intent = "CONCEPT"
+                    history_manager.update_session_state(username, session_id, {"pending_goal": None})
+                    # DO NOT RETURN here, let the code fall through to the Socratic Agent below!
+                else:
+                    yield {"type": "complete", "data": {"answer": msg + "\nWhat would you like to explore next?", "sources": [], "intent": "GUIDANCE", "suggestions": ["Teach me something new"]}}
+                    return
+
+            # 3. Did they try to bypass the challenge by asking a NEW question?
+            has_code = any(c in state.original_query for c in [";", "{", "}", "=", "(", ")"])
+            is_question = ("?" in state.original_query or state.original_query.lower().startswith(("what", "how", "why")))
+
+            if not has_code and is_question:
+                history_manager.update_session_state(username, session_id, {"pending_goal": state.original_query})
+                msg = f"I'd be happy to explain **{state.original_query}** next! \n\nBut first, I want to make sure you understood **{challenge_topic}**. Give my micro-challenge a try! *(Or click 'skip' if you are stuck).* "
+                yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDANCE", "suggestions": ["I'm stuck (Skip)", "Can I have a hint?"]}}
+                return
+
+            # 4. If they actually submitted an answer (Code or Text)
+            history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
+            pending = current_state.get("pending_goal")
+
+            # Route code to the Reviewer, and plain text to the Socratic Agent
+            if has_code:
+                state.intent = "REVIEW"
+            else:
+                state.intent = "CONCEPT" 
+
+            if pending:
+                state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Review this briefly. Then answer my real question: '{pending}'"
+                history_manager.update_session_state(username, session_id, {"pending_goal": None})
+            else:
+                state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this. Keep it brief."
 
         # 4. NEW SCAFFOLDING TRIGGERS 
         if not is_in_plan:

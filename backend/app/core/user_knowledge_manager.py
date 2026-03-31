@@ -12,11 +12,20 @@ class UserKnowledgeManager:
 
     def mark_concept_as_known(self, username: str, concept: str):
         """Adds a concept to the DB (Ignores duplicates)."""
-        # INSERT OR IGNORE handles deduplication automatically based on PRIMARY KEY
+        if not concept:
+            return
+            
+        concept_clean = concept.strip()
+        
+        # If it has a question mark, or is longer than 3 words, it's a sentence, not a concept.
+        if "?" in concept_clean or len(concept_clean.split()) > 3:
+            print(f"🛡️ [DB Guard] Refused to save junk concept: '{concept_clean}'")
+            return
+
         db.execute("""
             INSERT OR IGNORE INTO user_knowledge (username, concept, timestamp)
             VALUES (?, ?, ?)
-        """, (username, concept, datetime.now()))
+        """, (username, concept_clean, datetime.now()))
 
     def has_mastered(self, username: str, concept: str) -> bool:
         """Checks if a concept is known (Fuzzy match)."""

@@ -254,21 +254,28 @@ LEARNING_PATH_CACHE = {}
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    # Pass arguments explicitly by name
+    return templates.TemplateResponse(
+        request=request, 
+        name="index.html", 
+        context={"request": request}
+    )
 
 # 4. Dynamic Page Endpoint
 @app.get("/{page_name}.html", response_class=HTMLResponse)
 async def serve_specific_html(request: Request, page_name: str):
-    """
-    Dynamically serves teacher_dashboard.html, student_dashboard.html, etc.
-    """
+    """ Dynamically serves teacher_dashboard.html, student_dashboard.html, etc. """
     file_name = f"{page_name}.html"
     file_path = TEMPLATES_DIR / file_name
 
     # Check if file exists using the Path object
     if file_path.exists():
-        return templates.TemplateResponse(file_name, {"request": request})
-    
+        # Pass arguments explicitly by name here too
+        return templates.TemplateResponse(
+            request=request, 
+            name=file_name, 
+            context={"request": request}
+        )
     return HTMLResponse(content="Page Not Found", status_code=404)
 
 @app.get("/health")

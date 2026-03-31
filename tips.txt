@@ -351,3 +351,26 @@ Text-based chat is great, but humans communicate in multiple modalities.
 
 ### Summary of Your Next Steps
 If you want to pick just one thing to build next that will have the highest ROI for your users, build **The Execution Sandbox**. If the AI can actually run the student's C code and see the Segfault for itself, the level of trust the student has in the Tutor will skyrocket.
+
+
+#### -------
+Connect to the new server: ssh -i ~/.ssh/AWS-cloud-bank-FV.pem ubuntu@18.191.25.53
+Connect to the old server: ssh -i ~/.ssh/CERI-AWS.pem ubuntu@18.225.209.224
+#### -------
+
+#### ----- Commneds to upload and downlaod data from remore servers
+
+scp -i ~/.ssh/AWS-cloud-bank-FV.pem resource.zip  ubuntu@18.191.25.53:/home/ubuntu/AI-Tutor/resources        
+resource.zip                                             100%   19KB 272.1KB/s   00:00    
+scp -i ~/.ssh/CERI-AWS.pem ubuntu@18.225.209.224:~/AI-Tutor/backend/database/ai_tutor.db /Users/mhr6wb/Movies 
+ai_tutor.db                                              100%  852KB   2.4MB/s   00:00    
+scp -i ~/.ssh/AWS-cloud-bank-FV.pem /Users/mhr6wb/Movies/ai_tutor.db  ubuntu@18.191.25.53:/home/ubuntu/AI-Tutor/backend/database/ 
+ai_tutor.db                                              100%  852KB   2.2MB/s   00:00    
+scp -i ~/.ssh/AWS-cloud-bank-FV.pem ubuntu@18.191.25.53:~/AI-Tutor/backend/database/ai_tutor.db /Users/mhr6wb/Music/
+ai_tutor.db                                              100%  852KB   2.5MB/s   00:00    
+scp -i ~/.ssh/AWS-cloud-bank-FV.pem ubuntu@18.191.25.53:~/AI-Tutor/backend/database/ai_tutor.db /Users/mhr6wb/Music/
+ai_tutor.db                                              100%  852KB   2.4MB/s   00:00    
+scp -i ~/.ssh/AWS-cloud-bank-FV.pem ubuntu@18.191.25.53:~/test_db/ai_tutor.db /Users/mhr6wb/Music/    
+ai_tutor.db                                              100%  852KB   2.4MB/s   00:00    
+scp -i ~/.ssh/CERI-AWS.pem ubuntu@18.225.209.224:~/AI-Tutor/backend/database/ai_tutor.db /Users/mhr6wb/Movies                    
+ai_tutor.db                                              100%  852KB   2.7MB/s   00:00  
