@@ -133,6 +133,31 @@ class SentinelAgent(BaseAgent):
             return
 
         # =========================================================
+        # LAYER 1.5: OFF-TOPIC KEYWORD CHECK (C2 FIX) - FAST (0ms)
+        # =========================================================
+        off_topic_keywords = [
+            "bake", "baking", "cook", "cooking", "recipe", "weather", "president",
+            "capital of", "sing", "song", "poem", "joke", "movie", "football",
+            "basketball", "soccer", "baseball", "tennis", "math", "history",
+            "geography", "chemistry", "biology", "physics", "python", "java ",
+            "javascript", "typescript", "rust", "golang", "ruby", "swift",
+            "kotlin", "scala", "html", "css", "react", "angular", "vue",
+            "django", "flask", "chocolate", "cake", "pizza", "pasta"
+        ]
+        
+        if any(kw in query_lower for kw in off_topic_keywords):
+            state.intent = "OFF_TOPIC"
+            msg = "👋 I am an AI Tutor specialized strictly in **C Programming**.\n\n"
+            msg += "I can't help with that topic, but I **can** help you with:\n\n"
+            msg += "🔹 **Concepts** (Pointers, Arrays, Structs)\n"
+            msg += "🔹 **Debugging** (Fixing errors, Segfaults)\n"
+            msg += "🔹 **Writing Code** (Solving exercises)"
+            state.final_response = msg
+            state.stop_processing = True
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "OFF_TOPIC"}}
+            return
+
+        # =========================================================
         # LAYER 2: SEMANTIC SECURITY CHECK (LLM JUDGE) - SLOW (~500ms)
         # =========================================================
         # Only runs if enabled AND if the query looks technical/complex enough to be risky.
@@ -183,6 +208,49 @@ class SentinelAgent(BaseAgent):
         if intent == "SECURITY_RISK":
             yield self._block_response(state, "Classifier Trigger")
             return
+
+        # =========================================================
+        # LAYER 5.5: OFF-TOPIC LLM DOUBLE-CHECK (C2 FIX)
+        # =========================================================
+        # For queries classified as CONCEPT/PROBLEM but with no C-related keywords,
+        # do a fast LLM check to make sure it's actually about C programming.
+        if intent in ["CONCEPT", "PROBLEM"]:
+            c_keywords = [
+                "c ", "c++", "pointer", "array", "struct", "loop", "function",
+                "variable", "int", "char", "float", "double", "void", "string",
+                "printf", "scanf", "malloc", "free", "sizeof", "header",
+                "compile", "linker", "segfault", "memory", "stack", "heap",
+                "recursion", "conditional", "switch", "enum", "typedef",
+                "preprocessor", "#include", "#define", "main(", "return",
+                "break", "continue", "for", "while", "do", "if", "else",
+                "tic-tac-toe", "tic tac toe", "game", "program", "code",
+                "syntax", "debug", "error", "declare", "define", "data type"
+            ]
+            has_c_keyword = any(kw in query_lower for kw in c_keywords)
+            
+            if not has_c_keyword and len(state.query.split()) > 3:
+                # No C keywords found — use LLM to verify
+                try:
+                    check_prompt = f"""Is this question about C programming, computer science concepts, or software development? Answer ONLY "YES" or "NO".
+Question: "{state.query}" """
+                    result = await asyncio.to_thread(
+                        self.llm.generate_response if hasattr(self, 'llm') else (lambda x: "YES"), 
+                        check_prompt
+                    )
+                    if "NO" in result.upper().strip()[:10]:
+                        state.intent = "OFF_TOPIC"
+                        intent = "OFF_TOPIC"
+                        msg = "👋 I am an AI Tutor specialized strictly in **C Programming**.\n\n"
+                        msg += "I can't help with that topic, but I **can** help you with:\n\n"
+                        msg += "🔹 **Concepts** (Pointers, Arrays, Structs)\n"
+                        msg += "🔹 **Debugging** (Fixing errors, Segfaults)\n"
+                        msg += "🔹 **Writing Code** (Solving exercises)"
+                        state.final_response = msg
+                        state.stop_processing = True
+                        yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "OFF_TOPIC"}}
+                        return
+                except Exception as e:
+                    pass  # On error, allow through (permissive)
 
         # =========================================================
         # LAYER 6: TOPIC LOCKS (TEACHER SETTINGS)

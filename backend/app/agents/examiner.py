@@ -161,7 +161,7 @@ class ExaminerAgent(BaseAgent):
         check_topic = session_state.get("quiz_topic")
         vectors = session_state.get("quiz_vector")
         correct_text = session_state.get("quiz_correct_text")
-        pending_goal = session_state.get("pending_goal")
+        goals_stack = session_state.get("pending_goals", [])
         
         # Clear state immediately so we don't get stuck in a loop
         history_manager.update_session_state(state.user_id, state.session_id, {"awaiting_quiz_answer": False})
@@ -183,10 +183,11 @@ class ExaminerAgent(BaseAgent):
             msg = f"✅ **{result['feedback']}**\n\nGreat! You've officially mastered **{check_topic}**.\n\n"
             msg += f"🧠 **Feynman Challenge:** To truly lock this into your long-term memory, try explaining **{check_topic}** back to me in your own words, as if I were a 5-year-old!"
             suggestions = ["I'll try explaining it!", "What should I learn next?"]
-            if pending_goal:
-                msg += f"\n\nOr, if you prefer, shall we go back to your goal: **\"{pending_goal}\"**?"
-                suggestions.append(f"Back to: {pending_goal}")
-                history_manager.update_session_state(state.user_id, state.session_id, {"pending_goal": None})            
+            if goals_stack:
+                last_goal = goals_stack[-1]
+                msg += f"\n\nOr, if you prefer, shall we go back to your goal: **\"{last_goal}\"**?"
+                suggestions.append(f"Back to: {last_goal}")
+                # Don't clear the stack yet — the button handler will pop it
             
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": suggestions, "intent": "EVALUATION"}}
         else:
@@ -210,8 +211,9 @@ class ExaminerAgent(BaseAgent):
             }}
 
     async def _smart_grade_answer(self, student_answer: str, vec_google, vec_local, correct_text: str) -> dict:
-        # 1. Surrender Check
-        if any(p in student_answer.lower() for p in ["i don't know", "idk", "skip", "no idea"]):
+        # 1. Surrender Check — only explicit "I don't know" phrases, not just short answers
+        surrender_phrases = ["i don't know", "idk", "skip", "no idea", "i dont know", "no clue", "pass"]
+        if student_answer.lower().strip() in surrender_phrases or student_answer.lower().strip().rstrip('.!') in surrender_phrases:
              return {"is_correct": False, "feedback": "That's okay! It's better to admit it than to guess."}
 
         # 2. Vector Check
@@ -225,12 +227,10 @@ class ExaminerAgent(BaseAgent):
                 cos_sim = dot(s_vec, vec_local) / (norm(s_vec) * norm(vec_local))
             except Exception as e:
                 self.logger.error(f"Local grading failed: {e}")
-                # Fall through to Google logic if local fails
 
         # Fallback: Google/API Check
         if cos_sim == 0.0 and vec_google:
             try:
-                # Note: This is a synchronous call in most SDKs, consider to_thread if slow
                 s_vec = await asyncio.to_thread(self.llm.get_embedding, student_answer)
                 if s_vec:
                     cos_sim = dot(s_vec, vec_google) / (norm(s_vec) * norm(vec_google))
@@ -239,16 +239,16 @@ class ExaminerAgent(BaseAgent):
 
         score_pct = int(cos_sim * 100)
 
-        # 3. Decision Logic (Hybrid)
-        # Thresholds:
-        # > 82%: High Confidence Match (Pass)
-        # 50% - 82%: Gray Zone (Ask LLM Judge)
-        # < 50%: Low Confidence (Likely Fail, but check LLM if input is substantial)
+        # 3. Decision Logic (Hybrid) — A3 FIX: Lowered thresholds
+        # Thresholds (adjusted to reduce false negatives):
+        # > 75%: High Confidence Match (Pass)
+        # 40% - 75%: Gray Zone (Ask LLM Judge)
+        # < 40%: Low Confidence (Likely Fail, but still check LLM if input is substantial)
         
-        if cos_sim > 0.82:
+        if cos_sim > 0.75:
             return {"is_correct": True, "feedback": f"Spot on! ({score_pct}%)"}
         
-        # If score is low/medium, but we have text to verify, use LLM Judge
+        # If score is low/medium, always use LLM Judge for fair grading
         if correct_text:
              return await self._llm_grade_fallback(student_answer, correct_text, score_pct)
              

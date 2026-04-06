@@ -1,10 +1,12 @@
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
-DB_PATH = "historic-db/ai_tutor-april-01.db"
-EXPORT_DIR = "historic-db/chat_exports_april_01"
+# DB_PATH = "historic-db/ai_tutor-april-01.db"
+# DB_PATH = "backend/database/ai_tutor.db"
+DB_PATH = "/Users/mhr6wb/Music/ai_tutor.db"
+EXPORT_DIR = "historic-db/chat_exports_april_02"
 
 def export_all_users_to_txt():
     if not os.path.exists(DB_PATH):
@@ -30,6 +32,7 @@ def export_all_users_to_txt():
         return
 
     print(f"🔍 Found {len(users)} users. Starting export...\n")
+    cutoff_date = datetime.now() - timedelta(days=2)
 
     # 2. Iterate through each user
     for username in users:
@@ -40,9 +43,11 @@ def export_all_users_to_txt():
         cursor.execute("""
             SELECT session_id, title, created_at 
             FROM sessions 
-            WHERE username = ? AND deleted = 0
+            WHERE username = ? 
+            AND deleted = 0
+            AND created_at >= ? 
             ORDER BY created_at ASC
-        """, (username,))
+        """, (username, cutoff_date))
         sessions = cursor.fetchall()
         
         if not sessions:

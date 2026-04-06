@@ -68,24 +68,14 @@ class ChainOfThoughtRAGAgent:
         if not session_data or not session_data.get('messages'): return current_query
 
         # --- FIX 1: EXCLUDE CURRENT MESSAGE ---
-        # main.py adds the user message BEFORE calling this. 
-        # We want history to be everything BEFORE that message.
         all_msgs = session_data['messages']
-        
-        # Take the last 5 messages, EXCLUDING the very last one (which is current_query)
-        # format: [..., Bot, User, Bot, (Current_User_Msg)] -> we want up to the last Bot
         relevant_msgs = all_msgs[:-1][-5:] 
         
         history_str = ""
         for m in relevant_msgs:
             role = "Student" if m['role'] == 'user' else "Tutor"
             history_str += f"{role}: {m['content']}\n"
-        # --------------------------------------
 
-        # LOGGING (Keep this for debugging)
-        # self.logger.info(f"📜 Context History ({len(relevant_msgs)} items): \n{history_str}")
-
-        # --- FIX 2: STRONGER PROMPT ---
         prompt = f"""
         Chat History:
         {history_str}
@@ -109,6 +99,43 @@ class ChainOfThoughtRAGAgent:
         try:
             rewritten = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
             rewritten = rewritten.strip().replace('"', '')
+            
+            # --- A1 FIX: STRIP LLM ECHO PATTERNS ---
+            for prefix in ["Rewritten Question:", "Rewritten:", "Question:", "Standalone Question:"]:
+                if rewritten.lower().startswith(prefix.lower()):
+                    rewritten = rewritten[len(prefix):].strip()
+            
+            # --- A1 FIX: VALIDATE AGAINST KNOWLEDGE GRAPH ---
+            rewritten_entities = []
+            if config.INTENT_CLASSIFIER_MODE == "fast":
+                from app.core.fast_classifier import fast_classifier
+                rewritten_entities = fast_classifier.extract_entities(rewritten)
+            
+            has_valid_entity = False
+            if rewritten_entities:
+                for entity in rewritten_entities:
+                    cypher = "MATCH (n) WHERE toLower(n.name) CONTAINS toLower($name) RETURN n LIMIT 1"
+                    try:
+                        results = self.graph_db.execute_query(cypher, {"name": entity})
+                        if results:
+                            has_valid_entity = True
+                            break
+                    except:
+                        has_valid_entity = True  # Permissive on error
+                        break
+            else:
+                has_valid_entity = True  # No entities to check
+            
+            if not has_valid_entity:
+                # SELF-LEARNING: add garbage entities to knowledge manager's blocklist
+                for entity in rewritten_entities:
+                    if len(entity) >= 3:
+                        knowledge_manager._garbage_concepts.add(entity.lower())
+                        self.logger.warning(f"🛡️🧠 Contextualization garbage '{entity}' → added to blocklist")
+                
+                self.logger.warning(f"⚠️ Contextualized query has no graph match: '{rewritten}', using original: '{current_query}'")
+                return current_query
+            
             self.logger.info(f"🔄 Contextualized: '{current_query}' -> '{rewritten}'")
             return rewritten
         except Exception as e:
@@ -147,6 +174,21 @@ class ChainOfThoughtRAGAgent:
             results = self.graph_db.execute_query(cypher, {"name": entity})
             for record in results: prereqs.append(record['name'])
         return list(set(prereqs))
+
+    # def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
+    #     prereqs = []
+    #     for entity in initial_entities:
+    #         # NEW CYPHER: Looks for direct prereqs OR prereqs inherited from parent nodes
+    #         cypher = """
+    #         MATCH (target) 
+    #         WHERE toLower(target.name) CONTAINS toLower($name) OR toLower($name) CONTAINS toLower(target.name)
+    #         MATCH (target)<-[:INCLUDES*0..1]-(parent)-[:REQUIRES_UNDERSTANDING_OF]->(req)
+    #         RETURN req.name as name
+    #         """
+    #         results = self.graph_db.execute_query(cypher, {"name": entity})
+    #         for record in results: 
+    #             prereqs.append(record['name'])
+    #     return list(set(prereqs))
 
 
     def _sanitize_mermaid(self, text: str) -> str:
@@ -619,15 +661,7 @@ class ChainOfThoughtRAGAgent:
         return intent, entities
 
     def _check_gatekeeping(self, query, intent, entities, username, session_id):
-        # 1. Teacher Lock Check
-        # from app.core.settings_manager import settings_manager
-        # topic_settings = settings_manager.get_settings()
-        # for entity in entities:
-        #     for t, on in topic_settings.items():
-        #         if (entity.lower() in t.lower()) and not on:
-        #             return {"answer": f"🔒 Topic **{t}** is locked by the teacher.", "sources": [], "intent": intent}
-
-        # 2. Prerequisite Check
+        # 1. Prerequisite Check
         if "anyway" in query.lower() or "i know" in query.lower(): return None # User Override
         
         # Don't check prereqs for simple greetings or non-concept intents
@@ -636,41 +670,86 @@ class ChainOfThoughtRAGAgent:
         # Do the Graph Check
         all_prereqs = self._check_prerequisites(query, entities)
         
-        # --- BUG FIX START: Robust Filtering ---
-        target_concepts = [e.lower() for e in entities] # e.g. ['loop']
-        unknown = []
+        # --- C1 FIX: GET PREVIOUSLY VISITED PREREQS TO PREVENT LOOPS ---
+        current_state = history_manager.get_session_state(username, session_id) if session_id else {}
+        visited_prereqs = current_state.get("visited_prereqs", [])
+        visited_lower = [v.lower() for v in visited_prereqs]
+        # ---------------------------------------------------------------
         
+        target_concepts = [e.lower() for e in entities]
+        
+        # --- A1 FIX: VALIDATE topic_name (entities[0]) AGAINST GRAPH ---
+        # If entities[0] is garbage (e.g. "rewritten", "can"), fix it now.
+        topic_name = entities[0] if entities else 'this concept'
+        if entities:
+            cypher = "MATCH (n) WHERE toLower(n.name) CONTAINS toLower($name) RETURN n.name LIMIT 1"
+            try:
+                result = self.graph_db.execute_query(cypher, {"name": topic_name})
+                if not result:
+                    # entities[0] is NOT in the graph — it's garbage.
+                    # Try to recover from original query
+                    self.logger.warning(f"⚠️ Gatekeeping entity '{topic_name}' not in graph, extracting from original query")
+                    import re as _re
+                    original_entities = fast_classifier.extract_entities(query) if config.INTENT_CLASSIFIER_MODE == "fast" else [query]
+                    if original_entities:
+                        entities = original_entities
+                        target_concepts = [e.lower() for e in entities]
+                        topic_name = entities[0]
+                        # Re-validate the recovered entity
+                        result2 = self.graph_db.execute_query(cypher, {"name": topic_name})
+                        if not result2:
+                            self.logger.warning(f"⚠️ Recovered entity '{topic_name}' also not in graph, skipping gatekeeper")
+                            return None
+            except Exception as e:
+                self.logger.error(f"Graph validation error in gatekeeping: {e}")
+        # --- END A1 FIX ---
+        
+        unknown = []
         for p in all_prereqs:
-            p_norm = p.lower() # e.g. 'loops'
+            p_norm = p.lower()
             
             # A. Check Mastery
             if knowledge_manager.has_mastered(username, p): 
                 continue
-                
-            # B. Check Self-Reference (The Bug Fix)
-            # If 'loop' is inside 'loops' (or vice versa), ignore it.
+            
+            # B. Check Self-Reference (plural handling)
             is_same_topic = False
             for t in target_concepts:
-                # Check for substring match to handle plurals
                 if t in p_norm or p_norm in t: 
                     is_same_topic = True
                     break
             
-            if not is_same_topic:
-                unknown.append(p)
-        # ---------------------------------------
+            if is_same_topic:
+                continue
+            
+            # C. C1 FIX: Skip prereqs the student was already redirected through
+            already_visited = False
+            for v in visited_lower:
+                if v in p_norm or p_norm in v:
+                    already_visited = True
+                    break
+            
+            if already_visited:
+                self.logger.info(f"⏭️ Skipping already-visited prereq: '{p}'")
+                continue
+                
+            unknown.append(p)
         
         if unknown:
-            # --- FIX: SAVE THE USER'S GOAL ---
-            # We save "Explain Pointers" so we can remember it after the quiz
+            # Save the user's goal as a STACK (push, don't overwrite)
+            existing_goals = current_state.get("pending_goals", [])
+            # Only push if this query isn't already in the stack
+            if query not in existing_goals:
+                existing_goals.append(query)
+            new_visited = visited_prereqs + unknown
             history_manager.update_session_state(username, session_id, {
-                "pending_goal": query 
+                "pending_goals": existing_goals,
+                "visited_prereqs": new_visited
             })
-            # ---------------------------------
 
-            btns = [f"Explain {p}" for p in unknown] + [f"I know {p} (Verify)" for p in unknown] + [f"Teach me {entities[0]} anyway"]
+            btns = [f"Explain {p}" for p in unknown] + [f"I know {p} (Verify)" for p in unknown] + [f"Teach me {topic_name} anyway"]
             
-            topic_name = entities[0] if entities else 'this concept'
+            # topic_name was already set and validated against graph above
             prereq_list = "**, **".join(unknown)
             
             msg = f"## 🧱 Let's build a foundation first!\n\n**{topic_name}** is an exciting topic, but it relies heavily on **{prereq_list}**.\n\nTo make learning {topic_name} much easier (and less frustrating!), I recommend we quickly review those basics first. What do you think?"
@@ -770,9 +849,60 @@ class ChainOfThoughtRAGAgent:
         # If it has brackets or semicolons, it's code, leave it alone.
         is_raw_code = "{" in query or "}" in query or ";" in query
         
-        should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan or is_raw_code or feedback_mode is not None
+        # FIX: Handle "Back to:" pending goal button clicks
+        if query.strip().startswith("📌 Back to:"):
+            query = query.replace("📌 Back to:", "").strip()
+            search_query = query  # Use the cleaned query directly
+            # Pop this goal from the stack
+            goals_stack = current_state.get("pending_goals", [])
+            if query in goals_stack:
+                goals_stack.remove(query)
+            history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
+            self.logger.info(f"📌 Resumed pending goal: '{query}'")
+        
+        # A1 FIX: Skip contextualization for already-complete standalone questions.
+        # These patterns are unambiguous and the LLM rewrite only corrupts them.
+        q_lower_stripped = query.lower().strip()
+        complete_patterns = ("explain", "what is", "what are", "what's", "define",
+                            "how do i", "how do you", "how can i", "how to",
+                            "tell me about", "describe", "write a", "create a",
+                            "build a", "why is", "why does", "fix", "debug")
+        is_complete_question = any(q_lower_stripped.startswith(p) for p in complete_patterns)
+        
+        # FIX: Handle "Rigorous Analysis" button click
+        is_rigorous_analysis = q_lower_stripped in ["rigorous analysis", "🧐 rigorous analysis"]
+        
+        should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan or is_raw_code or feedback_mode is not None or is_complete_question or is_rigorous_analysis
 
-        # --- 3. CONTEXTUALIZATION & ONBOARDING INTERCEPT ---
+        # --- RIGOROUS ANALYSIS HANDLER ---
+        if is_rigorous_analysis:
+            # Find the last code submission from chat history
+            last_code = None
+            if current_state and current_state.get("messages"):
+                for msg in reversed(current_state["messages"]):
+                    if msg.get("role") == "user":
+                        content = msg.get("content", "")
+                        if "{" in content or ";" in content:
+                            last_code = content
+                            break
+            
+            if last_code:
+                edge_state = AgentState(
+                    query=last_code,
+                    original_query=query,
+                    user_id=username,
+                    session_id=session_id,
+                    user_role=user_role,
+                    user_goal=user_goal,
+                    profile=learning_profile,
+                    intent="REVIEW"
+                )
+                async for event in self.reviewer.process_edge_cases(edge_state):
+                    yield event
+                return
+            else:
+                yield {"type": "complete", "data": {"answer": "I couldn't find a recent code submission to analyze. Submit some code first, then click Rigorous Analysis!", "sources": [], "intent": "GUIDANCE"}}
+                return
         yield {"type": "status", "message": "Understanding context...", "percent": 5}
         
         onboarding_chips = ["i'm a complete beginner", "i know a little bit", "what is the syntax?"]
@@ -896,20 +1026,37 @@ class ChainOfThoughtRAGAgent:
             
         user_msg_count = sum(1 for m in msg_list if m.get("role") == "user")
 
-        if user_msg_count > 0 and user_msg_count % 5 == 0 and not is_in_quiz and not is_in_plan:
+        # FIX: Don't hijack clear learning requests with a quiz.
+        # If the user is explicitly asking to learn something new, skip the quiz.
+        q_lower_quiz = query.lower().strip()
+        is_learning_request = any(q_lower_quiz.startswith(p) for p in 
+            ("explain", "how do", "how to", "what is", "what are", "tell me",
+             "write a", "create a", "build a", "describe", "define", "help"))
+        
+        if user_msg_count > 0 and user_msg_count % 5 == 0 and not is_in_quiz and not is_in_plan and not is_learning_request:
             self.logger.info("🎯 Triggering Proactive Pop Quiz!")
             
-            recent_topic = "Variables" 
-            for msg in reversed(msg_list):
-                if msg.get("role") == "bot" and msg.get("topic") and msg.get("topic") != "General":
-                    recent_topic = msg.get("topic")
-                    break
+            # FIX: Use ACTUAL mastered concepts from the DB, not bot message metadata.
+            # This ensures the quiz is about something the student actually learned.
+            known_concepts = knowledge_manager.get_known_concepts(username)
             
-            history_manager.update_session_state(username, session_id, {"pending_goal": state.query})
-            state.query = f"know {recent_topic} (verify)"
-            state.intent = "QUIZ"
-            state.entities = [recent_topic]
-            state.profile['is_surprise_quiz'] = True
+            if known_concepts:
+                # Pick the most recently mastered concept (last in the list)
+                recent_topic = known_concepts[-1]
+                
+                # Push the current query onto the goals stack
+                goals_stack = current_state.get("pending_goals", []) if current_state else []
+                if state.query not in goals_stack:
+                    goals_stack.append(state.query)
+                history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
+                state.query = f"know {recent_topic} (verify)"
+                state.intent = "QUIZ"
+                state.entities = [recent_topic]
+                state.profile['is_surprise_quiz'] = True
+                self.logger.info(f"🎯 Quiz topic from mastery DB: '{recent_topic}'")
+            else:
+                # No mastered concepts — skip the quiz entirely instead of defaulting to 'Variables'
+                self.logger.info("⏭️ Skipping pop quiz: no mastered concepts to quiz on")
         # --------------------------------------------
 
         # ---------------------------------------------------------
@@ -964,16 +1111,17 @@ class ChainOfThoughtRAGAgent:
             # 2. Did they click "I'm stuck (Skip)"?
             if "skip" in user_input_lower or "stuck" in user_input_lower or "idk" in user_input_lower:
                 history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
-                pending = current_state.get("pending_goal")
+                goals_stack = current_state.get("pending_goals", [])
                 
                 msg = "No worries at all! Learning C takes practice. Let's move on."
-                if pending:
-                    # Reroute directly back to their pending goal
+                if goals_stack:
+                    # Pop the most recent goal from the stack
+                    pending = goals_stack.pop()
                     msg += f"\n\nNow, back to your question: **{pending}**"
                     state.query = pending
                     state.original_query = pending
                     state.intent = "CONCEPT"
-                    history_manager.update_session_state(username, session_id, {"pending_goal": None})
+                    history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
                     # DO NOT RETURN here, let the code fall through to the Socratic Agent below!
                 else:
                     yield {"type": "complete", "data": {"answer": msg + "\nWhat would you like to explore next?", "sources": [], "intent": "GUIDANCE", "suggestions": ["Teach me something new"]}}
@@ -984,26 +1132,27 @@ class ChainOfThoughtRAGAgent:
             is_question = ("?" in state.original_query or state.original_query.lower().startswith(("what", "how", "why")))
 
             if not has_code and is_question:
-                history_manager.update_session_state(username, session_id, {"pending_goal": state.original_query})
+                # Push the new question onto the goals stack
+                goals_stack = current_state.get("pending_goals", [])
+                if state.original_query not in goals_stack:
+                    goals_stack.append(state.original_query)
+                history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
                 msg = f"I'd be happy to explain **{state.original_query}** next! \n\nBut first, I want to make sure you understood **{challenge_topic}**. Give my micro-challenge a try! *(Or click 'skip' if you are stuck).* "
                 yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDANCE", "suggestions": ["I'm stuck (Skip)", "Can I have a hint?"]}}
                 return
 
             # 4. If they actually submitted an answer (Code or Text)
             history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
-            pending = current_state.get("pending_goal")
 
             # Route code to the Reviewer, and plain text to the Socratic Agent
             if has_code:
                 state.intent = "REVIEW"
+                # FIX: Do NOT merge pending goal into the review prompt.
+                # The reviewer will show pending goals as suggestion buttons.
+                state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this code. Keep it brief."
             else:
                 state.intent = "CONCEPT" 
-
-            if pending:
-                state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Review this briefly. Then answer my real question: '{pending}'"
-                history_manager.update_session_state(username, session_id, {"pending_goal": None})
-            else:
-                state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this. Keep it brief."
+                state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this briefly."
 
         # 4. NEW SCAFFOLDING TRIGGERS 
         if not is_in_plan:
@@ -1047,14 +1196,22 @@ class ChainOfThoughtRAGAgent:
             # Safely grab the topic
             topic = state.entities[0] if state.entities else state.original_query
             
-            # Robust matching: check if topic is in known OR known is in topic
+            # --- C3 FIX: STRICT MATCHING (exact match, min length, garbage guard) ---
             is_known = False
             matched_concept = ""
+            topic_lower = topic.lower().strip()
+            
             for k in known_concepts:
-                if len(k) > 3 and (k.lower() in topic.lower() or topic.lower() in k.lower()):
-                    is_known = True
-                    matched_concept = k
-                    break
+                k_lower = k.lower().strip()
+                # Require BOTH strings to be meaningful (>= 4 chars)
+                # and use exact match or very close match (not arbitrary substring)
+                if len(k_lower) >= 4 and len(topic_lower) >= 4:
+                    # Exact match OR one completely contains the other (for plurals)
+                    if k_lower == topic_lower or (len(k_lower) > 4 and k_lower == topic_lower + 's') or (len(topic_lower) > 4 and topic_lower == k_lower + 's'):
+                        is_known = True
+                        matched_concept = k
+                        break
+            # --- END C3 FIX ---
 
             has_bypassed = current_state.get("bypassed_withholding", False)
             is_asking_for_reminder = any(w in state.original_query.lower() for w in ["remind", "forgot", "explain", "don't remember", "help", "how"])
@@ -1063,7 +1220,6 @@ class ChainOfThoughtRAGAgent:
                 msg = f"Wait a minute... my records show you already mastered **{matched_concept}**! 😉\n\n"
                 msg += "Before I just give you the answer, look back at your code or notes. Based on what we learned before, how do *you* think we should approach this?"
                 
-                # Flag that we pushed back, so if they ask again, we let it through
                 history_manager.update_session_state(username, session_id, {"bypassed_withholding": True})
                 
                 yield {"type": "complete", "data": {
@@ -1074,7 +1230,6 @@ class ChainOfThoughtRAGAgent:
                 }}
                 return
             elif has_bypassed:
-                # Clear the bypass flag if they successfully moved past it
                 history_manager.update_session_state(username, session_id, {"bypassed_withholding": False})
         # =========================================================
 
@@ -1089,6 +1244,12 @@ class ChainOfThoughtRAGAgent:
                     username, session_id, 
                     {"awaiting_micro_challenge": True, "challenge_topic": topic_name}
                 )
+                
+                # --- B2 FIX: PERSIST MASTERY AFTER CONCEPT EXPLANATION ---
+                if state.intent == "CONCEPT" and state.entities:
+                    knowledge_manager.mark_concept_as_known(username, state.entities[0])
+                    self.logger.info(f"🧠 Auto-mastered after explanation: {state.entities[0]}")
+                # --------------------------------------------------------
             yield event
 
         # ---------------------------------------------------------
@@ -1100,41 +1261,10 @@ class ChainOfThoughtRAGAgent:
             self.profiler.analyze_sentiment(username, query)
         )
 
-        # HANDLE THE PENDING GOAL IMMEDIATELY
-        pending = current_state.get("pending_goal")
-        if pending and not current_state.get("awaiting_micro_challenge") and state.intent == "REVIEW":
-            self.logger.info(f"🔄 Executing Pending Goal: {pending}")
-            
-            history_manager.update_session_state(username, session_id, {"pending_goal": None})
-            
-            yield {"type": "token", "text": "\n\n---\n\n### Now, back to your question: *" + pending + "*\n\n"}
-            yield {"type": "status", "message": "Loading next topic...", "percent": 90}
-            
-            followup_state = AgentState(
-                query=pending,
-                original_query=pending,
-                user_id=username,
-                session_id=session_id,
-                user_role=user_role,
-                user_goal=user_goal,
-                profile=learning_profile,
-                intent="CONCEPT" 
-            )
-            
-            if config.INTENT_CLASSIFIER_MODE == "fast":
-                followup_state.entities = fast_classifier.extract_entities(pending)
-            else:
-                followup_state.entities = [pending]
-                
-            async for follow_event in self.socratic.process(followup_state):
-                if follow_event["type"] == "complete":
-                    topic_name = followup_state.entities[0] if followup_state.entities else "the last topic"
-                    history_manager.update_session_state(
-                        username, session_id, 
-                        {"awaiting_micro_challenge": True, "challenge_topic": topic_name}
-                    )
-                    
-                    follow_event["data"]["entities"] = followup_state.entities
-                    follow_event["data"]["intent"] = "REVIEW_AND_CONCEPT"
-                    
-                yield follow_event
+        # --- D2 FIX: DON'T APPEND PENDING GOAL INLINE ---
+        # Instead of streaming a follow-up topic into the same response,
+        # offer it as a suggestion button so the user can choose when to continue.
+        goals_stack = current_state.get("pending_goals", [])
+        if goals_stack and not current_state.get("awaiting_micro_challenge") and state.intent == "REVIEW":
+            self.logger.info(f"📌 Pending goals stack: {goals_stack}")
+            # Don't clear — they will be cleared when the user clicks a button

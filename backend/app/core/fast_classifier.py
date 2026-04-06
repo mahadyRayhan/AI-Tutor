@@ -46,7 +46,7 @@ class FastClassifier:
         logger.info("✅ Fast Models Loaded.")
 
     def classify_intent(self, query: str) -> str:
-        q_lower = query.lower()
+        q_lower = query.lower().strip()
         
         # 1. Hard Security Keywords (Override Model)
         security_triggers = ["exam", "solution", "answer key", "hack", "virus", "exploit", "leak", "ignore previous"]
@@ -56,11 +56,41 @@ class FastClassifier:
         # 2. Code Review Heuristic
         if "{" in query and "}" in query and ";" in query:
             return "REVIEW"
+        
+        # 3. Deterministic Keyword Rules (Bypass Model for unambiguous patterns)
+        concept_starters = ("explain", "what is", "what are", "what's", "define", 
+                           "tell me about", "describe", "how does", "how do")
+        if any(q_lower.startswith(p) for p in concept_starters):
+            return "CONCEPT"
+        
+        # "how do I" is asking for guidance, not problem-solving
+        guidance_starters = ("how do i", "how can i", "how to")
+        if any(q_lower.startswith(p) for p in guidance_starters):
+            return "CONCEPT"
+        
+        problem_starters = ("write a c program", "write a program", "create a program", 
+                           "build a", "implement", "code a", "solve")
+        if any(q_lower.startswith(p) for p in problem_starters):
+            return "PROBLEM"
+        
+        debug_starters = ("why is", "fix", "debug", "error", "why does", "why doesn't")
+        if any(q_lower.startswith(p) for p in debug_starters):
+            return "DEBUG"
             
-        # 3. Model Inference
+        # 4. Model Inference (for ambiguous queries only)
         query_emb = self.intent_model.encode(query)
         scores = {k: util.cos_sim(query_emb, v).item() for k, v in self.anchor_embeddings.items()}
-        return max(scores, key=scores.get)
+        
+        # 5. Confidence Threshold: if top two scores are too close, default to CONCEPT
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        best_intent, best_score = sorted_scores[0]
+        second_score = sorted_scores[1][1]
+        
+        if best_score - second_score < 0.05:
+            logger.info(f"🎯 Low-confidence classification ({best_intent}={best_score:.3f} vs {sorted_scores[1][0]}={second_score:.3f}), defaulting to CONCEPT")
+            return "CONCEPT"
+        
+        return best_intent
 
     def extract_entities(self, query: str) -> list:
         # Use GLiNER

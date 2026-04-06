@@ -33,17 +33,6 @@ class CodeReviewerAgent(BaseAgent):
         chunks = self.vector_store.query(query_embedding, top_k=3)
         context_text = "\n".join([c['text'] for c in chunks])
 
-        # --- QoL FIX: Only trigger Edge Cases for Complex Code ---
-        # Heuristic: More than 1 line, or contains loops/functions
-        is_complex_code = len(state.query.split('\n')) > 1 or any(k in state.query for k in ["for", "while", "if", "void", "return"])
-        
-        edge_case_task = None
-        if is_complex_code:
-            edge_case_task = asyncio.create_task(
-                asyncio.to_thread(self._analyze_edge_cases, state.query, context_text)
-            )
-        # ---------------------------------------------------------
-
         yield {"type": "status", "message": "Analyzing syntax...", "percent": 60}
         
         prompt = self._build_review_prompt(state.query, context_text, state.user_goal)
@@ -53,31 +42,75 @@ class CodeReviewerAgent(BaseAgent):
             full_response += token
             yield {"type": "token", "text": token}
 
-        # --- QoL FIX: Await only if the task was created ---
-        if edge_case_task:
-            yield {"type": "status", "message": "Checking edge cases...", "percent": 90}
-            edge_report = await edge_case_task
-            
-            if edge_report and edge_report.get('cases'):
-                edge_text = "\n\n---\n### 🧐 Engineer's Perspective: Rigorous Analysis\n"
-                edge_text += "Your logic works for standard inputs. Now, let's think like a Senior Engineer and test the **Edge Cases**:\n\n"
-                for case in edge_report['cases']:
-                    icon = "🔴" if case.get('severity') == "High" else "⚠️"
-                    edge_text += f"- {icon} **Scenario:** {case['scenario']}\n  - **Outcome:** {case['outcome']}\n"
-                edge_text += "\n*Handling these cases prevents crashes in production!*"
-                
-                full_response += edge_text
-                yield {"type": "token", "text": edge_text}
-        # ---------------------------------------------------------
+        # --- FIX: Edge case analysis is NO LONGER automatic ---
+        # We store the context for later use if the user clicks "Rigorous Analysis"
+        # and offer it as a suggestion button instead.
 
         state.final_response = full_response
-        state.stop_processing = True 
+        state.stop_processing = True
         
+        # Build suggestion buttons — always offer Rigorous Analysis
+        suggestions = ["🧐 Rigorous Analysis"]
+        
+        # Add pending goal buttons if they exist
+        from app.core.history_manager import history_manager
+        if state.session_id and state.user_id:
+            current_state = history_manager.get_session_state(state.user_id, state.session_id)
+            goals_stack = current_state.get("pending_goals", []) if current_state else []
+            visited_prereqs = current_state.get("visited_prereqs", []) if current_state else []
+            
+            if goals_stack or visited_prereqs:
+                # Show all pending goals as buttons
+                for goal in goals_stack:
+                    suggestions.append(f"📌 Back to: {goal}")
+                
+                # Also offer to explain recently visited prereqs
+                if visited_prereqs:
+                    last_prereq = visited_prereqs[-1]
+                    if f"Explain {last_prereq}" not in suggestions:
+                        suggestions.append(f"Explain {last_prereq}")
+
         yield {
             "type": "complete",
             "data": {
                 "answer": full_response,
                 "sources": [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks],
+                "suggestions": suggestions,
+                "intent": "REVIEW"
+            }
+        }
+
+    async def process_edge_cases(self, state: AgentState) -> AsyncGenerator[dict, None]:
+        """
+        Triggered when the user clicks the 'Rigorous Analysis' button.
+        """
+        yield {"type": "status", "message": "Running rigorous edge case analysis...", "percent": 50}
+        
+        query_embedding = self.llm.get_embedding(state.query)
+        chunks = self.vector_store.query(query_embedding, top_k=3)
+        context_text = "\n".join([c['text'] for c in chunks])
+        
+        edge_report = await asyncio.to_thread(self._analyze_edge_cases, state.query, context_text)
+        
+        if edge_report and edge_report.get('cases'):
+            edge_text = "### 🧐 Engineer's Perspective: Rigorous Analysis\n"
+            edge_text += "Your logic works for standard inputs. Now, let's think like a Senior Engineer and test the **Edge Cases**:\n\n"
+            for case in edge_report['cases']:
+                icon = "🔴" if case.get('severity') == "High" else "⚠️"
+                edge_text += f"- {icon} **Scenario:** {case['scenario']}\n  - **Outcome:** {case['outcome']}\n"
+            edge_text += "\n*Handling these cases prevents crashes in production!*"
+        else:
+            edge_text = "### 🧐 Engineer's Perspective\nYour code looks solid! I couldn't find any critical edge cases to flag. Well done! 🎉"
+        
+        state.final_response = edge_text
+        state.stop_processing = True
+        
+        yield {"type": "token", "text": edge_text}
+        yield {
+            "type": "complete",
+            "data": {
+                "answer": edge_text,
+                "sources": [],
                 "intent": "REVIEW"
             }
         }
@@ -85,23 +118,23 @@ class CodeReviewerAgent(BaseAgent):
     def _analyze_edge_cases(self, user_code: str, context: str) -> Dict[str, Any]:
         """
         GPAI-Style Feature: Rigorous Multi-Case Analysis.
+        A4 FIX: Only analyze the student's actual code, not reference material.
         """
         prompt = f"""
         You are a Senior C Software Engineer performing a Security & Reliability Audit on code written by a junior developer.
         
         **Junior's Code:** 
         {user_code}
-        
-        **Reference Context:** {context[:500]}
 
         **TASK:** Identify 3 specific EDGE CASES where this code might fail, crash, or produce undefined behavior.
         Ignore syntax errors. Assume the code compiles. Focus on LOGIC and SAFETY.
         
-        **TONE INSTRUCTIONS (CRITICAL):**
-        1. **Speak DIRECTLY to the programmer.** Use "You" and "Your code". 
-        2. **NEVER** say "If the student code...". 
-        3. **BAD:** "If the student enters 0..."
-        4. **GOOD:** "If your user enters 0, your division will crash..."
+        **CRITICAL CONSTRAINTS:**
+        1. **ONLY analyze the code provided above.** Do NOT reference variables, arrays, functions, or data structures that are NOT in the student's code.
+        2. **Speak DIRECTLY to the programmer.** Use "You" and "Your code". 
+        3. **NEVER** say "If the student code...". 
+        4. **BAD:** "Your 'prices' array..." (if no 'prices' variable exists in the code)
+        5. **GOOD:** Reference only variables that actually appear in the code above.
         
         Think about:
         1. Input Validation (Negative numbers, Zero, Non-numeric)
@@ -142,6 +175,7 @@ class CodeReviewerAgent(BaseAgent):
         3. **SANDWICH METHOD:** Positive -> Improvement -> Hint.
         4. **SOURCE GROUNDING:** Use variable names from Reference Material where possible.
         5. **ABSOLUTELY NO SOLUTIONS (CRITICAL):** Do NOT rewrite the code for them. Do NOT provide the correct code block. Only provide a text hint. If you provide the answer, you will be penalized.
+        6. **REVIEW ONLY (CRITICAL):** ONLY review the code. Do NOT explain any other topic. Do NOT add lessons or concept explanations after the review. Your response must end after the Hint.
         {goal_prompt}
 
         Format:
