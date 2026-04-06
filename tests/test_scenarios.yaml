@@ -1,0 +1,141 @@
+# Student Persona Learning Journeys
+# Each persona simulates a REAL student with a goal, knowledge level, and behavioral traits.
+# The agent drives multi-turn conversations dynamically — NOT scripted Q&A.
+
+personas:
+  # ============================================
+  # PERSONA 1: Beginner — "Build a Tic-Tac-Toe Game"
+  # ============================================
+  - name: "Beginner Ben"
+    description: "Complete beginner who wants to build tic-tac-toe. Will follow all prereqs obediently."
+    goal: "build a game of tic-tac-toe"
+    initial_knowledge: []  # Knows nothing
+    behavior:
+      follow_prereqs: true         # When gatekept, follow the Explain path
+      answer_quizzes: true         # Answer quizzes with knowledge-appropriate responses
+      submit_challenges: true      # Submit code for micro-challenges
+      ask_followups: true          # After learning a topic, ask a natural follow-up
+      verify_mastered: false       # Don't try to skip topics
+    learning_path:
+      # Topics this persona will explore, in order. Agent will ask these organically.
+      - "how do I declare an array?"
+      - "how do I use loops?"
+      - "what are functions in C?"
+      - "write a c program to reverse a string"
+    max_turns: 30
+    quiz_knowledge:
+      # When quizzed on these topics, the persona knows these answers
+      conditionals: "An if statement checks a boolean condition, while a switch statement compares a variable against specific constant values."
+      variables: "A local variable is destroyed when the function it was defined in finishes executing."
+      loops: "Initialization, condition check, and update/increment."
+      arrays: "int arr[10]; declares an array of 10 integers."
+      pointers: "A pointer is a variable that stores the memory address of another variable."
+      char: "5 bytes — 4 for the characters and 1 for the null terminator."
+    code_submissions:
+      # When asked to write code for these topics, the persona submits these
+      conditionals: |
+        if (playerHealth <= 0) {
+            printf("Game Over");
+        }
+      loops: |
+        for (int i = 0; i < 10; i++) {
+            printf("%d\n", i);
+        }
+      arrays: |
+        int board[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+        printf("%d", board[0]);
+      default: |
+        int x = 5;
+        printf("%d", x);
+
+  # ============================================
+  # PERSONA 2: Intermediate — "Learn Pointers"
+  # ============================================
+  - name: "Intermediate Irene"
+    description: "Has some C experience. Knows basics, wants to learn pointers. Will try to verify/skip known topics."
+    goal: "learn pointers and memory management"
+    initial_knowledge: ["Conditionals", "Loops", "Variables", "Arrays"]
+    behavior:
+      follow_prereqs: false        # Will try "I know X (Verify)" instead
+      answer_quizzes: true
+      submit_challenges: true
+      ask_followups: true
+      verify_mastered: true        # Will claim to know prereqs
+    learning_path:
+      - "what is a pointer in C?"
+      - "how does malloc work?"
+      - "how do I pass an array to a function using pointers?"
+    max_turns: 25
+    quiz_knowledge:
+      conditionals: "An if statement checks a boolean condition, while switch compares against constant values."
+      variables: "A local variable is destroyed when its scope ends."
+      loops: "for(init; condition; update) { body }"
+      arrays: "A contiguous block of memory storing elements of the same type, accessed by index."
+      functions: "A function is a reusable block of code that takes parameters and returns a value."
+      pointers: "A pointer stores the memory address of another variable, declared with * and dereferenced with *."
+    code_submissions:
+      pointers: |
+        int x = 10;
+        int *p = &x;
+        printf("%d", *p);
+      loops: |
+        for (int i = 0; i < 10; i++) {
+            printf("%d\n", i);
+        }
+      default: |
+        int x = 42;
+        printf("%d", x);
+
+  # ============================================
+  # PERSONA 3: Code-Heavy — "Submit Code, Get Reviews"  
+  # ============================================
+  - name: "Coder Charlie"
+    description: "Primarily submits code for review. Tests the code review pipeline quality."
+    goal: "build a calculator in C"
+    initial_knowledge: ["Variables", "Conditionals"]
+    behavior:
+      follow_prereqs: true
+      answer_quizzes: true
+      submit_challenges: true
+      ask_followups: false         # Jumps straight to code submission
+      verify_mastered: false
+    learning_path: []              # No concept questions — just code submissions
+    code_submissions_sequence:
+      # These are submitted one after another, testing escalating complexity
+      - |
+        int main() {
+            int x = 10
+            printf("Number is %d", x);
+        }
+      - |
+        #include <stdio.h>
+        int main() {
+            int a = 10, b = 5;
+            printf("Sum: %d\n", a + b);
+            return 0;
+        }
+      - |
+        #include <stdio.h>
+        int add(int a, int b) { return a + b; }
+        int main() {
+            printf("Result: %d\n", add(5, 3));
+            return 0;
+        }
+      - |
+        #include <stdio.h>
+        int main() {
+            char op;
+            int a, b;
+            printf("Enter operator: ");
+            scanf("%c", &op);
+            printf("Enter two numbers: ");
+            scanf("%d %d", &a, &b);
+            if (op == '+') printf("%d", a+b);
+            else if (op == '-') printf("%d", a-b);
+            return 0;
+        }
+    max_turns: 20
+    quiz_knowledge:
+      variables: "A variable is a named memory location that stores data."
+      conditionals: "if checks boolean, switch compares constant values."
+      functions: "A function takes parameters, executes a block of code, and returns a value."
