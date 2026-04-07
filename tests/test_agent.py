@@ -308,6 +308,15 @@ async def run_persona(
     session_id = None
     turn = 0
     
+    # Phase 0: Reset mastery data for clean run
+    try:
+        await client.post(f"{url}/api/v1/user/reset-knowledge", json={
+            "username": TEST_USERNAME
+        })
+        logger.info(f"  🗑️ Cleared prior mastery data")
+    except Exception as e:
+        logger.warning(f"  ⚠️ Failed to reset knowledge: {e}")
+    
     # Phase 1: Initialize session
     init_resp, session_id = await send_message(client, url, "[NEW_CHAT]", None)
     logger.info(f"  🆕 Session: {session_id}")

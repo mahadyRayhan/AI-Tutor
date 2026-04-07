@@ -30,6 +30,11 @@ class UserKnowledgeManager:
         valid = [c for c in all_concepts if c.lower() not in self._garbage_concepts and len(c) >= 3]
         return valid
 
+    def clear_concepts(self, username: str):
+        """Removes ALL mastery records for a user (used by test agent for clean runs)."""
+        db.execute("DELETE FROM user_knowledge WHERE username = ?", (username,))
+        logger.info(f"🗑️ Cleared all mastery data for user: {username}")
+
     def mark_concept_as_known(self, username: str, concept: str):
         """Adds a concept to the DB with multi-layer validation."""
         if not concept:

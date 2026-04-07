@@ -79,27 +79,32 @@ class ExaminerAgent(BaseAgent):
 
         yield {"type": "status", "message": "Fetching quiz...", "percent": 50}
 
-        # --- SMART HIERARCHICAL QUERY ---
-        # 1. Match the requested topic (e.g., "Variables and Types")
-        # 2. Look for its quiz data
-        # 3. OR look for quiz data in its CHILDREN (e.g., "Variables", "int")
+        # --- TWO-TIER QUIZ LOOKUP ---
+        # Tier 1: Exact match on the requested topic's OWN quiz data
+        # Tier 2: Fall back to CONTAINS match, then children
         cypher = """
-            MATCH (n) 
-            WHERE toLower(n.name) CONTAINS toLower($topic)
-            
-            // Find children with quizzes optionally
-            OPTIONAL MATCH (n)-[:INCLUDES]->(child)
-            WHERE child.quiz_data IS NOT NULL
-            
-            // Collect candidates
-            WITH n, child
-            WITH collect(n) + collect(child) as candidates
-            
-            // Unwind and Filter
-            UNWIND candidates as node
-            WITH node
-            WHERE node.quiz_data IS NOT NULL
-            
+            // Tier 1: Exact name match — the node itself has quiz data
+            OPTIONAL MATCH (exact)
+            WHERE toLower(exact.name) = toLower($topic)
+              AND exact.quiz_data IS NOT NULL
+            WITH collect(exact) as exact_matches
+
+            // Tier 2: CONTAINS match — the node itself has quiz data
+            OPTIONAL MATCH (partial)
+            WHERE toLower(partial.name) CONTAINS toLower($topic)
+              AND partial.quiz_data IS NOT NULL
+            WITH exact_matches, collect(partial) as partial_matches
+
+            // Tier 3: CONTAINS match — check children only as last resort
+            OPTIONAL MATCH (parent)-[:INCLUDES]->(child)
+            WHERE toLower(parent.name) CONTAINS toLower($topic)
+              AND child.quiz_data IS NOT NULL
+              AND toLower(child.name) CONTAINS toLower($topic)
+            WITH exact_matches, partial_matches, collect(child) as child_matches
+
+            // Priority: exact > partial (self) > children
+            WITH exact_matches + partial_matches + child_matches as all_candidates
+            UNWIND all_candidates as node
             RETURN node.quiz_data as data
             LIMIT 1
         """

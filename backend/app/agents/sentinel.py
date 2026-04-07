@@ -224,14 +224,20 @@ class SentinelAgent(BaseAgent):
                 "preprocessor", "#include", "#define", "main(", "return",
                 "break", "continue", "for", "while", "do", "if", "else",
                 "tic-tac-toe", "tic tac toe", "game", "program", "code",
-                "syntax", "debug", "error", "declare", "define", "data type"
+                "syntax", "debug", "error", "declare", "define", "data type",
+                # Pedagogical keywords (students rephrase questions naturally)
+                "example", "explain", "simple", "pass", "use", "using",
+                "how do", "what is", "what are", "how to", "tell me",
+                "operator", "assign", "input", "output", "print",
+                "type", "cast", "scope", "parameter", "argument",
+                "linked list", "sort", "search", "reverse", "swap"
             ]
             has_c_keyword = any(kw in query_lower for kw in c_keywords)
             
             if not has_c_keyword and len(state.query.split()) > 3:
                 # No C keywords found — use LLM to verify
                 try:
-                    check_prompt = f"""Is this question about C programming, computer science concepts, or software development? Answer ONLY "YES" or "NO".
+                    check_prompt = f"""Is this question about C programming, computer science concepts, coding education, or software development? Students may rephrase questions in simple/casual language. Answer ONLY "YES" or "NO".
 Question: "{state.query}" """
                     result = await asyncio.to_thread(
                         self.llm.generate_response if hasattr(self, 'llm') else (lambda x: "YES"), 

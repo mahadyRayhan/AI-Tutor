@@ -35,7 +35,15 @@ class CodeReviewerAgent(BaseAgent):
 
         yield {"type": "status", "message": "Analyzing syntax...", "percent": 60}
         
-        prompt = self._build_review_prompt(state.query, context_text, state.user_goal)
+        # Track review count for response variety
+        review_count = 1
+        from app.core.history_manager import history_manager
+        if state.session_id and state.user_id:
+            current_state = history_manager.get_session_state(state.user_id, state.session_id)
+            review_count = (current_state.get("review_count", 0) if current_state else 0) + 1
+            history_manager.update_session_state(state.user_id, state.session_id, {"review_count": review_count})
+        
+        prompt = self._build_review_prompt(state.query, context_text, state.user_goal, review_count)
         
         full_response = ""
         async for token in self.llm.stream_response_async(prompt):
@@ -158,10 +166,20 @@ class CodeReviewerAgent(BaseAgent):
         except:
             return None
 
-    def _build_review_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+    def _build_review_prompt(self, query: str, context: str, user_goal: str = None, review_count: int = 1) -> str:
         goal_prompt = ""
         if user_goal:
-            goal_prompt = f"6. **GOAL CHECK:** Does this code show progress towards their goal: '{user_goal}'? If yes, mention it."
+            goal_prompt = f"7. **GOAL CHECK:** Does this code show progress towards their goal: '{user_goal}'? If yes, mention it."
+
+        # Variety instructions based on review count
+        if review_count == 1:
+            variety = "This is the student's FIRST code submission. Welcome their effort warmly."
+        elif review_count == 2:
+            variety = "This is the student's SECOND submission. Acknowledge their continued effort and note any improvement from their approach."
+        elif review_count <= 4:
+            variety = f"This is submission #{review_count}. The student is building momentum — acknowledge their growth and be more specific in your feedback."
+        else:
+            variety = f"This is submission #{review_count}. The student is highly engaged. Be concise, skip generic encouragement, and focus on actionable technical insight."
 
         return f"""
         You are a supportive C Code Reviewer.
@@ -169,14 +187,17 @@ class CodeReviewerAgent(BaseAgent):
         Student's Input: {query}
         Reference Material: {context}
 
+        **CONTEXT:** {variety}
+
         **RULES:**
         1. **CHECK CONTEXT:** Look for a "[CONTEXT: ...]" tag to understand what they are trying to do.
-        2. **RSD SAFETY (CRITICAL):** Never use the words "Wrong", "Incorrect", "Failed", or "Bad". Always validate their logic first ("I see what you were trying to do!"), then gently point out the syntax rule that got in the way. This is called "Fail-Forward" feedback.
+        2. **RSD SAFETY (CRITICAL):** Never use the words "Wrong", "Incorrect", "Failed", or "Bad". Always validate their logic first, then gently point out the syntax rule that got in the way. This is called "Fail-Forward" feedback.
         3. **SANDWICH METHOD:** Positive -> Improvement -> Hint.
         4. **SOURCE GROUNDING:** Use variable names from Reference Material where possible.
         5. **ABSOLUTELY NO SOLUTIONS (CRITICAL):** Do NOT rewrite the code for them. Do NOT provide the correct code block. Only provide a text hint. If you provide the answer, you will be penalized.
         6. **REVIEW ONLY (CRITICAL):** ONLY review the code. Do NOT explain any other topic. Do NOT add lessons or concept explanations after the review. Your response must end after the Hint.
         {goal_prompt}
+        8. **VARIETY (CRITICAL):** Do NOT start with "I see what you were trying to do!" — vary your opening every time. Use different phrasing for each review. Examples: "Nice work on...", "You're on the right track with...", "Great use of...", "Looking at your code,..."
 
         Format:
         ## Code Review

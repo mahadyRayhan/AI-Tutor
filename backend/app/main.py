@@ -1088,6 +1088,16 @@ async def set_user_goal(req: GoalRequest):
     LEARNING_PATH_CACHE.pop(req.username, None)
     return {"status": "success", "goal": req.goal}
 
+class ResetKnowledgeRequest(BaseModel):
+    username: str
+
+@app.post("/api/v1/user/reset-knowledge")
+async def reset_user_knowledge(req: ResetKnowledgeRequest):
+    """Clear all mastery data for a user (used by test agent for clean runs)."""
+    from app.core.user_knowledge_manager import knowledge_manager
+    knowledge_manager.clear_concepts(req.username)
+    return {"status": "success", "message": f"Cleared all mastery for {req.username}"}
+
 @app.post("/api/v1/chat/feedback")
 async def handle_feedback(req: FeedbackRequest):
     """
