@@ -72,7 +72,6 @@
                     <span id="roleBadge" class="role-badge">STUDENT</span>
                 </div>
                 <div>
-                    <button class="top-toggle" onclick="toggleResources()" title="Toggle sources">📚</button>
                     <button class="nav-btn" onclick="openPreferencesModal()">⚙️ Custom Instructions</button>
                     <button class="nav-btn" onclick="openDashboard()">Dashboard</button>
                     <button class="nav-btn" onclick="logout()">Logout</button>
@@ -129,7 +128,8 @@
                 <!-- RESOURCES -->
                 <div class="resources-section" id="resourcesPanel">
                     <div class="res-header">
-                        <span>SOURCES & CONTEXT</span>
+                        <span class="res-header-title">SOURCES & CONTEXT</span>
+                        <button class="res-collapse-btn" id="resCollapseBtn" onclick="toggleResources()">»</button>
                     </div>
                     <div class="sources-list" id="sourcesList"></div>
                 </div>
@@ -172,6 +172,8 @@
                         <label title="Makes code blocks high-contrast."><input type="checkbox" id="chkContrast"> High Contrast Code</label>
                         <hr style="border:0; border-top:1px solid var(--border-color); margin: 5px 0;">
                         <label title="Gentle reminder to hydrate/stretch after 45 mins."><input type="checkbox" id="chkBreaks"> 45-Min Break Reminders</label>
+                        <hr style="border:0; border-top:1px solid var(--border-color); margin: 5px 0;">
+                        <label title="Switch to a light color scheme."><input type="checkbox" id="chkLightMode"> Light Mode</label>
                     </div>
                 </div>
             </div>

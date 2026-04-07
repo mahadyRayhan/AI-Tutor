@@ -565,7 +565,7 @@ textarea {
     flex: 1;
     background: transparent;
     border: none;
-    color: white;
+    color: var(--text-primary);
     font-size: 1rem;
     padding: 12px 0;
     resize: none;
@@ -695,64 +695,40 @@ textarea {
     box-sizing: border-box;
 }
 
-/* this adds an option to toggle the resources and context menu */
-/* Header layout (so title + button can sit on one row) */
+/* Resources panel header layout */
 .res-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
 }
 
-/* Small icon button for collapsing panels */
-.panel-toggle-btn {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: var(--text-secondary);
-    border-radius: 10px;
-    padding: 6px 10px;
+/* Collapse button — mirrors the sidebar menu-btn style */
+.res-collapse-btn {
+    background: none;
+    border: none;
     cursor: pointer;
-    font-size: 14px;
+    color: var(--text-primary);
+    font-size: 1.2rem;
+    padding: 4px 6px;
+    line-height: 1;
+    flex-shrink: 0;
 }
 
-.panel-toggle-btn:hover {
-    border-color: rgba(255, 255, 255, 0.35);
-    color: #fff;
+/* Collapsed state: shrink to just show the button */
+.resources-section.collapsed {
+    width: 44px !important;
+    min-width: 44px !important;
+    border-left: 1px solid var(--border-color) !important;
 }
 
-/* Collapse the right resources panel on desktop */
-body.hide-resources .resources-section {
-    width: 0 !important;
-    min-width: 0 !important;
-    padding: 0 !important;
-    border-left: none !important;
-    overflow: hidden !important;
-}
-
-/* Hide the text and list on desktop collapse */
-body.hide-resources .res-header,
-body.hide-resources .sources-list {
+.resources-section.collapsed .res-header-title,
+.resources-section.collapsed .sources-list {
     display: none !important;
 }
 
-body.hide-resources .resources-section * {
-    pointer-events: none;
-}
-
-/* Top Bar Toggle Button (visible on all screen sizes) */
-.top-toggle {
-    background: transparent;
-    color: var(--text-secondary);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    padding: 4px 10px;
-    cursor: pointer;
-    font-size: 14px;
-    margin-right: 10px;
-}
-
-.top-toggle:hover {
-    border-color: rgba(255, 255, 255, 0.35);
-    color: #fff;
+.resources-section.collapsed .res-header {
+    justify-content: center;
+    padding: 20px 0;
 }
 
 
@@ -1045,6 +1021,69 @@ body.hide-resources .resources-section * {
     .sub-welcome {
         font-size: 1.3rem;
     }
+}
+
+/* --- LIGHT MODE --- */
+body.light-mode {
+    --bg-color: #f5f7fa;
+    --sidebar-bg: #ffffff;
+    --sidebar-hover: #eef2ff;
+    --input-bg: #eef2ff;
+    --text-primary: #1e293b;
+    --text-secondary: #4285F4;
+    --text-muted: #64748b;
+    --accent-color: #4285F4;
+    --user-msg-bg: #dbeafe;
+    --bot-msg-bg: transparent;
+    --border-color: rgba(0, 0, 0, 0.08);
+    --border-hover: rgba(0, 0, 0, 0.18);
+}
+
+body.light-mode .role-badge {
+    background: #e2e8f0;
+    color: #64748b;
+}
+
+body.light-mode .new-chat-btn {
+    background: #f1f5f9;
+}
+
+body.light-mode .suggestion-btn,
+body.light-mode .source-card {
+    background: #f1f5f9;
+}
+
+body.light-mode pre[class*="language-"] {
+    background: #f8fafc !important;
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
+body.light-mode .message.bot h1,
+body.light-mode .message.bot h2,
+body.light-mode .message.bot h3,
+body.light-mode .message.bot h4,
+body.light-mode .message.bot h5 {
+    color: #1e293b;
+}
+
+body.light-mode .message.bot em {
+    color: #7c3aed;
+}
+
+body.light-mode .skeleton-line {
+    background: #e2e8f0;
+    background-image: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 50%, #e2e8f0 100%);
+}
+
+body.light-mode .feedback-text-box {
+    background: rgba(0, 0, 0, 0.04) !important;
+    border-color: #e2e8f0 !important;
+}
+
+body.light-mode .feedback-text-box textarea {
+    background: #f8fafc !important;
+    color: #1e293b !important;
+    border-color: #cbd5e1 !important;
 }
 
 @media (max-width: 600px) {
