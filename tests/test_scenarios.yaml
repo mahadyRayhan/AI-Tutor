@@ -139,3 +139,186 @@ personas:
       variables: "A variable is a named memory location that stores data."
       conditionals: "if checks boolean, switch compares constant values."
       functions: "A function takes parameters, executes a block of code, and returns a value."
+
+  # ============================================
+  # PERSONA 4: Pro Expert — "I Already Know Everything"
+  # ============================================
+  - name: "Expert Eve"
+    description: >
+      Advanced CS student who already knows C well. Will try to verify/skip
+      every prerequisite, submit production-quality code, and ask deep edge-case
+      questions. Tests the system's ability to challenge advanced students.
+    goal: "implement a linked list with dynamic memory allocation"
+    initial_knowledge:
+      - "Variables"
+      - "Conditionals"
+      - "Loops"
+      - "Arrays"
+      - "Control Flow"
+      - "Operators"
+      - "Functions"
+      - "Strings"
+      - "Pointers"
+    behavior:
+      follow_prereqs: false        # Never follows — always verifies
+      answer_quizzes: true         # Answers all quizzes confidently
+      submit_challenges: true
+      ask_followups: true          # Asks deep follow-ups
+      verify_mastered: true        # Claims to know everything
+    learning_path:
+      - "how do I create a linked list in C?"
+      - "what is the difference between stack and heap memory?"
+      - "how do I use malloc and free properly?"
+      - "explain pointer arithmetic"
+      - "write a function to reverse a linked list"
+    max_turns: 25
+    quiz_knowledge:
+      variables: "A variable is a named storage location with a type, scope, and lifetime. Local variables live on the stack and are destroyed when the enclosing function returns."
+      conditionals: "if evaluates expressions as truthy/falsy (0 is false, non-zero is true). switch performs jump table optimization for constant integer comparisons."
+      loops: "for(init; condition; update). The init runs once, condition is checked before each iteration, update runs after each iteration body."
+      arrays: "A contiguous block of memory. arr[i] is equivalent to *(arr + i). Arrays decay to pointers when passed to functions."
+      functions: "A function has a return type, name, parameters, and body. In C, all arguments are passed by value — use pointers for pass-by-reference semantics."
+      pointers: "A pointer stores a memory address. Declaration: int *p; Address-of: &x; Dereference: *p. Pointer arithmetic moves by sizeof(type) bytes."
+      strings: "A char array terminated by '\\0'. strlen() counts chars before null. strcpy, strncpy, strcmp are standard operations."
+      control_flow: "Sequential, selection (if/switch), and iteration (for/while/do-while). break exits loop, continue skips to next iteration."
+      operators: "Arithmetic (+,-,*,/,%), relational (<,>,==,!=), logical (&&,||,!), bitwise (&,|,^,~,<<,>>), assignment (=,+=), and pointer (&,*)."
+    code_submissions:
+      pointers: |
+        #include <stdio.h>
+        #include <stdlib.h>
+        typedef struct Node {
+            int data;
+            struct Node *next;
+        } Node;
+        Node* createNode(int val) {
+            Node *n = (Node*)malloc(sizeof(Node));
+            n->data = val;
+            n->next = NULL;
+            return n;
+        }
+      arrays: |
+        int matrix[3][3] = {{1,2,3},{4,5,6},{7,8,9}};
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                printf("%d ", matrix[i][j]);
+            }
+            printf("\n");
+        }
+      default: |
+        #include <stdio.h>
+        #include <stdlib.h>
+        int main() {
+            int *arr = (int *)malloc(5 * sizeof(int));
+            if (arr == NULL) { fprintf(stderr, "malloc failed\n"); return 1; }
+            for (int i = 0; i < 5; i++) arr[i] = i * 10;
+            for (int i = 0; i < 5; i++) printf("%d ", arr[i]);
+            free(arr);
+            return 0;
+        }
+
+  # ============================================
+  # PERSONA 5: Neurodiverse — "I Need Things Broken Down"
+  # ============================================
+  - name: "Neurodiverse Nadia"
+    description: >
+      A student who processes information differently. Needs concepts broken into
+      smaller pieces, may re-ask the same question in different words, gets
+      overwhelmed by long responses, and asks for simpler analogies. Tests the
+      tutor's pedagogical flexibility and patience.
+    goal: "understand how to write simple C programs"
+    initial_knowledge: []
+    behavior:
+      follow_prereqs: true
+      answer_quizzes: true
+      submit_challenges: true
+      ask_followups: true
+      verify_mastered: false
+    learning_path:
+      # Shorter path with rephrased/repeated questions to test consistency
+      - "what is a variable in C?"
+      - "I still don't understand variables, can you explain simpler?"
+      - "can you give me just one simple example of a variable?"
+      - "what is printf and how do I use it?"
+      - "what is an if statement?"
+      - "can you explain if statements like I'm 5 years old?"
+      - "what is a loop? just the basics please"
+    max_turns: 25
+    quiz_knowledge:
+      variables: "A variable stores data. Like a box with a label."
+      conditionals: "An if statement checks if something is true or false and does something based on that."
+      loops: "A loop repeats code. Like doing the same thing over and over."
+      arrays: "An array is a list of things of the same type."
+      operators: "Operators do math or compare things. Like + for adding."
+    code_submissions:
+      variables: |
+        int age = 20;
+        printf("%d", age);
+      conditionals: |
+        if (age >= 18) {
+            printf("adult");
+        }
+      loops: |
+        for (int i = 0; i < 5; i++) {
+            printf("%d\n", i);
+        }
+      default: |
+        int x = 10;
+        printf("%d", x);
+
+  # ============================================
+  # PERSONA 6: Mad Hatter — "Chaos Agent"
+  # ============================================
+  - name: "Mad Hatter"
+    description: >
+      A chaos persona that stress-tests system robustness. Rapidly switches
+      topics mid-conversation, asks metaphorical questions, requests constrained
+      explanations, mixes debugging with conceptual questions, and sends
+      unpredictable inputs. NOT malicious — just chaotically creative.
+    goal: "learn C programming"
+    initial_knowledge: ["Variables"]
+    behavior:
+      follow_prereqs: false         # Ignores prereqs, follows chaos_messages
+      answer_quizzes: true          # Will answer, but sometimes oddly
+      submit_challenges: true
+      ask_followups: false          # Never follows tutor's suggestions
+      verify_mastered: false
+      chaos_mode: true              # Special flag: uses chaos_messages instead of learning_path
+    # Instead of a learning path, the chaos persona cycles through these RANDOM messages.
+    # Each simulates a different kind of chaotic student behavior.
+    chaos_messages:
+      # Topic switching
+      - "what is a pointer?"
+      - "actually forget that, how do arrays work?"
+      - "wait, go back to pointers"
+      # Metaphorical questions
+      - "if C were a kitchen, what would a function be?"
+      - "explain loops but pretend I'm a medieval knight"
+      # Constrained explanations
+      - "explain conditionals in exactly 3 sentences"
+      - "what is recursion? answer in one word"
+      # Debug + concept mixing
+      - "why does this crash: int *p; *p = 5;"
+      - "also what even is a pointer anyway?"
+      - "can you fix this: for(i=0 i<10 i++){printf(i);}"
+      # Off-topic / edge cases
+      - "what is the meaning of life in C?"
+      - "can you write me a poem about malloc?"
+      # Rapid-fire
+      - "int vs float vs char, differences?"
+      - "what does #include do?"
+      - "how do I read user input?"
+      # Back to normal briefly
+      - "ok seriously, explain structs"
+    max_turns: 20
+    quiz_knowledge:
+      variables: "A variable stores a value in memory."
+      conditionals: "It checks true or false."
+      loops: "It repeats stuff."
+      pointers: "It points to memory."
+      arrays: "A list of same-type things."
+    code_submissions:
+      pointers: |
+        int *p;
+        *p = 5;
+      default: |
+        printf("hello world");

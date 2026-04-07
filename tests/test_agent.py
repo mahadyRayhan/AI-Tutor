@@ -289,6 +289,8 @@ async def run_persona(
     behavior = persona.get("behavior", {})
     learning_path = list(persona.get("learning_path", []))
     code_sequence = list(persona.get("code_submissions_sequence", []))
+    chaos_messages = list(persona.get("chaos_messages", []))
+    is_chaos = behavior.get("chaos_mode", False)
     quiz_bank = persona.get("quiz_knowledge", {})
     code_bank = persona.get("code_submissions", {})
     max_turns = persona.get("max_turns", 30)
@@ -321,9 +323,11 @@ async def run_persona(
         except Exception as e:
             logger.warning(f"  ⚠️ Failed to set goal: {e}")
     
-    # Phase 3: Send first message from learning path or code sequence
+    # Phase 3: Send first message
     next_message = None
-    if learning_path:
+    if is_chaos and chaos_messages:
+        next_message = chaos_messages.pop(0)
+    elif learning_path:
         next_message = learning_path.pop(0)
     elif code_sequence:
         next_message = code_sequence.pop(0)
@@ -346,6 +350,7 @@ async def run_persona(
         
         # Truncate for logging
         answer_preview = answer[:100].replace("\n", " ")
+        # answer_preview = answer.replace("\n", " ")
         logger.info(f"  🤖 [{elapsed:.0f}ms]: {answer_preview}...")
         if suggestions:
             logger.info(f"      Suggestions: {suggestions[:3]}")
@@ -497,7 +502,9 @@ async def run_persona(
         # ──── UNKNOWN ────
         elif sit_type == "unknown":
             # Try next from learning path, or follow suggestions
-            if learning_path:
+            if is_chaos and chaos_messages:
+                next_message = chaos_messages.pop(0)
+            elif learning_path:
                 next_message = learning_path.pop(0)
             elif code_sequence:
                 next_message = code_sequence.pop(0)
@@ -505,6 +512,13 @@ async def run_persona(
                 next_message = suggestions[0]
             else:
                 next_message = None
+        
+        # ──── CHAOS OVERRIDE ────
+        # In chaos mode, after handling reactive situations (quiz/challenge),
+        # always force the next chaos message instead of following the tutor's flow
+        if is_chaos and next_message is None and chaos_messages:
+            next_message = chaos_messages.pop(0)
+            logger.info(f"      🎩 Chaos override: {next_message[:60]}")
         
         # Safety: avoid infinite loops on empty/error responses
         if answer.startswith("ERROR:"):
