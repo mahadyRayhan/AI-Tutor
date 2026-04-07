@@ -453,6 +453,16 @@ function initializeApp() {
     document.getElementById('welcomeName').innerText = currentUser.name || currentUser.username;
     document.getElementById('roleBadge').innerText = currentUser.role.toUpperCase();
 
+    if (localStorage.getItem('sidebar_collapsed') === 'true' && window.innerWidth > 900) {
+        document.getElementById('sidebar').classList.add('collapsed');
+        document.querySelector('.menu-btn').textContent = '»';
+    }
+
+    if (localStorage.getItem('resources_collapsed') === 'true' && window.innerWidth > 900) {
+        document.getElementById('resourcesPanel').classList.add('collapsed');
+        document.getElementById('resCollapseBtn').textContent = '«';
+    }
+
     loadChatHistory();
     loadInitialPreferences();
 
@@ -519,21 +529,26 @@ function openDashboard() { window.location.href = currentUser.role === 'teacher'
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebarOverlay');
+    const menuBtn = document.querySelector('.menu-btn');
     if (window.innerWidth <= 900) {
-        // Mobile: slide in/out
         sidebar.classList.toggle('open');
         overlay.classList.toggle('open');
     } else {
-        // Desktop: collapse width
-        sidebar.classList.toggle('collapsed');
+        const isCollapsed = sidebar.classList.toggle('collapsed');
+        localStorage.setItem('sidebar_collapsed', isCollapsed);
+        menuBtn.textContent = isCollapsed ? '»' : '☰';
     }
 }
 
 function toggleResources() {
+    const panel = document.getElementById('resourcesPanel');
+    const btn = document.getElementById('resCollapseBtn');
     if (window.innerWidth <= 900) {
         document.body.classList.toggle('show-resources-mobile');
     } else {
-        document.body.classList.toggle('hide-resources');
+        const isCollapsed = panel.classList.toggle('collapsed');
+        btn.textContent = isCollapsed ? '«' : '»';
+        localStorage.setItem('resources_collapsed', isCollapsed);
     }
 }
 
@@ -761,11 +776,13 @@ async function startNewChat(isLogin = false) {
 
 // --- CUSTOM INSTRUCTIONS / PREFERENCES LOGIC ---
 let breakTimer = null;
+let _prefModalOpener = null;
 function applyAccessibility(prefs) {
     // Toggle CSS classes on the body
     document.body.classList.toggle('a11y-dyslexia', prefs.dyslexia_font === true);
     document.body.classList.toggle('a11y-spacing', prefs.extra_spacing === true);
     document.body.classList.toggle('a11y-contrast', prefs.high_contrast === true);
+    document.body.classList.toggle('light-mode', prefs.light_mode === true);
 
     // Handle ADHD Break Timer (45 mins = 2700000 ms)
     if (breakTimer) clearTimeout(breakTimer);
@@ -777,10 +794,12 @@ function applyAccessibility(prefs) {
 }
 
 async function openPreferencesModal() {
-    document.getElementById('preferencesModal').style.display = 'flex';
+    _prefModalOpener = document.activeElement;
     try {
-        const res = await fetch(`${API_URL}/api/v1/user/preferences/${currentUser.username}`);
+        const res = await fetch(`${API_URL}/api/v1/user/preferences/${currentUser.username}`, { cache: 'no-store' });
         const prefs = await res.json();
+        document.getElementById('preferencesModal').style.display = 'flex';
+        setTimeout(() => document.getElementById('customInstText').focus(), 50);
         
         document.getElementById('customInstText').value = prefs.custom_instructions || "";
         document.getElementById('chkExplanation').checked = prefs.show_explanation !== false;
@@ -795,11 +814,13 @@ async function openPreferencesModal() {
         document.getElementById('chkSpacing').checked = prefs.extra_spacing === true;
         document.getElementById('chkContrast').checked = prefs.high_contrast === true;
         document.getElementById('chkBreaks').checked = prefs.break_reminders === true;
+        document.getElementById('chkLightMode').checked = prefs.light_mode === true;
     } catch (e) { console.error("Load failed", e); }
 }
 
 function closePreferencesModal() {
     document.getElementById('preferencesModal').style.display = 'none';
+    if (_prefModalOpener) { _prefModalOpener.focus(); _prefModalOpener = null; }
 }
 
 async function savePreferences() {
@@ -821,7 +842,8 @@ async function savePreferences() {
         dyslexia_font: document.getElementById('chkDyslexia').checked,
         extra_spacing: document.getElementById('chkSpacing').checked,
         high_contrast: document.getElementById('chkContrast').checked,
-        break_reminders: document.getElementById('chkBreaks').checked
+        break_reminders: document.getElementById('chkBreaks').checked,
+        light_mode: document.getElementById('chkLightMode').checked
     };
     
     const payload = {
@@ -830,21 +852,20 @@ async function savePreferences() {
     };
     
     try {
-        await fetch(`${API_URL}/api/v1/user/preferences`, {
+        const saveRes = await fetch(`${API_URL}/api/v1/user/preferences`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        
+        if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
         btn.innerText = "✅ Saved!";
         btn.style.background = "#34d399"; // Green success
-        
+
         // Instantly apply visual CSS changes (like Dyslexia font or Spacing)
-        applyAccessibility(prefs); 
-        
+        applyAccessibility(prefs);
+
         setTimeout(() => {
-            closePreferencesModal();
-            // Reset button style
+            // Reset button style (modal stays open)
             btn.innerText = originalText;
             btn.style.background = "var(--accent-color)";
             btn.style.opacity = "1";
@@ -859,10 +880,40 @@ async function savePreferences() {
 
 async function loadInitialPreferences() {
     if(!currentUser) return;
-    const res = await fetch(`${API_URL}/api/v1/user/preferences/${currentUser.username}`);
+    const res = await fetch(`${API_URL}/api/v1/user/preferences/${currentUser.username}`, { cache: 'no-store' });
     const prefs = await res.json();
     applyAccessibility(prefs);
 }
+// --- MODAL ACCESSIBILITY: ESC, click-outside, focus trap ---
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('preferencesModal').style.display !== 'none') closePreferencesModal();
+    else if (document.getElementById('warmupModal').style.display !== 'none') skipWarmup();
+});
+
+document.getElementById('preferencesModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closePreferencesModal();
+});
+document.getElementById('warmupModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) skipWarmup();
+});
+
+function _trapFocus(e) {
+    if (e.key !== 'Tab') return;
+    const focusable = Array.from(this.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    )).filter(el => el.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+    } else {
+        if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+}
+document.getElementById('preferencesModal').addEventListener('keydown', _trapFocus);
+document.getElementById('warmupModal').addEventListener('keydown', _trapFocus);
+
 // Init
 const stored = localStorage.getItem('c_tutor_user');
 if (stored) { currentUser = JSON.parse(stored); routeUser(); }
