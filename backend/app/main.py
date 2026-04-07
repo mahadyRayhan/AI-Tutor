@@ -136,6 +136,7 @@ class TutorPreferences(BaseModel):
     extra_spacing: bool = False
     high_contrast: bool = False
     break_reminders: bool = False
+    light_mode: bool = False
 
 class PreferencesUpdateRequest(BaseModel):
     username: str
@@ -1210,12 +1211,12 @@ async def update_user_preferences(req: PreferencesUpdateRequest):
     profile = {}
     if row and row['learning_profile']:
         profile = json.loads(row['learning_profile'])
-    
+
     # Update only the tutor_preferences, preserve other profiler data
     profile["tutor_preferences"] = req.preferences.dict()
-    
+
     db.execute(
-        "UPDATE users SET learning_profile = ? WHERE username = ?", 
+        "UPDATE users SET learning_profile = ? WHERE username = ?",
         (json.dumps(profile), req.username)
     )
     return {"status": "success"}
