@@ -48,14 +48,16 @@ class ProfilerAgent(BaseAgent):
                 self.logger.warning(f"⚠️ Frustration Detected for {user_id}: {label} ({score:.2f})")
                 frustration_level = "high"
 
-            # 3. Fetch current profile
-            row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (user_id,))
-            profile = json.loads(row['learning_profile']) if row and row['learning_profile'] else {}
+            # 3. Fetch current frustration state only (avoid read-modify-write race with preferences save)
+            row = db.fetch_one("SELECT json_extract(learning_profile, '$.frustration_level') as frustration_level FROM users WHERE username = ?", (user_id,))
+            current_frustration = row['frustration_level'] if row else None
 
-            # 4. Update ONLY the frustration state (leave their manual settings alone!)
-            if profile.get("frustration_level") != frustration_level:
-                profile["frustration_level"] = frustration_level
-                db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), user_id))
+            # 4. Update ONLY the frustration field atomically using json_set
+            if current_frustration != frustration_level:
+                db.execute(
+                    "UPDATE users SET learning_profile = json_set(COALESCE(learning_profile, '{}'), '$.frustration_level', ?) WHERE username = ?",
+                    (frustration_level, user_id)
+                )
 
             return frustration_level
             
