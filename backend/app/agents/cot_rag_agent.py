@@ -747,12 +747,21 @@ class ChainOfThoughtRAGAgent:
                 "visited_prereqs": new_visited
             })
 
-            btns = [f"Explain {p}" for p in unknown] + [f"I know {p} (Verify)" for p in unknown] + [f"Teach me {topic_name} anyway"]
+            # Limit to max 3 prereqs to avoid overwhelming the student
+            display_prereqs = unknown[:3]
             
-            # topic_name was already set and validated against graph above
-            prereq_list = "**, **".join(unknown)
+            # Build a clear roadmap instead of a vague dependency chain
+            prereq_roadmap = "\n".join(f"   {i+1}. **{p}**" for i, p in enumerate(display_prereqs))
             
-            msg = f"## 🧱 Let's build a foundation first!\n\n**{topic_name}** is an exciting topic, but it relies heavily on **{prereq_list}**.\n\nTo make learning {topic_name} much easier (and less frustrating!), I recommend we quickly review those basics first. What do you think?"
+            msg = f"## 🧱 Quick Roadmap for **{topic_name}**\n\n"
+            msg += f"To make **{topic_name}** click, it helps to know these first:\n\n"
+            msg += prereq_roadmap
+            msg += f"\n\n💡 You can **skip ahead** if you're comfortable, or I'll walk you through each one quickly!"
+
+            # Put "Teach me anyway" FIRST (most prominent) to reduce frustration
+            btns = [f"Teach me {topic_name} anyway"]
+            btns += [f"Explain {p}" for p in display_prereqs]
+            btns += [f"I know {p} (Verify)" for p in display_prereqs]
 
             return {
                 "answer": msg,
@@ -876,31 +885,57 @@ class ChainOfThoughtRAGAgent:
 
         # --- RIGOROUS ANALYSIS HANDLER ---
         if is_rigorous_analysis:
-            # Find the last code submission from chat history
-            last_code = None
-            if current_state and current_state.get("messages"):
+            # Strategy 1: Check session state for stored last code submission
+            last_code = current_state.get("last_code_submission") if current_state else None
+            if last_code:
+                self.logger.info(f"🧐 [Rigorous] Found code via session state (last_code_submission)")
+            
+            # Strategy 2: Search current state messages
+            if not last_code and current_state and current_state.get("messages"):
                 for msg in reversed(current_state["messages"]):
                     if msg.get("role") == "user":
                         content = msg.get("content", "")
                         if "{" in content or ";" in content:
                             last_code = content
+                            self.logger.info(f"🧐 [Rigorous] Found code via current state messages")
                             break
             
+            # Strategy 3: Search full session history (fallback)
+            if not last_code and session_id:
+                try:
+                    sess_details = history_manager.get_session_details(username, session_id)
+                    if sess_details and sess_details.get("messages"):
+                        for msg in reversed(sess_details["messages"]):
+                            if msg.get("role") == "user":
+                                content = msg.get("content", "")
+                                if "{" in content or ";" in content:
+                                    last_code = content
+                                    self.logger.info(f"🧐 [Rigorous] Found code via full session history")
+                                    break
+                except Exception as e:
+                    self.logger.error(f"🧐 [Rigorous] Failed to search session history: {e}")
+            
             if last_code:
-                edge_state = AgentState(
-                    query=last_code,
-                    original_query=query,
-                    user_id=username,
-                    session_id=session_id,
-                    user_role=user_role,
-                    user_goal=user_goal,
-                    profile=learning_profile,
-                    intent="REVIEW"
-                )
-                async for event in self.reviewer.process_edge_cases(edge_state):
-                    yield event
+                try:
+                    edge_state = AgentState(
+                        query=last_code,
+                        original_query=query,
+                        user_id=username,
+                        session_id=session_id,
+                        user_role=user_role,
+                        user_goal=user_goal,
+                        profile={},
+                        intent="REVIEW"
+                    )
+                    async for event in self.reviewer.process_edge_cases(edge_state):
+                        yield event
+                except Exception as e:
+                    self.logger.error(f"🧐 [Rigorous] Edge case analysis failed: {e}")
+                    fallback = "### 🧐 Rigorous Analysis\n\nSorry, I ran into an issue analyzing your code. Please try submitting it again and then click Rigorous Analysis."
+                    yield {"type": "complete", "data": {"answer": fallback, "sources": [], "intent": "REVIEW"}}
                 return
             else:
+                self.logger.warning(f"🧐 [Rigorous] No code found in any of the 3 search strategies")
                 yield {"type": "complete", "data": {"answer": "I couldn't find a recent code submission to analyze. Submit some code first, then click Rigorous Analysis!", "sources": [], "intent": "GUIDANCE"}}
                 return
         yield {"type": "status", "message": "Understanding context...", "percent": 5}
@@ -1026,12 +1061,17 @@ class ChainOfThoughtRAGAgent:
             
         user_msg_count = sum(1 for m in msg_list if m.get("role") == "user")
 
-        # FIX: Don't hijack clear learning requests with a quiz.
-        # If the user is explicitly asking to learn something new, skip the quiz.
+        # FIX: Don't hijack learning requests OR struggling students with a quiz.
+        # Use 'in' instead of 'startswith' to catch rephrased questions like
+        # "can you give me just one simple example of a variable?"
         q_lower_quiz = query.lower().strip()
-        is_learning_request = any(q_lower_quiz.startswith(p) for p in 
-            ("explain", "how do", "how to", "what is", "what are", "tell me",
-             "write a", "create a", "build a", "describe", "define", "help"))
+        learning_phrases = (
+            "explain", "how do", "how to", "what is", "what are", "tell me",
+            "write a", "create a", "build a", "describe", "define", "help",
+            "can you", "give me", "show me", "example", "simple",
+            "don't understand", "don't get", "confused", "struggling", "teach me"
+        )
+        is_learning_request = any(p in q_lower_quiz for p in learning_phrases)
         
         if user_msg_count > 0 and user_msg_count % 5 == 0 and not is_in_quiz and not is_in_plan and not is_learning_request:
             self.logger.info("🎯 Triggering Proactive Pop Quiz!")

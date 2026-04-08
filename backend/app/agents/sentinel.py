@@ -104,6 +104,22 @@ class SentinelAgent(BaseAgent):
         query_lower = state.query.lower()
         
         # =========================================================
+        # PRE-CHECK: Does this query contain C-programming keywords?
+        # Used later to skip unnecessary LLM checks.
+        # =========================================================
+        c_context_keywords = [
+            "pointer", "array", "struct", "loop", "function",
+            "variable", "int ", "char ", "float ", "double", "void",
+            "string", "printf", "scanf", "malloc", "free", "sizeof",
+            "compile", "segfault", "memory", "stack", "heap",
+            "recursion", "conditional", "switch", "enum", "typedef",
+            "#include", "#define", "return", "break", "continue",
+            "operator", "parameter", "argument", "linked list",
+            "declare", "data type", "scope", "assign"
+        ]
+        has_c_context = any(kw in query_lower for kw in c_context_keywords)
+        
+        # =========================================================
         # LAYER 1: HARD SECURITY CHECK (REGEX/KEYWORD) - FAST (0ms)
         # =========================================================
         security_triggers = [
@@ -129,6 +145,7 @@ class SentinelAgent(BaseAgent):
         ]
         
         if any(trigger in query_lower for trigger in security_triggers):
+            self.logger.warning(f"🚨 [Sentinel L1] BLOCKED by keyword: '{state.query[:80]}'")
             yield self._block_response(state, "Keyword Trigger")
             return
 
@@ -145,7 +162,9 @@ class SentinelAgent(BaseAgent):
             "django", "flask", "chocolate", "cake", "pizza", "pasta"
         ]
         
-        if any(kw in query_lower for kw in off_topic_keywords):
+        # Only block if off-topic AND no C-context keywords present
+        if any(kw in query_lower for kw in off_topic_keywords) and not has_c_context:
+            self.logger.warning(f"🚨 [Sentinel L1.5] BLOCKED as off-topic: '{state.query[:80]}'")
             state.intent = "OFF_TOPIC"
             msg = "👋 I am an AI Tutor specialized strictly in **C Programming**.\n\n"
             msg += "I can't help with that topic, but I **can** help you with:\n\n"
@@ -160,17 +179,18 @@ class SentinelAgent(BaseAgent):
         # =========================================================
         # LAYER 2: SEMANTIC SECURITY CHECK (LLM JUDGE) - SLOW (~500ms)
         # =========================================================
-        # Only runs if enabled AND if the query looks technical/complex enough to be risky.
-        # Simple queries like "Hi" skip this to save latency.
+        # Only runs if enabled AND query is complex AND has no clear C context.
+        # Skip for queries with C keywords — they're obviously about C programming.
         is_complex = len(state.query.split()) > 5 or any(c in state.query for c in ["{", "(", ";", "#"])
         
-        if self.ENABLE_AI_SAFETY_JUDGE and is_complex:
-            # We don't yield a status message here to keep it invisible to user, 
-            # unless it takes too long.
+        if self.ENABLE_AI_SAFETY_JUDGE and is_complex and not has_c_context:
             is_safe = await self._semantic_safety_check(state.query)
             if not is_safe:
+                self.logger.warning(f"🚨 [Sentinel L2] BLOCKED by LLM judge: '{state.query[:80]}'")
                 yield self._block_response(state, "AI Judge Trigger")
                 return
+        elif has_c_context:
+            self.logger.debug(f"✅ [Sentinel L2] Skipped LLM safety (C context detected): '{state.query[:60]}'")
 
         # =========================================================
         # LAYER 3: CODE DETECTION (INTENT FORCING)
@@ -204,10 +224,18 @@ class SentinelAgent(BaseAgent):
         # =========================================================
         # LAYER 5: INTENT-BASED SECURITY (DOUBLE CHECK)
         # =========================================================
-        # If the ML classifier flagged it as SECURITY_RISK but our regex missed it
+        # If the ML classifier flagged it as SECURITY_RISK but our regex missed it.
+        # However, if the query clearly contains C-programming keywords, the
+        # classifier is likely wrong — override to prevent false positives.
         if intent == "SECURITY_RISK":
-            yield self._block_response(state, "Classifier Trigger")
-            return
+            if has_c_context:
+                self.logger.info(f"✅ [Sentinel L5] Overriding SECURITY_RISK — C context detected: '{state.query[:60]}'")
+                intent = "CONCEPT"
+                state.intent = intent
+            else:
+                self.logger.warning(f"🚨 [Sentinel L5] BLOCKED by classifier: '{state.query[:80]}'")
+                yield self._block_response(state, "Classifier Trigger")
+                return
 
         # =========================================================
         # LAYER 5.5: OFF-TOPIC LLM DOUBLE-CHECK (C2 FIX)
@@ -228,6 +256,7 @@ class SentinelAgent(BaseAgent):
                 # Pedagogical keywords (students rephrase questions naturally)
                 "example", "explain", "simple", "pass", "use", "using",
                 "how do", "what is", "what are", "how to", "tell me",
+                "can you", "give me", "show me", "just", "help me",
                 "operator", "assign", "input", "output", "print",
                 "type", "cast", "scope", "parameter", "argument",
                 "linked list", "sort", "search", "reverse", "swap"
@@ -244,6 +273,7 @@ Question: "{state.query}" """
                         check_prompt
                     )
                     if "NO" in result.upper().strip()[:10]:
+                        self.logger.warning(f"🚨 [Sentinel L5.5] BLOCKED by LLM off-topic check: '{state.query[:80]}'")
                         state.intent = "OFF_TOPIC"
                         intent = "OFF_TOPIC"
                         msg = "👋 I am an AI Tutor specialized strictly in **C Programming**.\n\n"

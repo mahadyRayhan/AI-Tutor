@@ -35,15 +35,20 @@ class CodeReviewerAgent(BaseAgent):
 
         yield {"type": "status", "message": "Analyzing syntax...", "percent": 60}
         
-        # Track review count for response variety
+        # Track review count and gather prior feedback for variety
         review_count = 1
+        prior_feedback = ""
         from app.core.history_manager import history_manager
         if state.session_id and state.user_id:
             current_state = history_manager.get_session_state(state.user_id, state.session_id)
             review_count = (current_state.get("review_count", 0) if current_state else 0) + 1
+            # Retrieve prior review key points to avoid repetition
+            prior_points = current_state.get("review_history", []) if current_state else []
+            if prior_points:
+                prior_feedback = "\n".join(f"- Review #{i+1}: {p}" for i, p in enumerate(prior_points[-3:]))  # Last 3 only
             history_manager.update_session_state(state.user_id, state.session_id, {"review_count": review_count})
         
-        prompt = self._build_review_prompt(state.query, context_text, state.user_goal, review_count)
+        prompt = self._build_review_prompt(state.query, context_text, state.user_goal, review_count, prior_feedback)
         
         full_response = ""
         async for token in self.llm.stream_response_async(prompt):
@@ -56,6 +61,28 @@ class CodeReviewerAgent(BaseAgent):
 
         state.final_response = full_response
         state.stop_processing = True
+        
+        # Store code submission for Rigorous Analysis retrieval
+        if state.session_id and state.user_id:
+            history_manager.update_session_state(
+                state.user_id, state.session_id,
+                {"last_code_submission": state.query}
+            )
+        
+        # Save review key point for anti-repetition in future reviews
+        if state.session_id and state.user_id:
+            # Extract first meaningful line as the key point
+            key_point = ""
+            for line in full_response.split("\n"):
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#") and len(stripped) > 20:
+                    key_point = stripped[:120]
+                    break
+            if key_point:
+                current_state = history_manager.get_session_state(state.user_id, state.session_id) or {}
+                review_history = current_state.get("review_history", [])
+                review_history.append(key_point)
+                history_manager.update_session_state(state.user_id, state.session_id, {"review_history": review_history})
         
         # Build suggestion buttons — always offer Rigorous Analysis
         suggestions = ["🧐 Rigorous Analysis"]
@@ -166,42 +193,57 @@ class CodeReviewerAgent(BaseAgent):
         except:
             return None
 
-    def _build_review_prompt(self, query: str, context: str, user_goal: str = None, review_count: int = 1) -> str:
+    def _build_review_prompt(self, query: str, context: str, user_goal: str = None, review_count: int = 1, prior_feedback: str = "") -> str:
         goal_prompt = ""
         if user_goal:
-            goal_prompt = f"7. **GOAL CHECK:** Does this code show progress towards their goal: '{user_goal}'? If yes, mention it."
+            goal_prompt = f"\n- **Goal Awareness:** The student's project goal is '{user_goal}'. If the code shows progress towards it, briefly acknowledge this."
 
-        # Variety instructions based on review count
+        # Progression-aware tone and structure
         if review_count == 1:
-            variety = "This is the student's FIRST code submission. Welcome their effort warmly."
+            tone = "This is the student's FIRST code submission. Be welcoming and encouraging — celebrate that they're writing code."
+            structure_hint = "Use a warm, conversational opening. Start by highlighting what they did well, then gently note improvements."
         elif review_count == 2:
-            variety = "This is the student's SECOND submission. Acknowledge their continued effort and note any improvement from their approach."
+            tone = "This is their SECOND submission. Acknowledge they're building a habit of submitting code."
+            structure_hint = "Be direct but friendly. Point out what's improved since they started, then focus on one key area."
         elif review_count <= 4:
-            variety = f"This is submission #{review_count}. The student is building momentum — acknowledge their growth and be more specific in your feedback."
+            tone = f"This is submission #{review_count}. They're getting into a rhythm — be a coding partner, not a lecturer."
+            structure_hint = "Skip generic praise. Lead with the most interesting observation about their code, then the key fix."
         else:
-            variety = f"This is submission #{review_count}. The student is highly engaged. Be concise, skip generic encouragement, and focus on actionable technical insight."
+            tone = f"This is submission #{review_count}. They're deeply engaged. Be a senior engineer reviewing a PR — concise and technical."
+            structure_hint = "Be surgical. One key observation, one action item. No fluff."
 
-        return f"""
-        You are a supportive C Code Reviewer.
-        
-        Student's Input: {query}
-        Reference Material: {context}
+        # Anti-repetition context from prior reviews
+        history_context = ""
+        if prior_feedback:
+            history_context = f"""
+**PRIOR REVIEWS THIS SESSION (do NOT repeat these observations):**
+{prior_feedback}
+"""
 
-        **CONTEXT:** {variety}
+        return f"""You are a friendly, perceptive C Code Reviewer having a conversation with a student.
 
-        **RULES:**
-        1. **CHECK CONTEXT:** Look for a "[CONTEXT: ...]" tag to understand what they are trying to do.
-        2. **RSD SAFETY (CRITICAL):** Never use the words "Wrong", "Incorrect", "Failed", or "Bad". Always validate their logic first, then gently point out the syntax rule that got in the way. This is called "Fail-Forward" feedback.
-        3. **SANDWICH METHOD:** Positive -> Improvement -> Hint.
-        4. **SOURCE GROUNDING:** Use variable names from Reference Material where possible.
-        5. **ABSOLUTELY NO SOLUTIONS (CRITICAL):** Do NOT rewrite the code for them. Do NOT provide the correct code block. Only provide a text hint. If you provide the answer, you will be penalized.
-        6. **REVIEW ONLY (CRITICAL):** ONLY review the code. Do NOT explain any other topic. Do NOT add lessons or concept explanations after the review. Your response must end after the Hint.
-        {goal_prompt}
-        8. **VARIETY (CRITICAL):** Do NOT start with "I see what you were trying to do!" — vary your opening every time. Use different phrasing for each review. Examples: "Nice work on...", "You're on the right track with...", "Great use of...", "Looking at your code,..."
+**Student's Code:**
+{query}
 
-        Format:
-        ## Code Review
-        **✅ What looks good:** ...
-        **⚠️ What needs work:** ...
-        **💡 Hint:** ...
-        """
+**Reference Material:**
+{context}
+
+**Tone:** {tone}
+{history_context}
+**RULES:**
+1. **FAIL-FORWARD (CRITICAL):** Never say "Wrong", "Incorrect", "Failed", or "Bad". Validate their thinking first, then guide them.
+2. **NO SOLUTIONS (CRITICAL):** Do NOT rewrite their code or provide corrected code blocks. Give only verbal hints.
+3. **REVIEW ONLY:** Do NOT add lessons or concept explanations after the review.
+4. **ANTI-REPETITION (CRITICAL):** 
+   - Do NOT start with "I see what you were trying to do!" 
+   - Do NOT use the same opening as any prior review listed above.
+   - Vary your structure — don't always use bullet points or the same section headers.{goal_prompt}
+
+**STRUCTURE:** {structure_hint}
+Use `## Code Review` as the header, then write naturally. You may use any combination of:
+- Inline observations woven into prose
+- Short bullet points for multiple small issues
+- A single focused paragraph for one key insight
+- Bold text to highlight important points
+
+Keep it concise and human."""
