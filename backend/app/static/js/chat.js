@@ -1,5 +1,10 @@
 const API_URL = "";
 let currentUser = null;
+
+// Sanitize all markdown output before it touches the DOM
+function safeMarkdown(md) {
+    return DOMPurify.sanitize(marked.parse(md));
+}
 let currentSessionId = null;
 let activeChallenge = null;
 
@@ -134,11 +139,22 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
     if (!hidden) {
         const userDiv = document.createElement('div');
         userDiv.className = 'message user';
-        let displayText = displayUserText.replace(/\n/g, '<br>');
+        const senderEl = document.createElement('div');
+        senderEl.className = 'msg-sender';
+        senderEl.textContent = 'You';
+        userDiv.appendChild(senderEl);
         if (displayUserText.includes('{') || displayUserText.includes(';')) {
-            displayText = `<pre><code class="language-c">${displayUserText.replace(/</g, '&lt;')}</code></pre>`;
+            const pre = document.createElement('pre');
+            const code = document.createElement('code');
+            code.className = 'language-c';
+            code.textContent = displayUserText;
+            pre.appendChild(code);
+            userDiv.appendChild(pre);
+        } else {
+            const textEl = document.createElement('span');
+            textEl.textContent = displayUserText;
+            userDiv.appendChild(textEl);
         }
-        userDiv.innerHTML = `<div class="msg-sender">You</div>` + displayText;
         document.getElementById('messages').appendChild(userDiv);
         Prism.highlightAllUnder(userDiv);
     }
@@ -218,7 +234,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                             // Render markdown into the dedicated text container
                             const textContainer = document.getElementById(`text-${progId}`);
                             if (textContainer) {
-                                textContainer.innerHTML = marked.parse(currentMarkdown);
+                                textContainer.innerHTML = safeMarkdown(currentMarkdown);
                             }
                             scrollToBottom();
                         }
@@ -226,7 +242,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                         else if (data.type === 'complete') {
                             if (data.data.session_id) currentSessionId = data.data.session_id;
 
-                            botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(data.data.answer);
+                            botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + safeMarkdown(data.data.answer);
                             displaySources(data.data.sources);
                             
                             renderDiagrams(botDiv);         
@@ -264,6 +280,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
     } catch (e) {
         console.error(e);
         botDiv.innerHTML = "<span style='color:#ff897d'>Connection failed.</span>";
+        showToast('Connection failed. Please try again.', 'error');
     }
 };
 
@@ -323,7 +340,14 @@ function displaySources(sources) {
     unique.forEach(s => {
         const div = document.createElement('div');
         div.className = 'source-card';
-        div.innerHTML = `<div class="source-title">📄 ${s.document_name}</div><div class="source-content">${marked.parse(s.chunk_text || "")}</div>`;
+        const titleEl = document.createElement('div');
+        titleEl.className = 'source-title';
+        titleEl.textContent = `📄 ${s.document_name}`;
+        const contentEl = document.createElement('div');
+        contentEl.className = 'source-content';
+        contentEl.innerHTML = safeMarkdown(s.chunk_text || "");
+        div.appendChild(titleEl);
+        div.appendChild(contentEl);
         list.appendChild(div);
     });
     Prism.highlightAllUnder(list);
@@ -492,7 +516,13 @@ function initializeApp() {
                 // Visually insert the user's question so the chat doesn't look empty
                 const userDiv = document.createElement('div');
                 userDiv.className = 'message user';
-                userDiv.innerHTML = `<div class="msg-sender">You</div>` + fakeUserMsg;
+                const senderEl2 = document.createElement('div');
+                senderEl2.className = 'msg-sender';
+                senderEl2.textContent = 'You';
+                const msgEl = document.createElement('span');
+                msgEl.textContent = fakeUserMsg;
+                userDiv.appendChild(senderEl2);
+                userDiv.appendChild(msgEl);
                 document.getElementById('messages').appendChild(userDiv);
                 scrollToBottom();
             }
@@ -571,13 +601,24 @@ async function loadChatHistory() {
             span.innerText = s.title || "Untitled Chat";
             span.onclick = () => loadSession(s.id);
 
-            // Delete Button (Trash Icon)
+            // Delete Button — two-click confirmation, no browser confirm()
             const delBtn = document.createElement('button');
             delBtn.className = 'delete-chat-btn';
-            delBtn.innerHTML = '🗑️'; // Or use SVG
+            delBtn.innerHTML = '🗑️';
             delBtn.onclick = (e) => {
-                e.stopPropagation(); // Prevent clicking the chat itself
-                deleteSession(s.id);
+                e.stopPropagation();
+                if (delBtn.dataset.confirming === 'true') {
+                    deleteSession(s.id);
+                } else {
+                    delBtn.dataset.confirming = 'true';
+                    delBtn.innerText = 'Sure?';
+                    delBtn.style.cssText = 'color:#f87171; opacity:1; font-size:0.75rem;';
+                    setTimeout(() => {
+                        delBtn.dataset.confirming = '';
+                        delBtn.innerHTML = '🗑️';
+                        delBtn.style.cssText = '';
+                    }, 2500);
+                }
             };
 
             item.appendChild(span);
@@ -588,17 +629,15 @@ async function loadChatHistory() {
 }
 
 async function deleteSession(sessionId) {
-    if (!confirm("Are you sure you want to remove this chat?")) return;
-
     try {
         const res = await fetch(`${API_URL}/api/v1/history/session/${sessionId}?username=${currentUser.username}`, {
             method: 'DELETE'
         });
 
         if (res.ok) {
-            // If we deleted the active chat, reset to New Chat
+            showToast('Chat deleted', 'info');
             if (sessionId === currentSessionId) startNewChat();
-            loadChatHistory(); // Refresh list
+            loadChatHistory();
         }
     } catch (e) { console.error(e); }
 }
@@ -621,11 +660,24 @@ async function loadSession(sessionId) {
             const div = document.createElement('div');
             div.className = `message ${msg.role}`;
             if (msg.role === 'user') {
-                let text = msg.content.replace(/\n/g, '<br>');
-                if (text.includes('{') || text.includes(';')) text = `<pre><code class="language-c">${text.replace(/</g, '&lt;')}</code></pre>`;
-                div.innerHTML = `<div class="msg-sender">You</div>` + text;
+                const s = document.createElement('div');
+                s.className = 'msg-sender';
+                s.textContent = 'You';
+                div.appendChild(s);
+                if (msg.content.includes('{') || msg.content.includes(';')) {
+                    const pre = document.createElement('pre');
+                    const code = document.createElement('code');
+                    code.className = 'language-c';
+                    code.textContent = msg.content;
+                    pre.appendChild(code);
+                    div.appendChild(pre);
+                } else {
+                    const t = document.createElement('span');
+                    t.textContent = msg.content;
+                    div.appendChild(t);
+                }
             } else {
-                div.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(msg.content);
+                div.innerHTML = `<div class="msg-sender bot">Tutor</div>` + safeMarkdown(msg.content);
                 renderDiagrams(div);
             }
             msgDiv.appendChild(div);
@@ -730,8 +782,8 @@ async function startNewChat(isLogin = false) {
                             }
 
                             // 1. Inject the greeting text
-                            let cleanGreeting = data.data.answer.replace("👋 **Welcome back!**\n\n", "").replace(/\n/g, '<br>');
-                            document.getElementById('dynamicGreeting').innerHTML = cleanGreeting;
+                            const cleanGreeting = data.data.answer.replace("👋 **Welcome back!**\n\n", "");
+                            document.getElementById('dynamicGreeting').innerHTML = safeMarkdown(cleanGreeting);
 
                             // 2. Inject the dynamic suggestion chips
                             const suggestionsDiv = document.getElementById('initialSuggestions');
@@ -772,6 +824,23 @@ async function startNewChat(isLogin = false) {
     } catch (e) {
         console.error("Failed to load greeting", e);
     }
+}
+
+// --- TOAST NOTIFICATIONS ---
+function showToast(message, type = 'success') {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+    toast.innerHTML = `<span>${icons[type] || ''}</span><span>${message}</span>`;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
 }
 
 // --- CUSTOM INSTRUCTIONS / PREFERENCES LOGIC ---
@@ -858,22 +927,18 @@ async function savePreferences() {
             body: JSON.stringify(payload)
         });
         if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
-        btn.innerText = "✅ Saved!";
-        btn.style.background = "#34d399"; // Green success
-
-        // Instantly apply visual CSS changes (like Dyslexia font or Spacing)
         applyAccessibility(prefs);
+        showToast('Preferences saved', 'success');
 
         setTimeout(() => {
-            // Reset button style (modal stays open)
             btn.innerText = originalText;
             btn.style.background = "var(--accent-color)";
             btn.style.opacity = "1";
         }, 1000);
-        
+
     } catch (e) {
         console.error("Failed to save preferences", e);
-        btn.innerText = "❌ Error";
+        showToast('Failed to save preferences', 'error');
         setTimeout(() => { btn.innerText = originalText; btn.style.opacity = "1"; }, 2000);
     }
 }
