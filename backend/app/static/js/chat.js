@@ -409,6 +409,9 @@ function scrollToBottom() {
 async function performLogin() {
     const u = document.getElementById('loginUser').value;
     const p = document.getElementById('loginPass').value;
+    const btn = document.querySelector('#loginForm .auth-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" style="display:inline-block;vertical-align:middle;margin-right:8px;"></span>Logging in...';
     try {
         const res = await fetch(`${API_URL}/api/v1/auth/login`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -424,6 +427,10 @@ async function performLogin() {
             document.getElementById('loginError').style.display = 'block';
         }
     } catch (e) { console.error(e); }
+    finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Log In';
+    }
 }
 
 async function performSignup() {
@@ -445,6 +452,10 @@ async function performSignup() {
         return;
     }
 
+    const btn = document.querySelector('#signupForm .auth-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" style="display:inline-block;vertical-align:middle;margin-right:8px;"></span>Creating account...';
+
     try {
         const res = await fetch(`${API_URL}/api/v1/auth/signup`, {
             method: 'POST',
@@ -463,6 +474,9 @@ async function performSignup() {
     } catch (e) {
         console.error(e);
         showError('signupError', "Connection failed");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Sign Up';
     }
 }
 

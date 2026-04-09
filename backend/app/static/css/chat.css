@@ -212,6 +212,19 @@ body.a11y-contrast .message.bot {
     font-weight: 600;
     margin-top: 15px;
     font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.auth-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.auth-btn .spinner {
+    border-color: rgba(0, 0, 0, 0.2);
+    border-top-color: #000;
 }
 
 .toggle-link {
@@ -356,9 +369,6 @@ body.a11y-contrast .message.bot {
     flex-direction: column;
     gap: 20px;
     padding-bottom: 120px;
-    z-index: 10;
-    /* Must be higher than the background */
-    pointer-events: none;
 }
 
 .message {
@@ -368,7 +378,6 @@ body.a11y-contrast .message.bot {
     line-height: 1.7;
     font-size: 0.95rem;
     color: var(--text-primary);
-    pointer-events: auto;
     animation: fadeSlideIn 0.3s ease-out both;
 }
 
@@ -482,6 +491,7 @@ pre[class*="language-"] {
     margin: 16px 0;
     padding: 16px !important;
     position: relative;
+    overflow-x: auto;
 }
 
 pre[class*="language-"]::before {
