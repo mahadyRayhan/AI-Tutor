@@ -1,7 +1,8 @@
 # tests/test_report.py
 """
-HTML Report Generator for AI Tutor Test Results.
-Produces a visual report with per-turn scores, scenario summaries, and flagged issues.
+HTML & JSON Report Generator for AI Tutor Test Results.
+Produces a visual report with per-turn scores, scenario summaries,
+advanced metrics (SFI, PVR, SRR, SMD, ETI, KTE), and flagged issues.
 """
 
 import json
@@ -19,6 +20,22 @@ def _score_color(score: float) -> str:
     else: return "#f87171"                # red
 
 
+def _metric_color(value: float, invert: bool = False) -> str:
+    """Color for advanced metrics. invert=True means lower is better (PVR, SFI)."""
+    if invert:
+        if value <= 20: return "#34d399"
+        elif value <= 40: return "#60a5fa"
+        elif value <= 60: return "#fbbf24"
+        elif value <= 80: return "#fb923c"
+        else: return "#f87171"
+    else:
+        if value >= 0.85: return "#34d399"
+        elif value >= 0.70: return "#60a5fa"
+        elif value >= 0.55: return "#fbbf24"
+        elif value >= 0.40: return "#fb923c"
+        else: return "#f87171"
+
+
 def _grade_badge(grade: str) -> str:
     colors = {"A": "#34d399", "B": "#60a5fa", "C": "#fbbf24", "D": "#fb923c", "F": "#f87171"}
     c = colors.get(grade, "#888")
@@ -32,11 +49,13 @@ def _render_turn_row(turn: TurnScore) -> str:
         <tr style="opacity:0.6">
             <td>{turn.turn_index}</td>
             <td><em style="color:#888">🤖 Auto: {turn.user_message[:60]}...</em></td>
-            <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+            <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
         </tr>"""
     
     overall = turn.overall_score
     color = _score_color(overall)
+    eti = turn.eti_score
+    eti_color = _score_color(eti) if eti > 0 else "#555"
     
     return f"""
     <tr>
@@ -49,7 +68,42 @@ def _render_turn_row(turn: TurnScore) -> str:
         <td>{turn.relevance}/5</td>
         <td style="color:{color};font-weight:700">{overall:.2f}</td>
         <td>{_grade_badge(turn.grade)}</td>
+        <td style="color:{eti_color}">{eti:.2f}</td>
     </tr>"""
+
+
+def _render_advanced_metrics(result: ScenarioResult) -> str:
+    """Render the advanced metrics bar for a scenario."""
+    metrics = []
+    
+    # SFI (lower is better — inverted color)
+    sfi_color = _metric_color(result.sfi, invert=True)
+    metrics.append(f'<span style="color:{sfi_color}">SFI: {result.sfi:.0f}%</span>')
+    
+    # PVR (lower is better — inverted color)
+    pvr_color = _metric_color(result.pvr, invert=True)
+    metrics.append(f'<span style="color:{pvr_color}">PVR: {result.pvr:.0f}%</span>')
+    
+    # ETI (higher is better)
+    eti_color = _score_color(result.eti) if result.eti > 0 else "#555"
+    metrics.append(f'<span style="color:{eti_color}">ETI: {result.eti:.2f}</span>')
+    
+    # SMD (positive is better)
+    if result.smd is not None:
+        smd_color = "#34d399" if result.smd > 0 else "#f87171" if result.smd < 0 else "#888"
+        metrics.append(f'<span style="color:{smd_color}">SMD: {result.smd:+.4f}</span>')
+    
+    # KTE (> 1.0 is better)
+    if result.kte is not None:
+        kte_color = "#34d399" if result.kte >= 1.0 else "#fbbf24" if result.kte >= 0.5 else "#f87171"
+        metrics.append(f'<span style="color:{kte_color}">KTE: {result.kte:.2f}</span>')
+    
+    # SRR (higher is better, Red Team only)
+    if result.srr is not None:
+        srr_color = "#34d399" if result.srr >= 90 else "#fbbf24" if result.srr >= 70 else "#f87171"
+        metrics.append(f'<span style="color:{srr_color}">SRR: {result.srr:.0f}%</span>')
+    
+    return ' &nbsp;·&nbsp; '.join(metrics)
 
 
 def _render_scenario_card(result: ScenarioResult) -> str:
@@ -71,6 +125,8 @@ def _render_scenario_card(result: ScenarioResult) -> str:
         c_color = _score_color(result.consistency_score)
         consistency_html = f'<span style="margin-left:15px;color:{c_color}">Consistency: {result.consistency_score:.2f}</span>'
     
+    advanced_html = _render_advanced_metrics(result)
+    
     return f"""
     <details style="background:#1e1f20;border:1px solid #333;border-radius:12px;padding:15px;margin:12px 0">
         <summary style="cursor:pointer;font-size:1.1rem;font-weight:600;color:#e3e3e3">
@@ -80,6 +136,10 @@ def _render_scenario_card(result: ScenarioResult) -> str:
             </span>
             {consistency_html}
         </summary>
+        
+        <div style="margin:10px 0;padding:8px 12px;background:#262626;border-radius:8px;font-size:0.85rem">
+            📊 <strong>Advanced Metrics:</strong> {advanced_html}
+        </div>
         
         {error_html}
         
@@ -96,6 +156,7 @@ def _render_scenario_card(result: ScenarioResult) -> str:
                         <th style="padding:8px">Rel</th>
                         <th style="padding:8px">Overall</th>
                         <th style="padding:8px">Grade</th>
+                        <th style="padding:8px">ETI</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -124,14 +185,59 @@ def generate_html_report(
     passed = sum(1 for r in results if r.passed)
     failed = total - passed
     
-    # Aggregate metrics
+    # Aggregate core metrics
     all_cosines = [t.cosine_similarity for r in results for t in r.turns if not t.is_reactive and t.cosine_similarity > 0]
     all_judges = [t.llm_judge_avg for r in results for t in r.turns if not t.is_reactive and t.llm_judge_avg > 0]
     
     avg_cosine = sum(all_cosines) / len(all_cosines) if all_cosines else 0
     avg_judge = sum(all_judges) / len(all_judges) if all_judges else 0
     
+    # Aggregate advanced metrics
+    all_sfi = [r.sfi for r in results if r.scored_turns]
+    all_pvr = [r.pvr for r in results if r.scored_turns]
+    all_eti = [r.eti for r in results if r.eti > 0]
+    all_smd = [r.smd for r in results if r.smd is not None]
+    all_kte = [r.kte for r in results if r.kte is not None]
+    all_srr = [r.srr for r in results if r.srr is not None]
+    
+    avg_sfi = sum(all_sfi) / len(all_sfi) if all_sfi else 0
+    avg_pvr = sum(all_pvr) / len(all_pvr) if all_pvr else 0
+    avg_eti = sum(all_eti) / len(all_eti) if all_eti else 0
+    avg_smd = sum(all_smd) / len(all_smd) if all_smd else 0
+    avg_kte = sum(all_kte) / len(all_kte) if all_kte else 0
+    avg_srr = sum(all_srr) / len(all_srr) if all_srr else None
+    
     scenario_cards = "\n".join(_render_scenario_card(r) for r in results)
+    
+    # Advanced metrics cards HTML
+    adv_cards = f"""
+        <div class="card">
+            <div class="value" style="color:{_metric_color(avg_sfi, invert=True)}">{avg_sfi:.0f}%</div>
+            <div class="label">Avg SFI<br><small style="color:#555">Spoon-Feeding Index</small></div>
+        </div>
+        <div class="card">
+            <div class="value" style="color:{_metric_color(avg_pvr, invert=True)}">{avg_pvr:.0f}%</div>
+            <div class="label">Avg PVR<br><small style="color:#555">Prereq Violation Rate</small></div>
+        </div>
+        <div class="card">
+            <div class="value" style="color:{_score_color(avg_eti)}">{avg_eti:.2f}</div>
+            <div class="label">Avg ETI<br><small style="color:#555">Emotional Tone Index</small></div>
+        </div>
+        <div class="card">
+            <div class="value" style="color:{'#34d399' if avg_smd > 0 else '#f87171' if avg_smd < 0 else '#888'}">{avg_smd:+.3f}</div>
+            <div class="label">Avg SMD<br><small style="color:#555">Semantic Maturity Δ</small></div>
+        </div>
+        <div class="card">
+            <div class="value" style="color:{'#34d399' if avg_kte >= 1.0 else '#fbbf24' if avg_kte > 0 else '#555'}">{avg_kte:.2f}</div>
+            <div class="label">Avg KTE<br><small style="color:#555">Knowledge Transfer Eff.</small></div>
+        </div>"""
+    
+    if avg_srr is not None:
+        adv_cards += f"""
+        <div class="card">
+            <div class="value" style="color:{'#34d399' if avg_srr >= 90 else '#fbbf24'}">{avg_srr:.0f}%</div>
+            <div class="label">SRR<br><small style="color:#555">Security Recall Rate</small></div>
+        </div>"""
     
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -144,8 +250,9 @@ def generate_html_report(
         body {{ font-family: 'Inter', -apple-system, sans-serif; background: #0a0a0a; color: #e3e3e3; padding: 20px; }}
         .container {{ max-width: 1100px; margin: 0 auto; }}
         h1 {{ font-size: 1.8rem; margin-bottom: 5px; }}
+        h2 {{ font-size: 1.3rem; }}
         .meta {{ color: #888; font-size: 0.85rem; margin-bottom: 20px; }}
-        .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 20px 0; }}
+        .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 20px 0; }}
         .card {{ background: #1e1f20; border: 1px solid #333; border-radius: 12px; padding: 18px; text-align: center; }}
         .card .value {{ font-size: 2rem; font-weight: 700; }}
         .card .label {{ color: #888; font-size: 0.8rem; margin-top: 4px; }}
@@ -153,6 +260,7 @@ def generate_html_report(
         table tbody tr {{ border-bottom: 1px solid #222; }}
         table tbody tr:hover {{ background: #262626; }}
         hr {{ border: none; border-top: 1px solid #333; margin: 20px 0; }}
+        small {{ font-size: 0.7rem; }}
     </style>
 </head>
 <body>
@@ -160,6 +268,7 @@ def generate_html_report(
     <h1>🧪 AI Tutor — Autonomous Test Report</h1>
     <div class="meta">Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')} · Duration: {run_duration_s:.1f}s</div>
     
+    <h2>📐 Core Metrics</h2>
     <div class="grid">
         <div class="card">
             <div class="value" style="color:{'#34d399' if passed == total else '#fbbf24'}">{passed}/{total}</div>
@@ -179,13 +288,18 @@ def generate_html_report(
         </div>
     </div>
     
+    <h2>📊 Advanced Metrics</h2>
+    <div class="grid">
+        {adv_cards}
+    </div>
+    
     <hr>
     <h2 style="margin-bottom:10px">📋 Scenario Results</h2>
     {scenario_cards}
     
     <hr>
     <div style="text-align:center;color:#555;font-size:0.75rem;margin-top:20px">
-        AI Tutor Autonomous Testing Agent · Context-Aware Evaluation
+        AI Tutor Autonomous Testing Agent · Context-Aware Evaluation · Advanced Metrics v2
     </div>
 </div>
 </body>
@@ -213,11 +327,21 @@ def generate_json_report(results: List[ScenarioResult], output_path: str) -> str
         scenario = {
             "name": r.scenario_name,
             "passed": bool(r.passed),
+            # Core metrics
             "avg_cosine": round(float(r.avg_cosine), 3),
             "avg_judge": round(float(r.avg_judge), 3),
             "avg_overall": round(float(r.avg_overall), 3),
             "consistency": round(r.consistency_score, 3) if r.consistency_score > 0 else None,
+            # Advanced metrics
+            "sfi": round(r.sfi, 1),
+            "pvr": round(r.pvr, 1),
+            "eti": round(r.eti, 3),
+            "smd": round(r.smd, 4) if r.smd is not None else None,
+            "kte": round(r.kte, 3) if r.kte is not None else None,
+            "srr": round(r.srr, 1) if r.srr is not None else None,
+            # Errors
             "errors": r.errors,
+            # Turns
             "turns": [
                 {
                     "index": t.turn_index,
@@ -230,7 +354,17 @@ def generate_json_report(results: List[ScenarioResult], output_path: str) -> str
                     "relevance": t.relevance,
                     "overall": round(t.overall_score, 3),
                     "grade": t.grade,
-                    "is_reactive": t.is_reactive
+                    "is_reactive": t.is_reactive,
+                    # Advanced per-turn
+                    "sfi_has_code": t.sfi_has_code_block,
+                    "eti": round(t.eti_score, 3),
+                    "eti_sub": {
+                        "encouragement": round(t.eti_encouragement, 3),
+                        "mirroring": round(t.eti_mirroring, 3),
+                        "firmness_warmth": round(t.eti_firmness_warmth, 3),
+                    },
+                    "pvr_concept": t.pvr_concept_taught,
+                    "pvr_violation": t.pvr_is_violation,
                 }
                 for t in r.turns
             ]

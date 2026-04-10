@@ -318,6 +318,8 @@ async def run_persona(
     result = ScenarioResult(scenario_name=name)
     session_id = None
     turn = 0
+    concept_first_turn = {}   # {concept: first_turn_index} for KTE
+    concept_mastery_turn = {} # {concept: mastery_turn_index} for KTE
     
     # Phase 0: Reset mastery data for clean run
     try:
@@ -405,7 +407,8 @@ async def run_persona(
             ))
         
         accuracy = correct / total if total > 0 else 0
-        logger.info(f"  🔴 RED TEAM RESULT: {correct}/{total} correct ({accuracy:.0%})")
+        result.srr = round(accuracy * 100, 1)
+        logger.info(f"  🔴 RED TEAM RESULT: {correct}/{total} correct ({accuracy:.0%}) | SRR: {result.srr}%")
         
         return result
     
@@ -450,8 +453,13 @@ async def run_persona(
             next_message, answer, turn,
             is_reactive=is_reactive,
             student_goal=persona.get("goal", ""),
-            response_type=sit_type
+            response_type=sit_type,
+            username=TEST_USERNAME
         )
+        
+        # Track concept first-seen turn for KTE
+        if score.pvr_concept_taught and score.pvr_concept_taught not in concept_first_turn:
+            concept_first_turn[score.pvr_concept_taught] = turn
         score.response_time_ms = elapsed
         score.detected_intent = resp.get("intent", "")
         result.turns.append(score)
@@ -617,6 +625,20 @@ async def run_persona(
         # Small delay between turns for realism
         await asyncio.sleep(0.5)
     
+    # ---- SCENARIO-LEVEL METRICS ----
+    # SMD: Semantic Maturity Delta
+    result.smd = await evaluator.compute_smd(result.turns)
+    
+    # KTE: Knowledge Transfer Efficiency
+    # Build concept_mastery_turn from knowledge tracker
+    for concept in knowledge.mastered:
+        # Find the turn where mastery was reported
+        for t in result.turns:
+            if not t.is_reactive and concept.lower() in t.bot_response.lower():
+                concept_mastery_turn[concept] = t.turn_index
+                break
+    result.kte = evaluator.compute_kte(concept_first_turn, concept_mastery_turn)
+    
     # ---- SUMMARY ----
     status = "✅ PASS" if result.passed else "❌ FAIL"
     logger.info(f"\n  {'='*50}")
@@ -624,6 +646,14 @@ async def run_persona(
     logger.info(f"  Turns: {turn} | Mastered: {sorted(knowledge.mastered)}")
     logger.info(f"  Quizzes: {knowledge.quizzes_passed}✅ {knowledge.quizzes_failed}❌ | Reviews: {knowledge.code_reviews}")
     logger.info(f"  Cosine: {result.avg_cosine:.2f} | Judge: {result.avg_judge:.1f}/5 | Overall: {result.avg_overall:.2f}")
+    # Advanced metrics
+    sfi_str = f"SFI: {result.sfi:.0f}%"
+    pvr_str = f"PVR: {result.pvr:.0f}%"
+    eti_str = f"ETI: {result.eti:.2f}"
+    smd_str = f"SMD: {result.smd:+.4f}" if result.smd is not None else "SMD: N/A"
+    kte_str = f"KTE: {result.kte:.2f}" if result.kte is not None else "KTE: N/A"
+    srr_str = f"SRR: {result.srr:.0f}%" if result.srr is not None else ""
+    logger.info(f"  {sfi_str} | {pvr_str} | {eti_str} | {smd_str} | {kte_str}" + (f" | {srr_str}" if srr_str else ""))
     logger.info(f"  {'='*50}")
     
     return result
@@ -741,6 +771,7 @@ async def main():
     from app.core import config as app_config
     from app.db.llm_interface import LLMInterface
     from app.db.vector_store import ChromaVectorStore
+    from app.db.graph_db import Neo4jGraphDB
     
     llm = LLMInterface(
         google_model_id=app_config.DEFAULT_REASONING_MODEL_ID,
@@ -751,11 +782,20 @@ async def main():
         logger=logger
     )
     
+    # Initialize graph DB for PVR metric (graceful fallback if unavailable)
+    try:
+        graph_db = Neo4jGraphDB(logger=logger)
+        logger.info("✅ Neo4j connected for PVR metric")
+    except Exception as e:
+        logger.warning(f"⚠️ Neo4j unavailable — PVR metric will be skipped: {e}")
+        graph_db = None
+    
     evaluator = ContextAwareEvaluator(
         vector_store=vector_store,
         llm=llm,
         embedding_fn=llm.get_embedding,
-        logger=logger
+        logger=logger,
+        graph_db=graph_db
     )
     
     # Run personas

@@ -775,7 +775,12 @@ class ChainOfThoughtRAGAgent:
         yield {"type": "status", "message": "Searching knowledge base...", "percent": 60}
         
         # 1. Retrieval
-        q_search = f"{' '.join(entities)} in C" if len(query.split()) > 5 else query
+        # If query produced few entities (1-2), keep original query for better embedding;
+        # otherwise join entities to reduce noise from long queries.
+        if len(query.split()) > 5 and len(entities) > 2:
+            q_search = f"{' '.join(entities)} in C"
+        else:
+            q_search = query
         chunks = self._execute_retrieval(q_search, intent, user_role, existing_entities=entities)
         
         if not chunks:
@@ -1280,6 +1285,20 @@ class ChainOfThoughtRAGAgent:
                 event["data"]["intent"] = state.intent
                 
                 topic_name = state.entities[0] if state.entities else "the last topic"
+                
+                # Validate topic_name — prevent garbage entities like "can", "give", "just"
+                garbage_words = {'can', 'you', 'give', 'show', 'just', 'one', 'simple', 'some',
+                                'example', 'want', 'need', 'please', 'help', 'like', 'know',
+                                'learn', 'think', 'make', 'write', 'get', 'start', 'where'}
+                if topic_name.lower() in garbage_words:
+                    # Try to find a real C topic from entities list
+                    real_topic = next(
+                        (e for e in state.entities if e.lower() not in garbage_words and len(e) > 2),
+                        "the last topic"
+                    )
+                    self.logger.warning(f"⚠️ Rejected garbage challenge_topic '{topic_name}', using '{real_topic}'")
+                    topic_name = real_topic
+                
                 history_manager.update_session_state(
                     username, session_id, 
                     {"awaiting_micro_challenge": True, "challenge_topic": topic_name}

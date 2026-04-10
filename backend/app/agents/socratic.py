@@ -42,8 +42,13 @@ class SocraticTutorAgent(BaseAgent):
         
         # 1. Retrieval
         # Uses entities if available, otherwise query.
-        # If query is long (>5 words), we use the entities string for better search results.
-        q_search = f"{' '.join(state.entities)} in C" if len(state.query.split()) > 5 else state.query
+        # For queries with few entities (1-2), keep the original query — it has
+        # better semantic context (e.g. "simple example of a variable" beats "variable in C").
+        # For queries producing many entities, join them to avoid noise.
+        if len(state.query.split()) > 5 and len(state.entities) > 2:
+            q_search = f"{' '.join(state.entities)} in C"
+        else:
+            q_search = state.query
         chunks = self._execute_retrieval(q_search, state.intent, state.user_role, state.entities)
         
         # 2. Build Context (Graceful Fallback)

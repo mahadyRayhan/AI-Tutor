@@ -92,25 +92,71 @@ class FastClassifier:
         
         return best_intent
 
+    # Known C-programming concepts for entity validation
+    C_CONCEPT_TERMS = {
+        # Core concepts
+        "pointer", "pointers", "array", "arrays", "struct", "structs", "structure",
+        "loop", "loops", "function", "functions", "variable", "variables",
+        "string", "strings", "recursion", "recursive", "conditional", "conditionals",
+        "operator", "operators", "expression", "expressions",
+        # Data types
+        "int", "char", "float", "double", "void", "long", "short", "unsigned",
+        # Keywords
+        "printf", "scanf", "malloc", "calloc", "realloc", "free", "sizeof",
+        "typedef", "enum", "union", "switch", "break", "continue", "return",
+        "goto", "static", "extern", "const", "volatile", "register",
+        # Concepts
+        "memory", "stack", "heap", "segfault", "segmentation", "allocation",
+        "scope", "parameter", "argument", "header", "preprocessor", "macro",
+        "compile", "compiler", "linker", "linking", "debugging", "debug",
+        "control", "flow", "bitwise", "casting", "type", "types", "datatype",
+        "linked", "list", "queue", "sorting", "searching", "binary",
+        "file", "input", "output", "buffer", "address", "reference",
+        "dereference", "increment", "decrement", "assignment", "declaration",
+        "initialization", "iteration", "boolean", "logical", "arithmetic",
+    }
+
     def extract_entities(self, query: str) -> list:
         # Use GLiNER
         entities = self.ner_model.predict_entities(query, self.ner_labels)
         unique_entities = list(set([e['text'] for e in entities]))
         
+        # Validate GLiNER output — remove non-C entities
+        if unique_entities:
+            validated = [e for e in unique_entities if e.lower() in self.C_CONCEPT_TERMS or len(e.split()) > 1]
+            if validated:
+                unique_entities = validated
+        
         # Fallback if GLiNER misses (e.g. for "loops" or simple words)
         if not unique_entities:
-            # Basic Regex extraction for C terms
-            # Looks for words that are NOT common stopwords
+            # Comprehensive stopwords to prevent "can", "just", "give" etc.
             stopwords = {
-                'what', 'is', 'the', 'how', 'to', 'do', 'i', 'it', 'its', 
-                'explain', 'tell', 'me', 'about', 'use', 'case', 'are', 'a', 'an'
+                # Standard English
+                'what', 'is', 'the', 'how', 'to', 'do', 'i', 'it', 'its',
+                'explain', 'tell', 'me', 'about', 'use', 'case', 'are', 'a', 'an',
+                # Common student phrasing words (THE "can" BUG FIX)
+                'can', 'you', 'give', 'show', 'just', 'one', 'simple', 'some',
+                'example', 'examples', 'want', 'need', 'please', 'help', 'like',
+                'know', 'learn', 'think', 'make', 'write', 'get', 'start',
+                'where', 'when', 'which', 'would', 'could', 'should', 'will',
+                'does', 'did', 'has', 'have', 'had', 'been', 'being', 'was',
+                'were', 'not', 'but', 'and', 'for', 'with', 'from', 'this',
+                'that', 'these', 'those', 'more', 'also', 'very', 'really',
+                'actually', 'first', 'next', 'then', 'again', 'work', 'works',
+                'understand', 'programming', 'program', 'code', 'coding',
+                'something', 'anything', 'everything', 'much', 'many', 'way',
+                'let', 'dont', "don't", 'mean', 'means', 'between', 'difference',
             }
             words = re.findall(r'\b[a-zA-Z_]\w*\b', query.lower())
             
             potential_entities = []
             for w in words:
                 if w not in stopwords and len(w) > 2:
-                    potential_entities.append(w)
+                    # Prefer known C terms, but accept others as fallback
+                    if w in self.C_CONCEPT_TERMS:
+                        potential_entities.insert(0, w)  # Prioritize known terms
+                    else:
+                        potential_entities.append(w)
             
             # If we found potential keywords, use them
             if potential_entities:
