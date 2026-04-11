@@ -393,11 +393,23 @@ async def chat_stream(request: ChatRequest):
                             detected_topic = Counter(topics).most_common(1)[0][0]
                     try:
                         if user_msg_id is not None:
+                            # 1. Save the interaction (Concept, Problem, Review, etc.)
                             history_manager.log_interaction(
                                 user_msg_id, 
                                 final_data['intent'], 
                                 detected_topic 
                             )
+                            if detected_topic != "General":
+                                # Fetch their updated history and calculate XP
+                                current_history = history_manager.get_student_history(request.username)
+                                mastery_dict = _calculate_mastery(current_history)
+                                
+                                # Check if their XP for this topic has hit 60
+                                current_xp = mastery_dict.get(detected_topic, 0)
+                                if current_xp >= 60:
+                                    # ONLY NOW do we officially mark it as mastered in the DB
+                                    knowledge_manager.mark_concept_as_known(request.username, detected_topic)
+                                    logger.info(f"🏆 USER UNLOCKED MASTERY: {detected_topic} ({current_xp} XP)")
                     except Exception as analytics_err:
                         logger.error(f"Analytics logging failed: {analytics_err}")
 

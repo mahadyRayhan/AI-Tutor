@@ -807,8 +807,8 @@ class ChainOfThoughtRAGAgent:
             yield {"type": "token", "text": token}
 
         # 6. Auto-Learn Concept (If explanation provided)
-        if intent == "CONCEPT" and entities:
-             knowledge_manager.mark_concept_as_known(username, entities[0])
+        # if intent == "CONCEPT" and entities:
+            #  knowledge_manager.mark_concept_as_known(username, entities[0])
 
         yield {
             "type": "complete",
@@ -1040,13 +1040,13 @@ class ChainOfThoughtRAGAgent:
             return
         # =========================================================
 
+        current_frustration = await self.profiler.analyze_sentiment(username, query)
         # --- 4. LOAD PROFILE & SETUP STATE ---
         user_row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
         learning_profile = json.loads(user_row['learning_profile']) if user_row and user_row['learning_profile'] else {}
-
-        # Inject the feedback mode if a button was clicked
-        if feedback_mode:
-            learning_profile['feedback_mode'] = feedback_mode
+        
+        # Inject the freshly calculated emotion directly into the profile!
+        learning_profile["frustration_level"] = current_frustration
 
         state = AgentState(
             query=search_query,
@@ -1125,6 +1125,29 @@ class ChainOfThoughtRAGAgent:
             async for event in self.sentinel.process(state):
                 yield event
             if state.stop_processing: return
+        
+        # =========================================================
+        # THE FIX: TOPIC AMNESIA CACHE
+        # =========================================================
+        # 1. Determine if the user provided a real C-concept this turn
+        # (If entities exist and it's not just an echo of their raw emotional sentence)
+        is_real_topic = len(state.entities) > 0 and state.entities[0].lower() != state.original_query.lower()
+
+        if is_real_topic:
+            # User mentioned a real topic (e.g. "Arrays"). Save it to the session cache!
+            history_manager.update_session_state(username, session_id, {"last_valid_topic": state.entities[0]})
+            cached_topic = state.entities[0]
+        else:
+            # User is emotional ("I'm sad") or vague ("I don't get it"). Retrieve the cached topic!
+            cached_topic = current_state.get("last_valid_topic", "C Programming")
+            state.entities = [cached_topic] # Force the pipeline to remember the topic
+            
+            # CRITICAL: Overwrite the RAG query so ChromaDB searches for the cached topic
+            # instead of searching for their emotional outburst!
+            if learning_profile.get("frustration_level") in ["high", "rage"] or "confused" in state.original_query.lower():
+                state.query = cached_topic
+                self.logger.info(f"🧠 [TOPIC CACHE] Overriding vector search with cached topic: {cached_topic}")
+        # =========================================================
 
         # =========================================================
         # --- FIX 1: STRICT INTENT SANITIZATION ---
@@ -1305,9 +1328,9 @@ class ChainOfThoughtRAGAgent:
                 )
                 
                 # --- B2 FIX: PERSIST MASTERY AFTER CONCEPT EXPLANATION ---
-                if state.intent == "CONCEPT" and state.entities:
-                    knowledge_manager.mark_concept_as_known(username, state.entities[0])
-                    self.logger.info(f"🧠 Auto-mastered after explanation: {state.entities[0]}")
+                # if state.intent == "CONCEPT" and state.entities:
+                    # knowledge_manager.mark_concept_as_known(username, state.entities[0])
+                    # self.logger.info(f"🧠 Auto-mastered after explanation: {state.entities[0]}")
                 # --------------------------------------------------------
             yield event
 
@@ -1316,9 +1339,9 @@ class ChainOfThoughtRAGAgent:
         # ---------------------------------------------------------
 
         # Fire-and-forget sentiment analysis
-        asyncio.create_task(
-            self.profiler.analyze_sentiment(username, query)
-        )
+        # asyncio.create_task(
+        #     self.profiler.analyze_sentiment(username, query)
+        # )
 
         # --- D2 FIX: DON'T APPEND PENDING GOAL INLINE ---
         # Instead of streaming a follow-up topic into the same response,
