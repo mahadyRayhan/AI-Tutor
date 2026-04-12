@@ -159,6 +159,7 @@ class ScaffoldingAgent(BaseAgent):
             # Choice 2: They want Partial Code
             elif "code" in user_input or "partial" in user_input or "give" in user_input:
                 active_plan['awaiting_escalation_choice'] = False
+                active_plan['failed_attempts'] = 0 
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
                 
                 current_step = active_plan['steps'][active_plan['current_step_index']]
@@ -205,9 +206,14 @@ class ScaffoldingAgent(BaseAgent):
         chunks = self._internal_retrieval(search_q, "DEBUG", state.user_role, [])
         context_text = "\n".join([c['text'] for c in chunks])
 
+        # =========================================================
+        # THE FIX: PASS FAILED ATTEMPTS TO EVALUATOR
+        # =========================================================
+        current_fails = active_plan.get('failed_attempts', 0)
+
         # LLM Evaluation of the student's work
         # (Using asyncio.to_thread to prevent blocking the event loop)
-        evaluation = await asyncio.to_thread(self._evaluate_step_progress, state.query, current_step, context_text)
+        evaluation = await asyncio.to_thread(self._evaluate_step_progress, state.query, current_step, context_text, current_fails)
         answer_text = evaluation.get('feedback', "I couldn't verify that automatically.")
         
         sugg_list = ["I'm stuck", "Stop guided mode"]
@@ -310,8 +316,31 @@ class ScaffoldingAgent(BaseAgent):
             self.logger.error(f"Plan generation failed: {e}")
             return [{"goal": "Solve the problem", "description": "Let's write the code together.", "verification_criteria": "Code validity"}]
 
-    def _evaluate_step_progress(self, user_input: str, current_step: Dict, context: str) -> Dict[str, Any]:
+    def _evaluate_step_progress(self, user_input: str, current_step: Dict, context: str, failed_attempts: int) -> Dict[str, Any]:
         """Evaluates student progress on the current step."""
+
+        # =========================================================
+        # SAGE PDF PAGE 13 & 17: THE REMEDIATION LADDER
+        # =========================================================
+        if failed_attempts == 0:
+            remediation_rule = (
+                "REMEDIATION LADDER (PUMP): The student just made their first mistake. "
+                "DO NOT give the answer. PUMP them with an open question to encourage productive struggle. "
+                "(e.g., 'Look at line X. What do you think is happening at the moment you execute that?')"
+            )
+        elif failed_attempts == 1:
+            remediation_rule = (
+                "REMEDIATION LADDER (HINT): The student failed twice. Give a DIRECTED CUE. "
+                "Narrow their attention to the specific gap without revealing the solution. "
+                "(e.g., 'You are right about X, but think about what happens to Y after you overwrite it.')"
+            )
+        else:
+            remediation_rule = (
+                "REMEDIATION LADDER (PROMPT): The student is stuck. Give a FILL-IN-THE-BLANK prompt. "
+                "Tell them exactly what concept is missing, but make them write the code. "
+                "(e.g., 'You need to preserve the reference. What single line of code do you need to add before overwriting X?')"
+            )
+
         prompt = f"""
         You are a C Tutor guiding a student.
         
@@ -328,40 +357,27 @@ class ScaffoldingAgent(BaseAgent):
         1. **HALLUCINATION CHECK (PRIORITY):**
            - If the student says "I don't know", "Help", or "Where to start":
              - Mark Status as **FAIL**.
-             - Do **NOT** say "Good start" or "You declared X".
              - Acknowledge they are stuck and provide a clear hint.
         
-        2. **HELP REQUESTS ARE NOT ANSWERS:**
-           - If the student asks for "Pseudocode", "Hint", "Example", or "Solution":
-             - Mark Status as **FAIL** (This keeps them on the current step).
-             - Provide the requested help in `pseudocode_hint` or `visual_aid`.
-             - Do **NOT** verify the step as complete.
-        
-        3. **Status Logic:**
+        2. **Status Logic:**
            - PASS: Only if they provide valid C code/logic that solves the step.
            - FAIL: Wrong code, "I don't know", OR asking for help/pseudocode.
 
+        3. **IF STATUS IS FAIL, APPLY THIS TUTORING STRATEGY:**
+           {remediation_rule}
+
         4. **VISUAL AID (CRITICAL):** 
            - IF the student is confused, provide a MermaidJS graph string in `visual_aid`.
-           - **CRITICAL SANITIZATION RULES:** 
-             - ABSOLUTELY NO PARENTHESES `()` inside node labels. 
-             - ABSOLUTELY NO BRACKETS `[]` inside node labels.
-             - ABSOLUTELY NO QUOTES `"` inside node labels.
-             - **BAD:** `A[sum(a,b)]` or `B{{arr[i]}}` or `C["Text"]`
-             - **GOOD:** `A[sum a b]` or `B{{arr index i}}` or `C[Text]`
+           - **CRITICAL SANITIZATION RULES:** ABSOLUTELY NO PARENTHESES (), BRACKETS [], OR QUOTES "" inside node labels.
         
         5. **PSEUDOCODE:**
             - IF the student is stuck on syntax or asks for "Logic/Pseudocode", fill the `pseudocode_hint` field.
             - Format: Plain text algorithm (e.g., "FOR i FROM 0 TO N..."). Do not use C syntax.
-        
-        6. **USER INTENT:**
-            - If user asks for "Pseudocode" specifically, ONLY provide `pseudocode_hint`.
-            - If user asks for "Diagram" specifically, ONLY provide `visual_aid`.
 
         **OUTPUT JSON:**
         {{
-            "status": "PASS" | "FAIL" | "QUESTION",
-            "feedback": "Response text...",
+            "status": "PASS" | "FAIL",
+            "feedback": "Response text based on the Remediation Ladder...",
             "visual_aid": "graph TD...", 
             "pseudocode_hint": "..."
         }}
