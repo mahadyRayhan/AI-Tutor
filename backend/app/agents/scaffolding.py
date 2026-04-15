@@ -70,30 +70,20 @@ class ScaffoldingAgent(BaseAgent):
             return
 
     # --- INTERNAL LOGIC: START PLAN ---
+    # --- INTERNAL LOGIC: START PLAN ---
     async def _start_new_plan(self, state: AgentState):
         """
         Initiates a new guided learning plan.
-        
-        1. Searches for context about the problem.
-        2. Generates a breakdown of steps using the LLM.
-        3. Saves the plan to the persistent session state.
-        4. Presents the first step to the user.
         """
-        # --- NEW UX FIX: Instant Initial Response ---
-        greeting_text = "This is a complex problem! 🧠\n\n To ensure you really learn this, I've broken it down into smaller manageable steps.\n\n"
-        
         # Yield the text immediately so it shows up in the chat UI instantly
+        greeting_text = "This is a complex problem! 🧠\n\n To ensure you really learn this, I've broken it down into smaller manageable steps.\n\n"
         yield {"type": "token", "text": greeting_text}
-        # -------------------------------------------
         yield {"type": "status", "message": "Planning & Searching...", "percent": 30}
         
         # Parallel Execution: Retrieve Context + Generate Steps
-        # 1. Retrieval Task (Simulating _execute_retrieval locally)
         retrieval_task = asyncio.create_task(
             asyncio.to_thread(self._internal_retrieval, state.query, state.intent, state.user_role, state.entities)
         )
-        
-        # 2. Planning Task (The "Brain" of the operation)
         plan_task = asyncio.create_task(
             asyncio.to_thread(self._generate_step_by_step_plan, state.query, "Standard C Programming Context")
         )
@@ -105,25 +95,239 @@ class ScaffoldingAgent(BaseAgent):
             "is_active": True,
             "original_problem": state.query,
             "steps": steps,
-            "current_step_index": 0
+            "current_step_index": 0,
+            "awaiting_forethought": True 
         }
         history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": new_plan})
         
-        # Present Step 1
-        first = steps[0]
-        msg = f"This is a complex problem! 🧠\n\nTo ensure you really learn this, I've broken it down into **{len(steps)} manageable steps**.\n\n"
-        msg += f"### Step 1: {first['goal']}\n{first['description']}\n\n"
-        msg += "👉 *Reply with your code or logic for just this step.*"
+        # Present the Forethought Prompt INSTEAD of Step 1
+        msg = f"This is a complex problem! 🧠\n\nI've broken it down into **{len(steps)} manageable steps** for us to tackle.\n\n"
+        msg += f"But before we write a single line of code, I want you to tell me in your own words: **How do you think we should approach solving this?** What is the core logic?"
 
         yield {"type": "complete", "data": {
             "answer": msg,
             "sources": [], 
-            "suggestions": ["I don't know where to start", "Stop guided mode"],
+            "suggestions": ["I have no idea", "Stop guided mode"],
             "intent": "PLANNING",
-            "entities": state.entities # <--- ADD THIS
+            "entities": state.entities
         }}
 
     # In backend/app/agents/scaffolding.py
+
+    # async def _continue_plan(self, state: AgentState, active_plan):
+    #     """
+    #     Evaluates the user's response to the current step and moves to the next one if valid.
+    #     Includes Agency-Driven Escalation Protocol.
+    #     """
+    #     # Exit Check (User wants to bail out completely)
+    #     if any(w in state.query.lower() for w in ["stop", "cancel", "quit", "reset"]):
+    #         history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
+    #         yield {"type": "complete", "data": {"answer": "Guided mode cancelled.", "sources": [], "intent": "General", "entities": state.entities}}
+    #         return
+
+    #     # =========================================================
+    #     # --- NEW: STEP 2 (HANDLE ESCALATION CHOICES) ---
+    #     # =========================================================
+    #     if active_plan.get('awaiting_escalation_choice'):
+    #         user_input = state.query.lower()
+            
+    #         # Choice 1: They want the TA Summary
+    #         if "ta" in user_input or "message" in user_input or "instructor" in user_input or "help me message" in user_input:
+    #             active_plan['awaiting_escalation_choice'] = False
+    #             active_plan['failed_attempts'] = 0 # Reset so they can try again later if they want
+    #             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+                
+    #             current_step = active_plan['steps'][active_plan['current_step_index']]
+    #             msg = "**Here is a summary you can copy-paste to your TA:**\n\n"
+    #             msg += f"> *\"Hi, I am trying to build a program that {active_plan.get('original_problem', 'does this')}. I am stuck on the step where I need to: {current_step['goal']}. Could you help me understand the logic?\"*\n\n"
+    #             msg += "Whenever you are ready to try again, just type your next attempt below!"
+                
+    #             yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDED_PRACTICE", "suggestions": ["Stop guided mode"], "entities": state.entities}}
+    #             return
+
+    #         # Choice 2: They want Partial Code
+    #         elif "code" in user_input or "partial" in user_input or "give" in user_input:
+    #             active_plan['awaiting_escalation_choice'] = False
+    #             active_plan['failed_attempts'] = 0 
+    #             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+                
+    #             current_step = active_plan['steps'][active_plan['current_step_index']]
+                
+    #             yield {"type": "status", "message": "Generating partial code...", "percent": 50}
+                
+    #             # Ask the LLM to generate the partial code based on the current step
+    #             prompt = f"""
+    #             You are a C Tutor. The student is stuck on this step: "{current_step['goal']}".
+    #             Task: "{current_step['description']}"
+                
+    #             Generate a PARTIAL C code snippet that helps them complete this exact step. 
+    #             Use `___` or `// TODO:` for the parts the student still needs to figure out.
+    #             Do not give the complete working answer. Add 1 sentence of encouragement.
+    #             Format the code in standard markdown ```c ... ```.
+    #             """
+    #             # Use to_thread to keep it async friendly
+    #             partial_code_response = await asyncio.to_thread(self.llm.generate_response, prompt)
+                
+    #             yield {"type": "complete", "data": {
+    #                 "answer": partial_code_response + "\n\n👉 *Fill in the blanks and reply with your updated code!*", 
+    #                 "sources": [], 
+    #                 "intent": "GUIDED_PRACTICE", 
+    #                 "suggestions": ["Stop guided mode"],
+    #                 "entities": state.entities
+    #             }}
+    #             return
+            
+    #         else:
+    #             # They ignored the choices and just typed random code. Turn off the flag and evaluate it normally.
+    #             active_plan['awaiting_escalation_choice'] = False
+    #             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+    #     # =========================================================
+
+    #     # --- NORMAL STEP EVALUATION ---
+    #     yield {"type": "status", "message": "Checking your step...", "percent": 20}
+        
+    #     steps = active_plan['steps']
+    #     idx = active_plan['current_step_index']
+    #     current_step = steps[idx]
+
+    #     # Context for evaluation (Search for Step Goal + User Query)
+    #     search_q = f"{current_step['goal']} {state.query}"
+    #     chunks = self._internal_retrieval(search_q, "DEBUG", state.user_role, [])
+    #     context_text = "\n".join([c['text'] for c in chunks])
+
+    #     # =========================================================
+    #     # THE FIX: PASS FAILED ATTEMPTS TO EVALUATOR
+    #     # =========================================================
+    #     current_fails = active_plan.get('failed_attempts', 0)
+
+    #     # LLM Evaluation of the student's work
+    #     # (Using asyncio.to_thread to prevent blocking the event loop)
+    #     evaluation = await asyncio.to_thread(self._evaluate_step_progress, state.query, current_step, context_text, current_fails)
+    #     answer_text = evaluation.get('feedback', "I couldn't verify that automatically.")
+        
+    #     sugg_list = ["I'm stuck", "Stop guided mode"]
+
+    #     if evaluation.get('status') == "PASS":
+    #         # --- SUCCESS: Reset strike counter ---
+    #         active_plan['failed_attempts'] = 0
+            
+    #         idx += 1
+    #         if idx >= len(steps):
+    #             # =========================================================
+    #             # SAGE PDF PAGE 18: WRAP-UP & SUMMARY GENERATION
+    #             # Instead of just ending the plan, we trigger the Reflection Phase.
+    #             # =========================================================
+    #             if not active_plan.get("awaiting_reflection"):
+    #                 # The student just finished the last coding step!
+    #                 active_plan["awaiting_reflection"] = True
+    #                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+                    
+    #                 msg = "🎉 **All tests passed! Your code works perfectly.**\n\n"
+    #                 msg += "But before we close this out and award your Mastery XP, I want *you* to generate the summary, not me. "
+    #                 msg += f"In one or two sentences, explain how the different pieces of this program work together to solve the problem."
+                    
+    #                 yield {"type": "complete", "data": {
+    #                     "answer": msg, 
+    #                     "sources": [], 
+    #                     "intent": "REFLECTION", 
+    #                     "suggestions": ["I'm not sure how to summarize it."],
+    #                     "entities": state.entities
+    #                 }}
+    #                 return
+    #             else:
+    #                 # The student has provided their reflection summary!
+    #                 # Now we give them their XP and close the plan.
+    #                 topic_credit = active_plan.get('original_problem', 'General')
+    #                 topic_label = state.entities[0] if state.entities else topic_credit[:20]
+                    
+    #                 # Award actual mastery
+    #                 knowledge_manager.mark_concept_as_known(state.user_id, f"Solved: {topic_label}")
+                    
+    #                 # Close the plan
+    #                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
+                    
+    #                 # SAGE "Transfer Seeding" (Page 18)
+    #                 msg = f"That is an accurate and well-organized summary! 🏆\n\n"
+    #                 msg += f"You've officially mastered **{topic_label}**. The logic you just derived applies to many other problems in C. "
+    #                 msg += f"Next time you build something for your goal, you will find this mental model transfers directly."
+                    
+    #                 yield {"type": "complete", "data": {
+    #                     "answer": msg, 
+    #                     "sources": [], 
+    #                     "intent": "REFLECTION", 
+    #                     "suggestions": ["What should I learn next?", "Show my progress"],
+    #                     "entities": state.entities
+    #                 }}
+    #                 return
+    #         else:
+    #             # MOVE TO NEXT STEP
+    #             next_step = steps[idx]
+    #             # =========================================================
+    #             # SAGE PDF PAGE 16: DEEP REASONING QUESTIONS
+    #             # =========================================================
+    #             # We ask the LLM to generate the next step, BUT preface it with a Deep Question
+    #             answer_text += f"\n\n✅ **Correct!**\n\n"
+                
+    #             # We use a placeholder that the LLM will fill in
+    #             prompt = f"""
+    #             The student just correctly completed this step: "{current_step['goal']}".
+    #             The NEXT step they need to do is: "{next_step['goal']}".
+                
+    #             Generate a short message to transition them. 
+    #             CRITICAL RULE: Before introducing the next step, ask ONE "Deep Reasoning" question about the code they just wrote. 
+    #             Choose ONE of these formats randomly:
+    #             - WHAT-IF: "What would happen to your code if [edge case occurs]?"
+    #             - WHY: "Why did we use [specific syntax they just wrote] instead of [alternative]?"
+                
+    #             Then, introduce the next step: "{next_step['description']}".
+    #             """
+                
+    #             # Generate the deep reasoning transition
+    #             deep_transition = await asyncio.to_thread(self.llm.generate_response, prompt)
+                
+    #             answer_text += deep_transition
+                
+    #             active_plan['current_step_index'] = idx
+    #             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+    #     else:
+    #         # =========================================================
+    #         # --- NEW: STEP 1 (TRIGGER ESCALATION MENU) ---
+    #         # =========================================================
+    #         failed_attempts = active_plan.get('failed_attempts', 0) + 1
+    #         active_plan['failed_attempts'] = failed_attempts
+    #         history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+
+    #         if failed_attempts >= 3:
+    #             # TRIGGER ESCALATION PROTOCOL
+    #             answer_text = f"⚠️ **It looks like we are stuck here.** \n\n"
+    #             answer_text += f"You have tried this step {failed_attempts} times. Learning to code is hard, and it's completely okay to hit a wall!\n\n"
+    #             answer_text += "**How would you like to proceed?**\n"
+    #             answer_text += "1. **Get Partial Code:** I can give you the code structure for this step with a heavy hint.\n"
+    #             answer_text += "2. **Consult TA:** I can write a summary of what you've tried so far, so you can email your Instructor for human help.\n\n"
+                
+    #             active_plan['awaiting_escalation_choice'] = True
+    #             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+
+    #             sugg_list = ["Give me Partial Code", "Help me message the TA", "Stop guided mode"]
+    #         else:
+    #             # Standard Hint
+    #             if evaluation.get('visual_aid'):
+    #                 clean_visual = self._clean_guided_visual(evaluation['visual_aid'])
+    #                 answer_text += f"\n\nHere is a visual aid:\n```mermaid\n{clean_visual}\n```"
+    #             elif evaluation.get('pseudocode_hint'):
+    #                 answer_text += f"\n\n💡 **Logic Hint:**\n```text\n{evaluation['pseudocode_hint']}\n```"
+                
+    #             sugg_list.insert(0, "Show me Pseudocode")
+
+    #     formatted_sources = [{'document_name': c['metadata']['document_name'], 'chunk_text': c['text']} for c in chunks]
+
+    #     yield {"type": "complete", "data": {
+    #         "answer": answer_text, 
+    #         "sources": formatted_sources,
+    #         "suggestions": sugg_list,
+    #         "intent": "GUIDED_PRACTICE",
+    #         "entities": state.entities 
+    #     }}
 
     async def _continue_plan(self, state: AgentState, active_plan):
         """
@@ -137,7 +341,39 @@ class ScaffoldingAgent(BaseAgent):
             return
 
         # =========================================================
-        # --- NEW: STEP 2 (HANDLE ESCALATION CHOICES) ---
+        # SAGE PDF PAGE 14: EVALUATE PRIOR KNOWLEDGE (FORETHOUGHT)
+        # =========================================================
+        if active_plan.get("awaiting_forethought"):
+            # Turn off the flag so we move to Step 1 next
+            active_plan["awaiting_forethought"] = False
+            history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+            
+            # Grab the very first step
+            first_step = active_plan['steps'][0]
+            
+            prompt = f"""
+            The student was asked to explain the core logic of solving "{active_plan['original_problem']}" before writing any code.
+            Student's answer: "{state.query}"
+            
+            Write a brief, encouraging response (1-2 sentences) affirming their logic (or gently correcting them if they said 'I don't know').
+            Do NOT write code. 
+            """
+            affirmation = await asyncio.to_thread(self.llm.generate_response, prompt)
+            
+            # Combine the affirmation with the actual Step 1
+            answer_text = f"{affirmation}\n\n---\n### Step 1: {first_step['goal']}\n{first_step['description']}\n\n👉 *Reply with your code or logic for just this step.*"
+            
+            yield {"type": "complete", "data": {
+                "answer": answer_text, 
+                "sources": [], 
+                "intent": "GUIDED_PRACTICE", 
+                "suggestions": ["Show me Pseudocode", "Stop guided mode"],
+                "entities": state.entities
+            }}
+            return
+
+        # =========================================================
+        # --- HANDLE ESCALATION CHOICES ---
         # =========================================================
         if active_plan.get('awaiting_escalation_choice'):
             user_input = state.query.lower()
@@ -166,7 +402,6 @@ class ScaffoldingAgent(BaseAgent):
                 
                 yield {"type": "status", "message": "Generating partial code...", "percent": 50}
                 
-                # Ask the LLM to generate the partial code based on the current step
                 prompt = f"""
                 You are a C Tutor. The student is stuck on this step: "{current_step['goal']}".
                 Task: "{current_step['description']}"
@@ -176,7 +411,6 @@ class ScaffoldingAgent(BaseAgent):
                 Do not give the complete working answer. Add 1 sentence of encouragement.
                 Format the code in standard markdown ```c ... ```.
                 """
-                # Use to_thread to keep it async friendly
                 partial_code_response = await asyncio.to_thread(self.llm.generate_response, prompt)
                 
                 yield {"type": "complete", "data": {
@@ -189,10 +423,8 @@ class ScaffoldingAgent(BaseAgent):
                 return
             
             else:
-                # They ignored the choices and just typed random code. Turn off the flag and evaluate it normally.
                 active_plan['awaiting_escalation_choice'] = False
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
-        # =========================================================
 
         # --- NORMAL STEP EVALUATION ---
         yield {"type": "status", "message": "Checking your step...", "percent": 20}
@@ -201,53 +433,93 @@ class ScaffoldingAgent(BaseAgent):
         idx = active_plan['current_step_index']
         current_step = steps[idx]
 
-        # Context for evaluation (Search for Step Goal + User Query)
         search_q = f"{current_step['goal']} {state.query}"
         chunks = self._internal_retrieval(search_q, "DEBUG", state.user_role, [])
         context_text = "\n".join([c['text'] for c in chunks])
 
-        # =========================================================
-        # THE FIX: PASS FAILED ATTEMPTS TO EVALUATOR
-        # =========================================================
         current_fails = active_plan.get('failed_attempts', 0)
 
-        # LLM Evaluation of the student's work
-        # (Using asyncio.to_thread to prevent blocking the event loop)
         evaluation = await asyncio.to_thread(self._evaluate_step_progress, state.query, current_step, context_text, current_fails)
         answer_text = evaluation.get('feedback', "I couldn't verify that automatically.")
         
         sugg_list = ["I'm stuck", "Stop guided mode"]
 
         if evaluation.get('status') == "PASS":
-            # --- SUCCESS: Reset strike counter ---
             active_plan['failed_attempts'] = 0
             
             idx += 1
             if idx >= len(steps):
-                # ALL STEPS DONE - Victory Lap
-                answer_text += "\n\n🎉 **Problem Solved!** You've completed all steps. Excellent work."
-                
-                topic_credit = active_plan.get('original_problem', 'General')
-                topic_label = state.entities[0] if state.entities else topic_credit[:20]
-                knowledge_manager.mark_concept_as_known(state.user_id, f"Solved: {topic_label}")
-                
-                history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
+                # =========================================================
+                # SAGE PDF PAGE 18: WRAP-UP & SUMMARY GENERATION
+                # =========================================================
+                if not active_plan.get("awaiting_reflection"):
+                    active_plan["awaiting_reflection"] = True
+                    history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
+                    
+                    msg = "🎉 **All tests passed! Your code works perfectly.**\n\n"
+                    msg += "But before we close this out and award your Mastery XP, I want *you* to generate the summary, not me. "
+                    msg += f"In one or two sentences, explain how the different pieces of this program work together to solve the problem."
+                    
+                    yield {"type": "complete", "data": {
+                        "answer": msg, 
+                        "sources": [], 
+                        "intent": "REFLECTION", 
+                        "suggestions": ["I'm not sure how to summarize it."],
+                        "entities": state.entities
+                    }}
+                    return
+                else:
+                    topic_credit = active_plan.get('original_problem', 'General')
+                    topic_label = state.entities[0] if state.entities else topic_credit[:20]
+                    
+                    knowledge_manager.mark_concept_as_known(state.user_id, f"Solved: {topic_label}")
+                    history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
+                    
+                    msg = f"That is an accurate and well-organized summary! 🏆\n\n"
+                    msg += f"You've officially mastered **{topic_label}**. The logic you just derived applies to many other problems in C. "
+                    msg += f"Next time you build something for your goal, you will find this mental model transfers directly."
+                    
+                    yield {"type": "complete", "data": {
+                        "answer": msg, 
+                        "sources": [], 
+                        "intent": "REFLECTION", 
+                        "suggestions": ["What should I learn next?", "Show my progress"],
+                        "entities": state.entities
+                    }}
+                    return
             else:
-                # MOVE TO NEXT STEP
+                # =========================================================
+                # SAGE PDF PAGE 16: DEEP REASONING QUESTIONS
+                # =========================================================
                 next_step = steps[idx]
-                answer_text += f"\n\n---\n### Next Step ({idx+1}/{len(steps)}): {next_step['goal']}\n{next_step['description']}"
+                answer_text += f"\n\n✅ **Correct!**\n\n"
+                
+                prompt = f"""
+                The student just correctly completed this step: "{current_step['goal']}".
+                The NEXT step they need to do is: "{next_step['goal']}".
+                
+                Generate a short message to transition them. 
+                CRITICAL RULE: Before introducing the next step, ask ONE "Deep Reasoning" question about the code they just wrote. 
+                Choose ONE of these formats randomly:
+                - WHAT-IF: "What would happen to your code if [edge case occurs]?"
+                - WHY: "Why did we use [specific syntax they just wrote] instead of [alternative]?"
+                
+                Then, introduce the next step: "{next_step['description']}".
+                """
+                deep_transition = await asyncio.to_thread(self.llm.generate_response, prompt)
+                answer_text += deep_transition
+                
                 active_plan['current_step_index'] = idx
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
         else:
             # =========================================================
-            # --- NEW: STEP 1 (TRIGGER ESCALATION MENU) ---
+            # --- TRIGGER ESCALATION MENU ---
             # =========================================================
             failed_attempts = active_plan.get('failed_attempts', 0) + 1
             active_plan['failed_attempts'] = failed_attempts
             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
 
             if failed_attempts >= 3:
-                # TRIGGER ESCALATION PROTOCOL
                 answer_text = f"⚠️ **It looks like we are stuck here.** \n\n"
                 answer_text += f"You have tried this step {failed_attempts} times. Learning to code is hard, and it's completely okay to hit a wall!\n\n"
                 answer_text += "**How would you like to proceed?**\n"
@@ -259,7 +531,6 @@ class ScaffoldingAgent(BaseAgent):
 
                 sugg_list = ["Give me Partial Code", "Help me message the TA", "Stop guided mode"]
             else:
-                # Standard Hint
                 if evaluation.get('visual_aid'):
                     clean_visual = self._clean_guided_visual(evaluation['visual_aid'])
                     answer_text += f"\n\nHere is a visual aid:\n```mermaid\n{clean_visual}\n```"
@@ -360,7 +631,8 @@ class ScaffoldingAgent(BaseAgent):
              - Acknowledge they are stuck and provide a clear hint.
         
         2. **Status Logic:**
-           - PASS: Only if they provide valid C code/logic that solves the step.
+           - PASS: If they provide valid C code/logic that solves the step.
+           - IF THIS IS A REFLECTION SUMMARY: Any reasonable English explanation of the code is a **PASS**.
            - FAIL: Wrong code, "I don't know", OR asking for help/pseudocode.
 
         3. **IF STATUS IS FAIL, APPLY THIS TUTORING STRATEGY:**

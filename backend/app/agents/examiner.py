@@ -30,37 +30,47 @@ class ExaminerAgent(BaseAgent):
         self.graph_db = graph_db
 
     async def process(self, state: AgentState) -> AsyncGenerator[dict, None]:
-        """
-        Main processing loop for the Examiner Agent.
         
-        Args:
-            state (AgentState): The current state of the agent workflow.
-            
-        Yields:
-            dict: Workflow events (status updates, final response).
-        """
-        # 1. Check if user is ANSWERING a quiz (Active State)
-        # We check the session state to see if we are waiting for a quiz answer.
         current_session_state = history_manager.get_session_state(state.user_id, state.session_id)
+        
+        # =========================================================
+        # SAGE PDF PAGE 5: HANDLE CONFIDENCE RATING
+        # =========================================================
+        if current_session_state.get("awaiting_confidence_rating"):
+            # Turn off the confidence flag, turn ON the grading flag
+            history_manager.update_session_state(state.user_id, state.session_id, {
+                "awaiting_confidence_rating": False,
+                "awaiting_quiz_answer": True,
+                "student_confidence": state.query # Save their rating for future analytics
+            })
+            
+            # Retrieve the question we stored earlier
+            question = current_session_state.get("pending_quiz_question")
+            
+            # Briefly acknowledge their confidence and ask the question
+            ack = await asyncio.to_thread(self.llm.generate_response, f"The student rated their confidence as: '{state.query}'. Write a 1-sentence supportive acknowledgment.")
+            
+            msg = f"{ack}\n\n**Here is the question:**\n{question}\n\n👉 *Type your answer below!*"
+            
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": ["I don't know (Skip)"], "intent": "QUIZ", "entities": state.entities}}
+            
+            state.stop_processing = True
+            return
+
+        # 1. Check if user is ANSWERING a quiz (Active State)
         if current_session_state.get("awaiting_quiz_answer"):
-            # Delegate to the grading logic
             async for event in self._grade_quiz(state, current_session_state):
                 yield event
-            # Stop further processing by other agents since we handled it
             state.stop_processing = True
             return
 
         # 2. Check if user REQUESTED a quiz (New Trigger)
-        # Fix: Check for "(Verify)" keyword OR "QUIZ" intent explicitly
         is_verify_request = "(verify)" in state.query.lower()
         
         if state.intent == "QUIZ" or is_verify_request:
-            # Force intent update for consistency in logs/upstream
             state.intent = "QUIZ" 
-            # Start the quiz flow
             async for event in self._start_quiz(state):
                 yield event
-            # Stop further processing
             state.stop_processing = True
             return
 
@@ -121,28 +131,40 @@ class ExaminerAgent(BaseAgent):
             except: pass
 
         if qa_pair:
-            # Save State
+            # =========================================================
+            # SAGE PDF PAGE 5: METACOGNITIVE JOLs (Confidence Judgments)
+            # Instead of asking the question immediately, we ask for a confidence rating first.
+            # =========================================================
             vector_data = {
                 "google": qa_pair['a_vector'],
                 "local": qa_pair.get('a_vector_local')
             }
+            
+            # Save State: We are waiting for a CONFIDENCE RATING, not the actual answer yet.
             history_manager.update_session_state(state.user_id, state.session_id, {
-                "awaiting_quiz_answer": True,
+                "awaiting_confidence_rating": True,    # <--- NEW FLAG
+                "pending_quiz_question": qa_pair['q'], # <--- Storing the question for later
                 "quiz_topic": verify_topic,
                 "quiz_vector": vector_data,
                 "quiz_correct_text": qa_pair['a']
             })
 
-            # --- NEW: Check if this is a surprise Pop Quiz ---
             if state.profile.get('is_surprise_quiz'):
-                msg = f"I will gladly help you with that next! But first, it's time for a **Pop Quiz**! 📝\n\nLet's quickly review **{verify_topic}** to make sure it's sticking in your memory.\n\n"
-                msg += f"**Question:** {qa_pair['q']}\n\n👉 *Type your answer below!*"
+                msg = f"I will gladly help you with that next! But first, it's time for a **Pop Quiz**! 📝\n\n"
+                msg += f"Before I show you the question on **{verify_topic}**, I want you to rate yourself: \n\n"
+                msg += f"**On a scale of 1 to 5, how confident are you that you understand {verify_topic} right now?**"
             else:
-                # Standard user-requested quiz
-                msg = f"🧐 **Quick Check:** {qa_pair['q']}\n\n👉 **Type your answer in the chat box below.**"
-            # -------------------------------------------------
+                msg = f"Let's verify your knowledge on **{verify_topic}**! \n\n"
+                msg += f"Before I ask the question: **On a scale of 1 to 5, how confident are you with this topic?**"
 
-            yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": ["I don't know (Skip)"], "intent": "QUIZ", "entities": state.entities}}
+            # Give them quick 1-5 buttons to click
+            yield {"type": "complete", "data": {
+                "answer": msg, 
+                "sources": [], 
+                "suggestions": ["1 - Not at all", "3 - Somewhat", "5 - Very confident", "I don't know (Skip)"], 
+                "intent": "QUIZ", 
+                "entities": state.entities
+            }}
         else:
             # Fallback
             yield {"type": "complete", "data": {
@@ -156,22 +178,27 @@ class ExaminerAgent(BaseAgent):
 
     async def _grade_quiz(self, state: AgentState, session_state):
         """
-        Grades the pending quiz answer.
-        
-        1. Retrieves the stored correct vector from session state.
-        2. Compares user's answer (state.query) against the correct vector.
-        3. Updates knowledge profile if correct.
-        4. Returns feedback.
+        Grades the pending quiz answer and compares it to their prior confidence.
         """
         check_topic = session_state.get("quiz_topic")
         vectors = session_state.get("quiz_vector")
         correct_text = session_state.get("quiz_correct_text")
         goals_stack = session_state.get("pending_goals", [])
         
+        # =========================================================
+        # THE FIX: PULL THEIR CONFIDENCE RATING
+        # =========================================================
+        confidence_str = session_state.get("student_confidence", "3") # Default to 3 if missing
+        
+        # Extract the first number from their string (e.g., "5 - Very confident" -> 5)
+        import re
+        match = re.search(r'\d+', confidence_str)
+        confidence_score = int(match.group()) if match else 3
+
         # Clear state immediately so we don't get stuck in a loop
         history_manager.update_session_state(state.user_id, state.session_id, {"awaiting_quiz_answer": False})
 
-        self.logger.info(f"📝 Grading answer for topic: {check_topic}")
+        self.logger.info(f"📝 Grading answer for topic: {check_topic} (Student Confidence: {confidence_score}/5)")
         yield {"type": "status", "message": "Verifying answer...", "percent": 30}
 
         # Select Vector (Handle legacy list format or new dict format)
@@ -184,26 +211,48 @@ class ExaminerAgent(BaseAgent):
 
         if result['is_correct']:
             knowledge_manager.mark_concept_as_known(state.user_id, check_topic)
-            # --- SRL FEYNMAN TECHNIQUE ---
-            msg = f"✅ **{result['feedback']}**\n\nGreat! You've officially mastered **{check_topic}**.\n\n"
+            
+            # =========================================================
+            # SAGE PDF PAGE 2: CALIBRATION ACCURACY (PASS SCENARIOS)
+            # =========================================================
+            if confidence_score <= 2:
+                # Low Confidence + PASS = Self-Efficacy Boost
+                msg = f"✅ **{result['feedback']}**\n\n"
+                msg += f"See? You rated your confidence as a {confidence_score}/5, but your actual skills are much higher! Trust your instincts, you know this.\n\n"
+            elif confidence_score >= 4:
+                # High Confidence + PASS = Validation
+                msg = f"✅ **{result['feedback']}**\n\n"
+                msg += f"Your confidence ({confidence_score}/5) was perfectly placed. Great job backing it up with a solid answer.\n\n"
+            else:
+                msg = f"✅ **{result['feedback']}**\n\n"
+                
+            msg += f"You've officially mastered **{check_topic}**.\n\n"
             msg += f"🧠 **Feynman Challenge:** To truly lock this into your long-term memory, try explaining **{check_topic}** back to me in your own words, as if I were a 5-year-old!"
+            
             suggestions = ["I'll try explaining it!", "What should I learn next?"]
             if goals_stack:
                 last_goal = goals_stack[-1]
                 msg += f"\n\nOr, if you prefer, shall we go back to your goal: **\"{last_goal}\"**?"
                 suggestions.append(f"Back to: {last_goal}")
-                # Don't clear the stack yet — the button handler will pop it
             
-            yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": suggestions, "intent": "EVALUATION"}}
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": suggestions, "intent": "EVALUATION", "entities": state.entities}}
         else:
-            # FAILURE or PARTIAL Logic
-            msg = result['feedback'] # Contains the "I see you have understanding..." text
-            
-            # --- DYNAMIC SUGGESTIONS ---
+            # =========================================================
+            # SAGE PDF PAGE 2: CALIBRATION ACCURACY (FAIL SCENARIOS)
+            # =========================================================
+            if confidence_score >= 4:
+                # High Confidence + FAIL = Illusion Busting
+                msg = f"❌ **{result['feedback']}**\n\n"
+                msg += f"I noticed you felt very confident ({confidence_score}/5) before starting. It's incredibly common to feel like we understand code when reading it, but answering questions exposes the hidden gaps. Let's look at exactly where the logic broke down.\n\n"
+            elif confidence_score <= 2:
+                # Low Confidence + FAIL = Vulnerability Validation
+                msg = f"❌ **{result['feedback']}**\n\n"
+                msg += f"You didn't get it, but you were incredibly self-aware to rate your confidence as a {confidence_score}/5. You knew exactly where your boundaries were, and that self-awareness is a superpower in programming. Now let's fix that gap!\n\n"
+            else:
+                msg = f"❌ **{result['feedback']}**\n\n"
+
             suggestions = [
-                f"Explain {check_topic}",   # Review the current topic
-                # Maybe offer the advanced topic IF they were verifying to skip?
-                # For now, safer to stick to review.
+                f"Explain {check_topic}",   
                 "Try another question"
             ]
             
@@ -212,7 +261,7 @@ class ExaminerAgent(BaseAgent):
                 "sources": [], 
                 "suggestions": suggestions, 
                 "intent": "EVALUATION",
-                "entities": state.entities # <--- ADD THIS
+                "entities": state.entities 
             }}
 
     async def _smart_grade_answer(self, student_answer: str, vec_google, vec_local, correct_text: str) -> dict:
