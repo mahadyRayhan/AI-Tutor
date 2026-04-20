@@ -1130,13 +1130,23 @@ class ChainOfThoughtRAGAgent:
         # THE FIX: TOPIC AMNESIA CACHE
         # =========================================================
         # 1. Determine if the user provided a real C-concept this turn
-        # (If entities exist and it's not just an echo of their raw emotional sentence)
+        # We ensure it's not just an exact echo of their raw query
         is_real_topic = len(state.entities) > 0 and state.entities[0].lower() != state.original_query.lower()
 
         if is_real_topic:
-            # User mentioned a real topic (e.g. "Arrays"). Save it to the session cache!
-            history_manager.update_session_state(username, session_id, {"last_valid_topic": state.entities[0]})
-            cached_topic = state.entities[0]
+            # =========================================================
+            # SAGE PDF PAGE 6: TOPIC CACHE ARGMAX
+            # Select the most specific/salient entity (proxy: longest string) 
+            # rather than just the first one found.
+            # e.g., ["int", "Linked List"] -> "Linked List"
+            # =========================================================
+            best_entity = max(state.entities, key=len)
+            
+            # Save it to the SQLite session cache!
+            history_manager.update_session_state(username, session_id, {"last_valid_topic": best_entity})
+            cached_topic = best_entity
+            self.logger.info(f"🗂️ [TOPIC CACHE] Saved new anchor topic: {cached_topic}")
+            
         else:
             # User is emotional ("I'm sad") or vague ("I don't get it"). Retrieve the cached topic!
             cached_topic = current_state.get("last_valid_topic", "C Programming")
