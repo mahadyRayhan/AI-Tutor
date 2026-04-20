@@ -35,5 +35,8 @@ pdfplumber
 # For parsing .docx files
 python-docx
 
+# --- Video Transcription ---
+openai-whisper
+
 # --- Environment and Configuration ---
 python-dotenv

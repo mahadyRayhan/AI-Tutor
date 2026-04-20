@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Tutor</title>
+    <meta name="description" content="An AI-powered C programming tutor with interactive chat, video classroom, and personalized learning.">
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,20 +18,21 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
     
-    <!-- Mermaid.js Module (Keep this in HTML because it's an external module import) -->
+    <!-- Mermaid.js Module -->
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
         mermaid.initialize({ startOnLoad: false, theme: 'dark' });
         window.mermaid = mermaid;
     </script>
 
-    <!-- LINK TO YOUR NEW CSS FILE -->
-    <link rel="stylesheet" href="/static/css/chat.css">
+    <link rel="stylesheet" href="/static/css/chat.css?v=2">
 </head>
 
 <body>
 
-    <!-- AUTH SCREEN -->
+    <!-- ═══════════════════════════════════════ -->
+    <!--            AUTH SCREEN                  -->
+    <!-- ═══════════════════════════════════════ -->
     <div id="auth-screen">
         <!-- Login Form -->
         <div class="auth-card" id="loginForm">
@@ -41,19 +43,16 @@
             <div class="toggle-link" onclick="toggleAuth('signup')">Create an account</div>
             <div class="error-msg" id="loginError"></div>
         </div>
-        <!-- Signup Form (Same as before) -->
+        <!-- Signup Form -->
         <div class="auth-card hidden" id="signupForm">
             <h2>🚀 Create Account</h2>
             <input type="text" id="signName" class="auth-input" placeholder="Full Name">
             <input type="email" id="signEmail" class="auth-input" placeholder="Email">
             <input type="text" id="signUser" class="auth-input" placeholder="Username">
             <input type="password" id="signPass" class="auth-input" placeholder="Password">
-
-            <!-- Optional Fields (Ensure IDs match JS) -->
             <input type="text" id="signUni" class="auth-input" placeholder="University (Optional)">
             <input type="text" id="signDept" class="auth-input" placeholder="Department (Optional)">
             <input type="text" id="signInterest" class="auth-input" placeholder="Topic of Interest (Optional)">
-
             <button class="auth-btn" onclick="performSignup()">Sign Up</button>
             <div class="toggle-link" onclick="toggleAuth('login')">Back to Login</div>
             <div class="error-msg" id="signupError"></div>
@@ -61,25 +60,61 @@
         </div>
     </div>
 
-    <!-- MAIN APP -->
+    <!-- ═══════════════════════════════════════ -->
+    <!--              MAIN APP                   -->
+    <!-- ═══════════════════════════════════════ -->
     <div id="app-screen">
         <div class="main-container">
 
-            <!-- TOP BAR (spans full width above everything) -->
+            <!-- ─── TOP BAR ─── -->
             <div class="top-bar">
-                <div style="display:flex; align-items:center">
-                    <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+                <!-- Left: sidebar toggle + brand -->
+                <div class="top-bar-left">
+                    <button class="toolbar-btn icon-only" id="sidebarToggleBtn" onclick="toggleSidebar()" title="Chat History" aria-label="Toggle chat history sidebar">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    </button>
+                    <div class="brand-mark">
+                        <span class="brand-icon">🎓</span>
+                        <span class="brand-name">AI Tutor</span>
+                    </div>
                     <span id="roleBadge" class="role-badge">STUDENT</span>
                 </div>
-                <div>
-                    <button class="top-toggle" onclick="toggleResources()" title="Toggle sources">📚</button>
-                    <button class="nav-btn" onclick="openPreferencesModal()">⚙️ Custom Instructions</button>
-                    <button class="nav-btn" onclick="openDashboard()">Dashboard</button>
-                    <button class="nav-btn" onclick="logout()">Logout</button>
+
+                <!-- Center: Primary navigation -->
+                <nav class="top-bar-center" role="navigation" aria-label="Main navigation">
+                    <button class="toolbar-btn active" id="navChat" onclick="switchToChat()" title="Chat with your AI tutor">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <span>Chat</span>
+                    </button>
+                    <button class="toolbar-btn" id="navClassroom" onclick="switchToClassroom()" title="Watch lectures and ask questions">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                        <span>Classroom</span>
+                    </button>
+                </nav>
+
+                <!-- Right: Utility actions -->
+                <div class="top-bar-right">
+                    <button class="toolbar-btn" onclick="toggleResources()" title="Toggle sources & context panel" aria-label="Toggle sources panel">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                        <span class="hide-mobile">Sources</span>
+                    </button>
+                    <button class="toolbar-btn" onclick="openPreferencesModal()" title="Settings & Accessibility" aria-label="Open settings and accessibility options">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        <span class="hide-mobile">Settings</span>
+                    </button>
+                    <button class="toolbar-btn" onclick="openDashboard()" title="View your dashboard & progress" aria-label="Open student dashboard">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        <span class="hide-mobile">Dashboard</span>
+                    </button>
+                    <div class="toolbar-divider"></div>
+                    <button class="toolbar-btn logout-btn" onclick="logout()" title="Sign out of your account" aria-label="Logout">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                        <span class="hide-mobile">Logout</span>
+                    </button>
                 </div>
             </div>
 
-            <!-- CONTENT ROW: sidebar + chat + resources -->
+            <!-- ─── CONTENT ROW: sidebar + views + resources ─── -->
             <div class="content-row">
                 <!-- SIDEBAR -->
                 <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
@@ -95,9 +130,9 @@
                     </div>
                 </div>
 
-                <!-- CHAT AREA -->
-                <div class="chat-section">
-                    <!-- Welcome View (WITH THE CHIPS INSIDE IT) -->
+                <!-- ═══ CHAT VIEW ═══ -->
+                <div class="chat-section" id="chatView">
+                    <!-- Welcome View -->
                     <div id="welcome-view">
                         <h1 class="welcome-text">Hi, <span id="welcomeName">User</span></h1>
                         <div id="dynamicGreeting"
@@ -105,7 +140,32 @@
                         </div>
                         <h2 class="sub-welcome" style="margin-top: 30px;">What should we discuss today?</h2>
 
-                        <!-- THE ONLY PLACE CHIPS SHOULD EXIST -->
+                        <!-- Quick Access Cards -->
+                        <div class="quick-access-cards">
+                            <button class="quick-card" onclick="switchToClassroom()" aria-label="Open Classroom to watch lecture videos">
+                                <div class="quick-card-icon">🎬</div>
+                                <div class="quick-card-info">
+                                    <span class="quick-card-title">Classroom</span>
+                                    <span class="quick-card-desc">Watch lectures & ask questions</span>
+                                </div>
+                            </button>
+                            <button class="quick-card" onclick="openDashboard()" aria-label="Open Dashboard to view your progress">
+                                <div class="quick-card-icon">📊</div>
+                                <div class="quick-card-info">
+                                    <span class="quick-card-title">Dashboard</span>
+                                    <span class="quick-card-desc">View your progress & mastery</span>
+                                </div>
+                            </button>
+                            <button class="quick-card" onclick="openPreferencesModal()" aria-label="Open Settings for accessibility options">
+                                <div class="quick-card-icon">⚙️</div>
+                                <div class="quick-card-info">
+                                    <span class="quick-card-title">Settings</span>
+                                    <span class="quick-card-desc">Accessibility & custom instructions</span>
+                                </div>
+                            </button>
+                        </div>
+
+                        <!-- Suggestion chips -->
                         <div class="suggestions-area" id="initialSuggestions"
                             style="position: relative; bottom: auto; margin-top: 20px;">
                         </div>
@@ -126,6 +186,64 @@
                     </div>
                 </div>
 
+                <!-- ═══ CLASSROOM VIEW (embedded video chat) ═══ -->
+                <div class="chat-section classroom-view" id="classroomView" style="display: none;">
+                    <!-- Video Selector -->
+                    <div class="classroom-selector-bar">
+                        <label for="classroomVideoSelect">📹 Lecture:</label>
+                        <select id="classroomVideoSelect" onchange="onClassroomVideoSelect(this.value)">
+                            <option value="">— Select a lecture —</option>
+                        </select>
+                    </div>
+
+                    <!-- Split: Video + Chat -->
+                    <div class="classroom-split">
+                        <!-- Video Side -->
+                        <div class="classroom-video-side">
+                            <div class="classroom-video-wrapper">
+                                <video id="classroomVideo" controls preload="metadata">
+                                    <source src="" type="video/mp4">
+                                </video>
+                            </div>
+                            <div class="classroom-status-bar">
+                                <div class="classroom-badge">
+                                    <span class="pulse-dot"></span>
+                                    AI-Assisted
+                                </div>
+                                <span class="classroom-transcript-status" id="classroomTranscriptStatus">Select a video to begin</span>
+                            </div>
+                        </div>
+
+                        <!-- Chat Side -->
+                        <div class="classroom-chat-side">
+                            <div class="classroom-chat-header">
+                                <h3>💬 Ask About This Lecture</h3>
+                                <span class="classroom-time-badge" id="classroomTimeBadge">0:00 – 0:00</span>
+                            </div>
+                            <div class="classroom-messages" id="classroomMessages">
+                                <div class="classroom-welcome" id="classroomWelcome">
+                                    <div class="classroom-welcome-icon">🎓</div>
+                                    <h3>Watch & Ask</h3>
+                                    <p>Play the video, pause anytime, and ask a question. I'll answer based only on what you've watched so far.</p>
+                                </div>
+                            </div>
+                            <div class="classroom-input-area">
+                                <div class="classroom-input-wrapper">
+                                    <textarea id="classroomChatInput" placeholder="Pause the video and ask a question..." rows="1" onkeydown="handleClassroomKeyPress(event)" oninput="autoResizeClassroom(this)"></textarea>
+                                    <button class="classroom-send-btn" id="classroomSendBtn" onclick="sendClassroomMessage()" title="Send message">
+                                        <svg viewBox="0 0 24 24" width="18" height="18">
+                                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="classroom-paused-hint" id="classroomPausedHint">
+                                    ⏸️ Video paused — question will be based on content watched so far
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- RESOURCES -->
                 <div class="resources-section" id="resourcesPanel">
                     <div class="res-header">
@@ -136,6 +254,7 @@
             </div>
         </div>
     </div>
+
     <!-- PREFERENCES & ACCESSIBILITY MODAL -->
     <div id="preferencesModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:3000; justify-content:center; align-items:center;">
         <div style="background: var(--sidebar-bg); padding: 30px; border-radius: 16px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y: auto; border: 1px solid var(--border-color); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
@@ -181,6 +300,7 @@
             </button>
         </div>
     </div>
+
     <!-- WARM-UP MODAL -->
     <div id="warmupModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:4000; justify-content:center; align-items:center;">
         <div style="background: var(--sidebar-bg); padding: 35px; border-radius: 20px; width: 90%; max-width: 450px; border: 1px solid var(--border-color); box-shadow: 0 15px 40px rgba(0,0,0,0.6); text-align: center;">
@@ -202,7 +322,8 @@
             </div>
         </div>
     </div>
-    <script src="/static/js/chat.js" defer></script>
+
+    <script src="/static/js/chat.js?v=2" defer></script>
 </body>
 
 </html>

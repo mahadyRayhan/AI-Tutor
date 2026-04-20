@@ -863,6 +863,352 @@ async function loadInitialPreferences() {
     const prefs = await res.json();
     applyAccessibility(prefs);
 }
+
+// ═══════════════════════════════════════════
+//  VIEW SWITCHING: Chat ↔ Classroom
+// ═══════════════════════════════════════════
+let currentView = 'chat'; // 'chat' or 'classroom'
+
+function switchToChat() {
+    currentView = 'chat';
+    document.getElementById('chatView').style.display = 'flex';
+    document.getElementById('classroomView').style.display = 'none';
+    
+    // Update nav buttons
+    document.getElementById('navChat').classList.add('active');
+    document.getElementById('navClassroom').classList.remove('active');
+}
+
+function switchToClassroom() {
+    currentView = 'classroom';
+    document.getElementById('chatView').style.display = 'none';
+    document.getElementById('classroomView').style.display = 'flex';
+    
+    // Update nav buttons
+    document.getElementById('navChat').classList.remove('active');
+    document.getElementById('navClassroom').classList.add('active');
+    
+    // Load video list if not already loaded
+    if (!classroomVideosLoaded) {
+        loadClassroomVideoList();
+    }
+}
+
+// ═══════════════════════════════════════════
+//  CLASSROOM (Embedded Video Chat)
+// ═══════════════════════════════════════════
+let classroomVideosLoaded = false;
+let classroomVideoFilename = '';
+let classroomTimestamp = 0;
+let classroomIsPaused = false;
+let classroomIsStreaming = false;
+let classroomChatMessages = [];
+
+async function loadClassroomVideoList() {
+    try {
+        const resp = await fetch('/api/v1/video/list');
+        const data = await resp.json();
+        
+        const sel = document.getElementById('classroomVideoSelect');
+        sel.innerHTML = '<option value="">— Select a lecture —</option>';
+        
+        for (const v of data.videos) {
+            const opt = document.createElement('option');
+            opt.value = v.filename;
+            const displayName = v.filename
+                .replace(/\.[^.]+$/, '')
+                .replace(/_/g, ' ')
+                .replace(/([a-z])([A-Z])/g, '$1 $2');
+            opt.textContent = `${displayName} (${v.size_mb} MB)`;
+            if (v.has_transcript) opt.textContent += ' ✓';
+            sel.appendChild(opt);
+        }
+
+        // Auto-select if only one video
+        if (data.videos.length === 1) {
+            sel.value = data.videos[0].filename;
+            onClassroomVideoSelect(data.videos[0].filename);
+        }
+        
+        classroomVideosLoaded = true;
+    } catch (err) {
+        console.error('Failed to load classroom videos:', err);
+    }
+}
+
+function onClassroomVideoSelect(filename) {
+    if (!filename) return;
+    
+    classroomVideoFilename = filename;
+    const videoEl = document.getElementById('classroomVideo');
+    videoEl.src = `/videos/${encodeURIComponent(filename)}`;
+    videoEl.load();
+    
+    // Reset state
+    classroomTimestamp = 0;
+    classroomIsPaused = false;
+    classroomChatMessages = [];
+    
+    const welcome = document.getElementById('classroomWelcome');
+    if (welcome) welcome.style.display = 'flex';
+    renderClassroomMessages();
+    updateClassroomTimeBadge(0);
+    updateClassroomTranscriptStatus('ready');
+    
+    // Bind video events
+    videoEl.onpause = onClassroomPause;
+    videoEl.onplay = onClassroomPlay;
+    videoEl.ontimeupdate = onClassroomTimeUpdate;
+}
+
+function onClassroomPause() {
+    classroomIsPaused = true;
+    const videoEl = document.getElementById('classroomVideo');
+    classroomTimestamp = videoEl.currentTime;
+    updateClassroomTimeBadge(classroomTimestamp);
+    
+    const hint = document.getElementById('classroomPausedHint');
+    if (hint) hint.classList.add('visible');
+    
+    setTimeout(() => document.getElementById('classroomChatInput').focus(), 100);
+}
+
+function onClassroomPlay() {
+    classroomIsPaused = false;
+    const hint = document.getElementById('classroomPausedHint');
+    if (hint) hint.classList.remove('visible');
+}
+
+function onClassroomTimeUpdate() {
+    if (!classroomIsPaused) {
+        classroomTimestamp = document.getElementById('classroomVideo').currentTime;
+    }
+}
+
+function updateClassroomTimeBadge(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const str = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    const badge = document.getElementById('classroomTimeBadge');
+    if (badge) badge.textContent = `0:00 – ${str}`;
+}
+
+function updateClassroomTranscriptStatus(state) {
+    const el = document.getElementById('classroomTranscriptStatus');
+    if (!el) return;
+    switch (state) {
+        case 'transcribing': el.textContent = '🎙️ Transcribing video...'; break;
+        case 'ready': el.textContent = '✅ Ready to answer questions'; break;
+        case 'error': el.textContent = '❌ Transcription failed'; break;
+        default: el.textContent = '';
+    }
+}
+
+function handleClassroomKeyPress(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendClassroomMessage();
+    }
+}
+
+function autoResizeClassroom(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 100) + 'px';
+}
+
+async function sendClassroomMessage() {
+    const inputEl = document.getElementById('classroomChatInput');
+    const question = inputEl.value.trim();
+    if (!question || classroomIsStreaming) return;
+    
+    if (!classroomVideoFilename) {
+        classroomChatMessages.push({ role: 'system', content: 'Please select a video first.' });
+        renderClassroomMessages();
+        return;
+    }
+    
+    // Hide welcome
+    const welcome = document.getElementById('classroomWelcome');
+    if (welcome) welcome.style.display = 'none';
+    
+    // Pause video if playing
+    const videoEl = document.getElementById('classroomVideo');
+    if (!videoEl.paused) videoEl.pause();
+    
+    const askTimestamp = videoEl.currentTime;
+    
+    // Add user message
+    classroomChatMessages.push({ role: 'user', content: question, timestamp: askTimestamp });
+    renderClassroomMessages();
+    
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+    
+    classroomIsStreaming = true;
+    document.getElementById('classroomSendBtn').disabled = true;
+    
+    const botMsg = { role: 'bot', content: '', timestamp: askTimestamp, streaming: true };
+    classroomChatMessages.push(botMsg);
+    renderClassroomMessages();
+    
+    updateClassroomTranscriptStatus('transcribing');
+    
+    try {
+        const response = await fetch('/api/v1/video/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                video_filename: classroomVideoFilename,
+                question: question,
+                timestamp: askTimestamp,
+            }),
+        });
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const event = JSON.parse(line.slice(6));
+                    if (event.type === 'token') {
+                        botMsg.content += event.text;
+                        renderClassroomMessages();
+                    } else if (event.type === 'complete') {
+                        botMsg.content = event.data.answer;
+                        botMsg.streaming = false;
+                        renderClassroomMessages();
+                        updateClassroomTranscriptStatus('ready');
+                        
+                        // Save to chat history if we have a session
+                        saveClassroomToHistory(question, botMsg.content, askTimestamp);
+                    } else if (event.type === 'error') {
+                        botMsg.content = `⚠️ Error: ${event.message}`;
+                        botMsg.streaming = false;
+                        renderClassroomMessages();
+                        updateClassroomTranscriptStatus('error');
+                    }
+                } catch (parseErr) { /* ignore non-JSON */ }
+            }
+        }
+    } catch (err) {
+        console.error('Classroom chat error:', err);
+        botMsg.content = '⚠️ Connection error. Please try again.';
+        botMsg.streaming = false;
+        renderClassroomMessages();
+        updateClassroomTranscriptStatus('error');
+    }
+    
+    classroomIsStreaming = false;
+    document.getElementById('classroomSendBtn').disabled = false;
+}
+
+// Save classroom Q&A into the chat history system
+async function saveClassroomToHistory(question, answer, timestamp) {
+    if (!currentUser) return;
+    
+    const mins = Math.floor(timestamp / 60);
+    const secs = Math.floor(timestamp % 60);
+    const timeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    
+    const videoName = classroomVideoFilename.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+    
+    try {
+        // Use the regular chat endpoint with a special marker to create a session
+        const payload = {
+            message: `[CLASSROOM] Video: ${videoName} at ${timeStr}\n\nQuestion: ${question}`,
+            user_role: currentUser.role,
+            username: currentUser.username,
+            session_id: null   // Creates a new session for this Q&A
+        };
+        
+        // We just fire this to create history; we already have the answer
+        // The endpoint will create a new session visible in chat history
+        await fetch(`${API_URL}/api/v1/chat/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        // Refresh history sidebar
+        loadChatHistory();
+    } catch (err) {
+        console.error('Failed to save classroom history:', err);
+    }
+}
+
+function renderClassroomMessages() {
+    const el = document.getElementById('classroomMessages');
+    if (!el) return;
+    
+    if (classroomChatMessages.length === 0) {
+        el.innerHTML = '';
+        return;
+    }
+    
+    let html = '';
+    for (const msg of classroomChatMessages) {
+        if (msg.role === 'system') {
+            html += `<div class="cr-message" style="justify-content:center;"><div class="cr-message-content" style="text-align:center; font-size:0.8rem; color:var(--text-muted);">${escapeHtmlCr(msg.content)}</div></div>`;
+            continue;
+        }
+        
+        const isUser = msg.role === 'user';
+        const avatarEmoji = isUser ? '🎓' : '🤖';
+        const roleClass = isUser ? 'user' : 'bot';
+        
+        const mins = Math.floor((msg.timestamp || 0) / 60);
+        const secs = Math.floor((msg.timestamp || 0) % 60);
+        const timeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        
+        let contentHtml = isUser ? escapeHtmlCr(msg.content) : renderMarkdownCr(msg.content);
+        
+        let typingHtml = '';
+        if (msg.streaming && !msg.content) {
+            typingHtml = `<div class="cr-typing"><span></span><span></span><span></span></div>`;
+        }
+        
+        const timeRefHtml = !isUser ? `<span class="cr-timestamp-ref">📍 Based on video up to ${timeStr}</span>` : '';
+        
+        html += `
+            <div class="cr-message ${roleClass}">
+                <div class="cr-message-avatar">${avatarEmoji}</div>
+                <div class="cr-message-content">
+                    ${timeRefHtml}
+                    ${contentHtml}
+                    ${typingHtml}
+                </div>
+            </div>`;
+    }
+    
+    el.innerHTML = html;
+    el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtmlCr(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function renderMarkdownCr(text) {
+    if (!text) return '';
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({ breaks: true, gfm: true });
+        return marked.parse(text);
+    }
+    return text.replace(/\n/g, '<br>');
+}
+
 // Init
 const stored = localStorage.getItem('c_tutor_user');
 if (stored) { currentUser = JSON.parse(stored); routeUser(); }

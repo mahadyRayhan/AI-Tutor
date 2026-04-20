@@ -34,6 +34,7 @@ from app.core.history_manager import history_manager
 from app.core.user_knowledge_manager import knowledge_manager
 from app.core.assignment_manager import assignment_manager
 from app.db.sqlite_db import db
+from app.services.video_service import transcribe_video, get_transcript_until, list_available_videos
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -62,6 +63,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # Mount the static directory
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Mount the video directory for browser playback
+VIDEO_DIR = config.PROJECT_ROOT / "video"
+if VIDEO_DIR.exists():
+    app.mount("/videos", StaticFiles(directory=str(VIDEO_DIR)), name="videos")
 
 # --- Data Models ---
 class SignupRequest(BaseModel):
@@ -122,6 +128,12 @@ class SubmissionRequest(BaseModel):
 class AssignmentGradeRequest(BaseModel):
     assignment_id: str
     feedback: str
+
+class VideoChatRequest(BaseModel):
+    video_filename: str
+    question: str
+    timestamp: float  # seconds into the video where student paused
+    username: Optional[str] = "anonymous"
 
 class TutorPreferences(BaseModel):
     custom_instructions: str = ""
@@ -1231,6 +1243,88 @@ async def update_user_preferences(req: PreferencesUpdateRequest):
         (json.dumps(profile), req.username)
     )
     return {"status": "success"}
+
+# --- VIDEO CHAT ENDPOINTS ---
+@app.post("/api/v1/video/chat")
+async def video_chat_stream(request: VideoChatRequest):
+    """
+    Stream an AI response to a student question about video content.
+    Only uses transcript up to the student's current video timestamp.
+    """
+    # 1. Resolve video path
+    video_path = VIDEO_DIR / request.video_filename
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {request.video_filename}")
+    
+    # 2. Get transcript up to the paused timestamp
+    transcript_context = get_transcript_until(str(video_path), request.timestamp)
+    
+    # 3. Format the timestamp for display
+    mins = int(request.timestamp // 60)
+    secs = int(request.timestamp % 60)
+    time_str = f"{mins:02d}:{secs:02d}"
+    
+    # 4. Build the LLM prompt
+    system_prompt = f"""You are a helpful AI Teaching Assistant. A student is watching a lecture video and has paused at {time_str} to ask a question.
+
+IMPORTANT RULES:
+1. ONLY use the lecture transcript below to answer. Do NOT add information not covered in the transcript.
+2. If the transcript doesn't cover the student's question yet, tell them: "This topic hasn't been covered yet in the lecture. Keep watching — it may come up later!"
+3. Reference specific points from the lecture when possible (e.g., "As the instructor explained at 01:23...").
+4. Be concise and educational. Use examples if helpful.
+5. Format your response with Markdown for readability.
+
+--- LECTURE TRANSCRIPT (0:00 to {time_str}) ---
+{transcript_context}
+--- END TRANSCRIPT ---"""
+
+    full_prompt = f"{system_prompt}\n\nStudent Question: {request.question}"
+    
+    async def generate():
+        full_response = ""
+        try:
+            if not llm_fast:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'LLM not initialized'})}\n\n"
+                return
+            
+            # Stream tokens
+            async for chunk in llm_fast.stream_response_async(full_prompt):
+                full_response += chunk
+                yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+            
+            # Send completion event
+            yield f"data: {json.dumps({'type': 'complete', 'data': {'answer': full_response, 'timestamp': time_str}})}\n\n"
+                
+        except Exception as e:
+            logger.error(f"Video chat streaming error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/api/v1/video/list")
+async def get_video_list():
+    """Returns a list of available lecture videos."""
+    videos = list_available_videos(str(VIDEO_DIR))
+    return {"videos": videos}
+
+
+@app.post("/api/v1/video/transcribe")
+async def trigger_transcription(video_filename: str = Form(...)):
+    """
+    Pre-transcribes a video so the first chat doesn't have to wait.
+    """
+    video_path = VIDEO_DIR / video_filename
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {video_filename}")
+    
+    try:
+        segments = transcribe_video(str(video_path))
+        return {"status": "success", "segments": len(segments)}
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn
