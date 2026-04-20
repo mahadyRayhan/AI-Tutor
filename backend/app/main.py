@@ -1338,6 +1338,21 @@ async def trigger_transcription(video_filename: str = Form(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/v1/video/transcript/{video_filename}")
+async def get_video_transcript(video_filename: str):
+    """Returns the full transcript segments for a video (for synced display)."""
+    video_path = VIDEO_DIR / video_filename
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {video_filename}")
+    
+    try:
+        segments = transcribe_video(str(video_path))
+        return {"segments": segments}
+    except Exception as e:
+        logger.error(f"Transcript fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)

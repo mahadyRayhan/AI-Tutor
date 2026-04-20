@@ -1022,6 +1022,9 @@ function onClassroomVideoSelect(filename, title) {
     videoEl.onpause = onClassroomPause;
     videoEl.onplay = onClassroomPlay;
     videoEl.ontimeupdate = onClassroomTimeUpdate;
+    
+    // Load synced transcript panel
+    loadTranscriptPanel(filename);
 }
 
 function backToVideoPicker() {
@@ -1056,9 +1059,12 @@ function onClassroomPlay() {
 }
 
 function onClassroomTimeUpdate() {
+    const currentTime = document.getElementById('classroomVideo').currentTime;
     if (!classroomIsPaused) {
-        classroomTimestamp = document.getElementById('classroomVideo').currentTime;
+        classroomTimestamp = currentTime;
     }
+    // Sync transcript highlight
+    syncTranscriptHighlight(currentTime);
 }
 
 function updateClassroomTimeBadge(seconds) {
@@ -1068,6 +1074,160 @@ function updateClassroomTimeBadge(seconds) {
     const badge = document.getElementById('classroomTimeBadge');
     if (badge) badge.textContent = `0:00 – ${str}`;
 }
+
+// ═══ SYNCED TRANSCRIPT PANEL ═══
+
+let classroomTranscriptSegments = []; // Raw segments from API
+let transcriptAutoScroll = true;      // Auto-scroll follows playback
+let lastActiveSegIdx = -1;            // Track last highlighted segment
+
+async function loadTranscriptPanel(filename) {
+    const container = document.getElementById('transcriptSegments');
+    if (!container) return;
+    
+    container.innerHTML = '<div class="transcript-loading">Loading transcript…</div>';
+    
+    try {
+        const resp = await fetch(`/api/v1/video/transcript/${encodeURIComponent(filename)}`);
+        if (!resp.ok) throw new Error('Transcript not available');
+        
+        const data = await resp.json();
+        classroomTranscriptSegments = data.segments || [];
+        
+        if (classroomTranscriptSegments.length === 0) {
+            container.innerHTML = '<div class="transcript-loading">No transcript available for this video.</div>';
+            return;
+        }
+        
+        renderTranscriptSegments();
+    } catch (err) {
+        console.error('Failed to load transcript:', err);
+        container.innerHTML = '<div class="transcript-loading">Transcript will appear after the video is first played.</div>';
+    }
+}
+
+function renderTranscriptSegments() {
+    const container = document.getElementById('transcriptSegments');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    classroomTranscriptSegments.forEach((seg, idx) => {
+        const row = document.createElement('div');
+        row.className = 'transcript-segment';
+        row.setAttribute('data-idx', idx);
+        row.setAttribute('data-start', seg.start);
+        row.setAttribute('data-end', seg.end);
+        row.setAttribute('role', 'button');
+        row.setAttribute('tabindex', '0');
+        row.setAttribute('aria-label', `Jump to ${formatTimestamp(seg.start)}: ${seg.text}`);
+        
+        // Click to seek
+        row.onclick = () => seekToTranscriptTime(seg.start);
+        row.onkeydown = (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                seekToTranscriptTime(seg.start);
+            }
+        };
+        
+        row.innerHTML = `
+            <span class="transcript-seg-time">${formatTimestamp(seg.start)}</span>
+            <span class="transcript-seg-text">${escapeHtmlCr(seg.text)}</span>
+        `;
+        
+        container.appendChild(row);
+    });
+    
+    lastActiveSegIdx = -1;
+}
+
+function formatTimestamp(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function syncTranscriptHighlight(currentTime) {
+    if (classroomTranscriptSegments.length === 0) return;
+    
+    // Find the active segment
+    let activeIdx = -1;
+    for (let i = 0; i < classroomTranscriptSegments.length; i++) {
+        const seg = classroomTranscriptSegments[i];
+        if (currentTime >= seg.start && currentTime < seg.end) {
+            activeIdx = i;
+            break;
+        }
+    }
+    
+    // If between segments, find the last segment that started before currentTime
+    if (activeIdx === -1) {
+        for (let i = classroomTranscriptSegments.length - 1; i >= 0; i--) {
+            if (currentTime >= classroomTranscriptSegments[i].start) {
+                activeIdx = i;
+                break;
+            }
+        }
+    }
+    
+    // Skip if same segment as before (avoid DOM thrashing)
+    if (activeIdx === lastActiveSegIdx) return;
+    lastActiveSegIdx = activeIdx;
+    
+    const container = document.getElementById('transcriptSegments');
+    if (!container) return;
+    
+    const rows = container.querySelectorAll('.transcript-segment');
+    rows.forEach((row, idx) => {
+        if (idx === activeIdx) {
+            row.classList.add('active');
+            // Auto-scroll: scroll the active segment into view
+            if (transcriptAutoScroll) {
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        } else {
+            row.classList.remove('active');
+        }
+    });
+}
+
+function seekToTranscriptTime(seconds) {
+    const videoEl = document.getElementById('classroomVideo');
+    if (!videoEl) return;
+    
+    videoEl.currentTime = seconds;
+    
+    // If video is paused, update timestamp manually
+    classroomTimestamp = seconds;
+    updateClassroomTimeBadge(seconds);
+    syncTranscriptHighlight(seconds);
+}
+
+function toggleTranscriptPanel() {
+    const panel = document.getElementById('transcriptPanel');
+    if (!panel) return;
+    panel.classList.toggle('collapsed');
+}
+
+// Detect manual scroll in transcript to pause auto-scroll temporarily
+(function() {
+    let scrollTimeout;
+    document.addEventListener('DOMContentLoaded', () => {
+        const segContainer = document.getElementById('transcriptSegments');
+        if (!segContainer) return;
+        
+        segContainer.addEventListener('scroll', () => {
+            // User is manually scrolling — pause auto-scroll
+            transcriptAutoScroll = false;
+            clearTimeout(scrollTimeout);
+            // Re-enable auto-scroll after 5s of no manual scrolling
+            scrollTimeout = setTimeout(() => {
+                transcriptAutoScroll = true;
+            }, 5000);
+        }, { passive: true });
+    });
+})();
 
 function updateClassroomTranscriptStatus(state) {
     const el = document.getElementById('classroomTranscriptStatus');

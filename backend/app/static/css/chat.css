@@ -845,6 +845,130 @@ body.a11y-contrast .message.bot {
     opacity: 1;
 }
 
+/* ═══ SYNCED TRANSCRIPT PANEL ═══ */
+.classroom-video-side {
+    overflow-y: auto;  /* Allow scrolling for video + transcript */
+}
+
+.transcript-panel {
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    max-height: 260px;
+    transition: max-height 0.3s ease;
+}
+
+.transcript-panel.collapsed {
+    max-height: 38px;
+    overflow: hidden;
+}
+
+.transcript-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    flex-shrink: 0;
+}
+
+.transcript-panel-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.3px;
+}
+
+.transcript-toggle-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    transition: all 0.15s;
+}
+
+.transcript-toggle-btn:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.transcript-panel.collapsed .transcript-toggle-btn svg {
+    transform: rotate(-90deg);
+}
+
+.transcript-segments {
+    overflow-y: auto;
+    flex: 1;
+    padding: 8px 0;
+    scroll-behavior: smooth;
+}
+
+.transcript-segments::-webkit-scrollbar {
+    width: 4px;
+}
+
+.transcript-segments::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+
+.transcript-segment {
+    display: flex;
+    gap: 10px;
+    padding: 6px 14px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all 0.15s ease;
+    align-items: flex-start;
+}
+
+.transcript-segment:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.transcript-segment.active {
+    background: rgba(110, 157, 245, 0.08);
+    border-left-color: var(--accent-color);
+}
+
+.transcript-segment.active .transcript-seg-text {
+    color: var(--text-primary);
+}
+
+.transcript-segment.active .transcript-seg-time {
+    color: var(--accent-color);
+}
+
+.transcript-seg-time {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+    white-space: nowrap;
+    min-width: 40px;
+    padding-top: 2px;
+    opacity: 0.7;
+    transition: all 0.15s;
+}
+
+.transcript-seg-text {
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    transition: color 0.15s;
+}
+
+.transcript-loading {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
 /* ═══ VIDEO PICKER SCREEN ═══ */
 .classroom-picker {
     flex: 1;
