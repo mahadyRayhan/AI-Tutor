@@ -65,7 +65,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Mount the video directory for browser playback
-VIDEO_DIR = config.PROJECT_ROOT / "video"
+VIDEO_DIR = config.DB_DIR / "video"
 if VIDEO_DIR.exists():
     app.mount("/videos", StaticFiles(directory=str(VIDEO_DIR)), name="videos")
 
@@ -1304,9 +1304,21 @@ IMPORTANT RULES:
 
 @app.get("/api/v1/video/list")
 async def get_video_list():
-    """Returns a list of available lecture videos."""
-    videos = list_available_videos(str(VIDEO_DIR))
-    return {"videos": videos}
+    """Returns a list of available lecture videos, filtered by teacher-enabled topics."""
+    all_videos = list_available_videos(str(VIDEO_DIR))
+    
+    # Get teacher-enabled topics
+    enabled_topics = settings_manager.get_settings()
+    
+    # Filter: only include videos whose topic is enabled (or if no topic match, include it)
+    filtered = []
+    for v in all_videos:
+        topic = v.get("topic", "General")
+        # If the topic exists in settings and is enabled, or if it's not in settings at all (show by default)
+        if enabled_topics.get(topic, True):
+            filtered.append(v)
+    
+    return {"videos": filtered}
 
 
 @app.post("/api/v1/video/transcribe")

@@ -902,41 +902,96 @@ let classroomVideoFilename = '';
 let classroomTimestamp = 0;
 let classroomIsPaused = false;
 let classroomIsStreaming = false;
+let classroomVideoData = []; // Cached video list for reference
 let classroomChatMessages = [];
+
+// Topic → emoji mapping for cards
+const TOPIC_ICONS = {
+    'Variables': '📦',
+    'Control Flow': '🔀',
+    'Functions': '⚙️',
+    'Arrays': '📊',
+    'Strings': '💬',
+    'Pointers': '📍',
+    'Structures': '🏗️',
+    'General': '📹',
+};
+
+// Topic → CSS class mapping
+function topicClass(topic) {
+    return 'topic-' + (topic || 'general').toLowerCase().replace(/\s+/g, '-');
+}
+
+function formatDuration(sec) {
+    if (!sec || sec <= 0) return '';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 async function loadClassroomVideoList() {
     try {
         const resp = await fetch('/api/v1/video/list');
         const data = await resp.json();
+        classroomVideoData = data.videos || [];
         
-        const sel = document.getElementById('classroomVideoSelect');
-        sel.innerHTML = '<option value="">— Select a lecture —</option>';
+        const grid = document.getElementById('classroomVideoGrid');
+        if (!grid) return;
         
-        for (const v of data.videos) {
-            const opt = document.createElement('option');
-            opt.value = v.filename;
-            const displayName = v.filename
-                .replace(/\.[^.]+$/, '')
-                .replace(/_/g, ' ')
-                .replace(/([a-z])([A-Z])/g, '$1 $2');
-            opt.textContent = `${displayName} (${v.size_mb} MB)`;
-            if (v.has_transcript) opt.textContent += ' ✓';
-            sel.appendChild(opt);
+        if (classroomVideoData.length === 0) {
+            grid.innerHTML = `
+                <div class="picker-empty">
+                    <div class="picker-empty-icon">📭</div>
+                    <p>No lecture videos available yet. Your teacher will add them soon!</p>
+                </div>`;
+            classroomVideosLoaded = true;
+            return;
         }
-
-        // Auto-select if only one video
-        if (data.videos.length === 1) {
-            sel.value = data.videos[0].filename;
-            onClassroomVideoSelect(data.videos[0].filename);
+        
+        grid.innerHTML = '';
+        
+        for (const v of classroomVideoData) {
+            const topic = v.topic || 'General';
+            const icon = TOPIC_ICONS[topic] || '📹';
+            const dur = formatDuration(v.duration_sec);
+            const transcriptBadge = v.has_transcript ? '<span class="video-card-transcript-badge">✓ Ready</span>' : '';
+            
+            const card = document.createElement('button');
+            card.className = 'video-card';
+            card.setAttribute('aria-label', `Watch ${v.title}`);
+            card.setAttribute('tabindex', '0');
+            card.onclick = () => onClassroomVideoSelect(v.filename, v.title);
+            
+            card.innerHTML = `
+                <div class="video-card-thumb" style="background: linear-gradient(135deg, rgba(110,157,245,0.06), rgba(167,139,250,0.06));">
+                    <div class="video-card-thumb-bg">${icon}</div>
+                    <div class="video-card-play-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    </div>
+                </div>
+                <div class="video-card-body">
+                    <span class="video-card-title">${escapeHtmlCr(v.title || v.filename)}</span>
+                    <div class="video-card-meta">
+                        <span class="video-card-topic ${topicClass(topic)}">${topic}</span>
+                        ${dur ? `<span class="video-card-duration">⏱ ${dur}</span>` : ''}
+                        <span class="video-card-size">${v.size_mb} MB</span>
+                        ${transcriptBadge}
+                    </div>
+                </div>
+            `;
+            
+            grid.appendChild(card);
         }
         
         classroomVideosLoaded = true;
     } catch (err) {
         console.error('Failed to load classroom videos:', err);
+        const grid = document.getElementById('classroomVideoGrid');
+        if (grid) grid.innerHTML = '<div class="picker-empty"><div class="picker-empty-icon">⚠️</div><p>Failed to load videos. Please try again.</p></div>';
     }
 }
 
-function onClassroomVideoSelect(filename) {
+function onClassroomVideoSelect(filename, title) {
     if (!filename) return;
     
     classroomVideoFilename = filename;
@@ -949,6 +1004,14 @@ function onClassroomVideoSelect(filename) {
     classroomIsPaused = false;
     classroomChatMessages = [];
     
+    // Show player, hide picker
+    document.getElementById('classroomPicker').style.display = 'none';
+    document.getElementById('classroomPlayer').style.display = 'flex';
+    
+    // Set active title
+    const displayTitle = title || filename.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+    document.getElementById('classroomActiveTitle').textContent = displayTitle;
+    
     const welcome = document.getElementById('classroomWelcome');
     if (welcome) welcome.style.display = 'flex';
     renderClassroomMessages();
@@ -959,6 +1022,19 @@ function onClassroomVideoSelect(filename) {
     videoEl.onpause = onClassroomPause;
     videoEl.onplay = onClassroomPlay;
     videoEl.ontimeupdate = onClassroomTimeUpdate;
+}
+
+function backToVideoPicker() {
+    // Pause any playing video
+    const videoEl = document.getElementById('classroomVideo');
+    if (videoEl && !videoEl.paused) videoEl.pause();
+    
+    // Show picker, hide player
+    document.getElementById('classroomPicker').style.display = 'flex';
+    document.getElementById('classroomPlayer').style.display = 'none';
+    
+    // Optionally reload the list (in case teacher changed visibility)
+    loadClassroomVideoList();
 }
 
 function onClassroomPause() {

@@ -123,14 +123,38 @@ def get_video_duration_from_transcript(video_path: str) -> float:
 
 def list_available_videos(video_dir: str) -> List[Dict]:
     """
-    Lists all video files in the given directory.
+    Lists all video files in the given directory with rich metadata.
+    
+    Extracts topic and display name from filenames:
+      - 'Variables_in_C.mp4' → topic='Variables', title='Variables in C'
+      - 'Control_Flow_Basics.mp4' → topic='Control Flow', title='Control Flow Basics'
     
     Returns:
-        List of dicts: [{"filename": "Variables_in_C.mp4", "has_transcript": true, "size_mb": 18.5}, ...]
+        List of dicts with filename, title, topic, has_transcript, size_mb, duration_sec
     """
     video_dir_path = Path(video_dir)
     if not video_dir_path.exists():
         return []
+    
+    # Known topic keywords (match against the start of filenames)
+    TOPIC_KEYWORDS = {
+        "Variables": "Variables",
+        "Control_Flow": "Control Flow",
+        "Control Flow": "Control Flow",
+        "Functions": "Functions",
+        "Function": "Functions",
+        "Arrays": "Arrays",
+        "Array": "Arrays",
+        "Strings": "Strings",
+        "String": "Strings",
+        "Pointers": "Pointers",
+        "Pointer": "Pointers",
+        "Structures": "Structures",
+        "Structure": "Structures",
+        "Struct": "Structures",
+        "Loops": "Control Flow",
+        "Loop": "Control Flow",
+    }
     
     videos = []
     supported_extensions = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
@@ -138,10 +162,39 @@ def list_available_videos(video_dir: str) -> List[Dict]:
     for f in sorted(video_dir_path.iterdir()):
         if f.suffix.lower() in supported_extensions and f.is_file():
             transcript_path = _get_transcript_cache_path(str(f))
+            
+            # Extract display name from filename
+            stem = f.stem  # e.g. "Variables_in_C"
+            display_name = stem.replace("_", " ").replace("-", " ")
+            # Clean up camelCase: "VariablesInC" → "Variables In C"
+            import re
+            display_name = re.sub(r'([a-z])([A-Z])', r'\1 \2', display_name)
+            
+            # Match topic from filename
+            topic = "General"
+            for keyword, topic_name in TOPIC_KEYWORDS.items():
+                if keyword.lower() in stem.lower():
+                    topic = topic_name
+                    break
+            
+            # Get duration from transcript cache if available
+            duration = 0.0
+            if transcript_path.exists():
+                try:
+                    with open(transcript_path, "r", encoding="utf-8") as tf:
+                        segments = json.load(tf)
+                        if segments:
+                            duration = segments[-1].get("end", 0.0)
+                except Exception:
+                    pass
+            
             videos.append({
                 "filename": f.name,
+                "title": display_name,
+                "topic": topic,
                 "has_transcript": transcript_path.exists(),
                 "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
+                "duration_sec": round(duration, 1),
             })
     
     return videos
