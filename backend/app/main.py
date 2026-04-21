@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any, List
 import logging
 import time
 import json
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pathlib import Path
 from datetime import datetime
 import csv
@@ -64,10 +64,13 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Mount the static directory
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Mount the video directory for browser playback
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Video directory (served dynamically, not as a static mount — avoids Docker startup issues)
 VIDEO_DIR = config.DB_DIR / "video"
-if VIDEO_DIR.exists():
-    app.mount("/videos", StaticFiles(directory=str(VIDEO_DIR)), name="videos")
+logger.info(f"VIDEO_DIR resolved to: {VIDEO_DIR} (exists: {VIDEO_DIR.exists()})")
 
 # --- Data Models ---
 class SignupRequest(BaseModel):
@@ -83,10 +86,6 @@ class AdminUserUpdate(BaseModel):
     target_username: str
     new_role: Optional[str] = None
     blocked: Optional[bool] = None
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Global variables
 llm_fast = None
@@ -1319,6 +1318,33 @@ async def get_video_list():
             filtered.append(v)
     
     return {"videos": filtered}
+
+
+@app.get("/videos/{video_filename:path}")
+async def serve_video(video_filename: str):
+    """Dynamically serves video files from VIDEO_DIR (replaces static mount for Docker compatibility)."""
+    import mimetypes
+    video_path = VIDEO_DIR / video_filename
+    
+    # Security: prevent path traversal
+    try:
+        video_path = video_path.resolve()
+        VIDEO_DIR.resolve()
+        if not str(video_path).startswith(str(VIDEO_DIR.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    
+    if not video_path.exists() or not video_path.is_file():
+        logger.error(f"Video not found: {video_path} (VIDEO_DIR={VIDEO_DIR}, exists={VIDEO_DIR.exists()})")
+        raise HTTPException(status_code=404, detail=f"Video not found: {video_filename}")
+    
+    media_type, _ = mimetypes.guess_type(str(video_path))
+    return FileResponse(
+        path=str(video_path),
+        media_type=media_type or "video/mp4",
+        filename=video_filename,
+    )
 
 
 @app.post("/api/v1/video/transcribe")
