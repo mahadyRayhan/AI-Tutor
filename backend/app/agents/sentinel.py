@@ -242,7 +242,7 @@ class SentinelAgent(BaseAgent):
         # =========================================================
         # For queries classified as CONCEPT/PROBLEM but with no C-related keywords,
         # do a fast LLM check to make sure it's actually about C programming.
-        if intent in ["CONCEPT", "PROBLEM"]:
+        if intent in ["CONCEPT", "PROBLEM"] and intent != "GREETING":
             c_keywords = [
                 "c ", "c++", "pointer", "array", "struct", "loop", "function",
                 "variable", "int", "char", "float", "double", "void", "string",
@@ -291,15 +291,16 @@ Question: "{state.query}" """
         # =========================================================
         # LAYER 6: TOPIC LOCKS (TEACHER SETTINGS)
         # =========================================================
-        topic_settings = settings_manager.get_settings()
-        for entity in entities:
-            for t, is_enabled in topic_settings.items():
-                # Fuzzy match
-                if (entity.lower() in t.lower() or t.lower() in entity.lower()) and not is_enabled:
-                    msg = f"🔒 **Topic Locked**\n\nThe topic **{t}** is currently disabled by your instructor."
-                    state.final_response = msg
-                    state.stop_processing = True
-                    yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": intent}}
-                    return
+        if intent != "GREETING":
+            topic_settings = settings_manager.get_settings()
+            for entity in entities:
+                for t, is_enabled in topic_settings.items():
+                    # Fuzzy match
+                    if (entity.lower() in t.lower() or t.lower() in entity.lower()) and not is_enabled:
+                        msg = f"🔒 **Topic Locked**\n\nThe topic **{t}** is currently disabled by your instructor."
+                        state.final_response = msg
+                        state.stop_processing = True
+                        yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": intent}}
+                        return
 
         # If we get here, the request is safe.

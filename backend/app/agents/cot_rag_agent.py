@@ -1040,6 +1040,54 @@ class ChainOfThoughtRAGAgent:
             return
         # =========================================================
 
+        # =========================================================
+        # --- GREETING / CASUAL CHAT HANDLER ---
+        # Intercept greetings and casual messages BEFORE the heavy pipeline.
+        # Prevents "Hello!" from triggering scaffolding, RAG, micro-challenges, etc.
+        # =========================================================
+        if config.INTENT_CLASSIFIER_MODE == "fast":
+            pre_intent = fast_classifier.classify_intent(query)
+        else:
+            pre_intent = None
+        
+        if pre_intent == "GREETING":
+            self.logger.info(f"👋 [GREETING] Intercepted casual message: '{query}'")
+            
+            # Build a warm, human-like greeting
+            q_lower = query.lower().strip().rstrip('!?.,')
+            known_concepts = knowledge_manager.get_known_concepts(username)
+            
+            if q_lower in ("thanks", "thank you", "thx"):
+                greeting_msg = "You're welcome! 😊 I'm always here to help. What would you like to learn next?"
+            elif q_lower in ("bye", "goodbye", "see you", "see ya"):
+                greeting_msg = "Goodbye! 👋 Great studying today. Come back anytime you need help with C programming!"
+            else:
+                # Standard hello/hi greeting
+                greeting_msg = f"Hey there! 👋 Welcome to the C Programming Tutor.\n\n"
+                if user_goal:
+                    greeting_msg += f"You're working toward: **{user_goal}**.\n\n"
+                if known_concepts:
+                    greeting_msg += f"Last time you were learning about **{known_concepts[-1]}**. "
+                    greeting_msg += "Want to continue, or explore something new?"
+                else:
+                    greeting_msg += "I'm here to help you learn C programming — ask me anything about variables, loops, arrays, pointers, and more!"
+            
+            suggestions = []
+            if known_concepts:
+                suggestions = [f"Review {known_concepts[-1]}", "Teach me something new", "I need help with code"]
+            else:
+                suggestions = ["What is a Variable?", "How does C work?", "I need help with an assignment"]
+            
+            yield {"type": "complete", "data": {
+                "answer": greeting_msg,
+                "sources": [],
+                "intent": "GREETING",
+                "suggestions": suggestions,
+                "entities": ["General"],
+            }}
+            return
+        # =========================================================
+
         current_frustration = await self.profiler.analyze_sentiment(username, query)
         # --- 4. LOAD PROFILE & SETUP STATE ---
         user_row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
