@@ -216,29 +216,34 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
         let streamDone = false;         // has the SSE stream closed?
         let completeEvent = null;       // stash the 'complete' event
 
-        const CHAR_DELAY = 12;          // ms per character (~80 chars/s)
-        const CHUNK_SIZE = 3;           // render N chars per tick for speed
+        const TICK_MS = 16;             // ~60fps render tick
 
         function renderNextChunk() {
+            typewriterTimer = null;     // mark timer as consumed
             if (renderedLength < fullMarkdown.length) {
-                renderedLength = Math.min(renderedLength + CHUNK_SIZE, fullMarkdown.length);
+                // Adaptive chunk size: bigger backlog → faster catch-up
+                const backlog = fullMarkdown.length - renderedLength;
+                const chunkSize = backlog > 500 ? 30 : backlog > 200 ? 15 : backlog > 50 ? 8 : 4;
+                
+                renderedLength = Math.min(renderedLength + chunkSize, fullMarkdown.length);
                 const textContainer = document.getElementById(`text-${progId}`);
                 if (textContainer) {
                     textContainer.innerHTML = marked.parse(fullMarkdown.slice(0, renderedLength));
                 }
                 scrollToBottom();
-                typewriterTimer = setTimeout(renderNextChunk, CHAR_DELAY);
+                typewriterTimer = setTimeout(renderNextChunk, TICK_MS);
             } else if (streamDone && completeEvent) {
                 // Buffer fully drained AND stream is done → do final render
                 finishRender(completeEvent);
                 completeEvent = null;
             }
-            // else: buffer caught up to received text, wait for more
+            // else: buffer caught up — typewriterTimer is null,
+            //       so startTypewriter() can restart when new tokens arrive
         }
 
         function startTypewriter() {
-            if (!typewriterTimer) {
-                typewriterTimer = setTimeout(renderNextChunk, CHAR_DELAY);
+            if (typewriterTimer === null) {
+                typewriterTimer = setTimeout(renderNextChunk, TICK_MS);
             }
         }
 

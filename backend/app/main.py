@@ -1252,7 +1252,8 @@ async def update_user_preferences(req: PreferencesUpdateRequest):
 async def video_chat_stream(request: VideoChatRequest):
     """
     Stream an AI response to a student question about video content.
-    Only uses transcript up to the student's current video timestamp.
+    Uses transcript up to the student's current timestamp as PRIMARY context,
+    and topic-filtered vectorDB resources as SUPPLEMENTARY context.
     """
     # 1. Resolve video path
     video_path = VIDEO_DIR / request.video_filename
@@ -1267,19 +1268,70 @@ async def video_chat_stream(request: VideoChatRequest):
     secs = int(request.timestamp % 60)
     time_str = f"{mins:02d}:{secs:02d}"
     
-    # 4. Build the LLM prompt
-    system_prompt = f"""You are a helpful AI Teaching Assistant. A student is watching a lecture video and has paused at {time_str} to ask a question.
+    # 4. Detect the video's topic from filename
+    TOPIC_KEYWORDS = {
+        "variable": "Variables", "var": "Variables", "datatype": "Variables",
+        "control": "Control Flow", "loop": "Control Flow", "switch": "Control Flow",
+        "function": "Functions",
+        "array": "Arrays",
+        "string": "Strings",
+        "pointer": "Pointers",
+        "struct": "Structures",
+    }
+    video_stem = video_path.stem.lower()
+    video_topic = "General"
+    for keyword, topic_name in TOPIC_KEYWORDS.items():
+        if keyword in video_stem:
+            video_topic = topic_name
+            break
+    logger.info(f"🎬 [CLASSROOM] Video: {request.video_filename}, Topic: {video_topic}, Timestamp: {time_str}")
+    
+    # 5. Query vectorDB for supplementary resources (topic-filtered)
+    supplementary_context = ""
+    resource_sources = []
+    if vector_store and vector_store.is_ready() and llm_fast and video_topic != "General":
+        try:
+            query_embedding = llm_fast.get_embedding(request.question)
+            topic_filter = {"topic": video_topic}
+            resource_chunks = vector_store.query(query_embedding, top_k=4, where_filter=topic_filter)
+            
+            if resource_chunks:
+                chunk_texts = []
+                for chunk in resource_chunks:
+                    if chunk.get("score", 0) > 0.25:  # Only include relevant chunks
+                        chunk_texts.append(chunk["text"])
+                        source_name = chunk.get("metadata", {}).get("source_file", "Course Material")
+                        if source_name not in resource_sources:
+                            resource_sources.append(source_name)
+                
+                if chunk_texts:
+                    supplementary_context = "\n\n".join(chunk_texts)
+                    logger.info(f"📚 [CLASSROOM] Found {len(chunk_texts)} supplementary chunks for topic '{video_topic}'")
+        except Exception as e:
+            logger.warning(f"⚠️ [CLASSROOM] VectorDB query failed (non-fatal): {e}")
+    
+    # 6. Build the LLM prompt with two-tier context
+    has_supplement = bool(supplementary_context.strip())
+    
+    system_prompt = f"""You are a helpful AI Teaching Assistant. A student is watching a lecture video about **{video_topic}** and has paused at {time_str} to ask a question.
 
 IMPORTANT RULES:
-1. ONLY use the lecture transcript below to answer. Do NOT add information not covered in the transcript.
-2. If the transcript doesn't cover the student's question yet, tell them: "This topic hasn't been covered yet in the lecture. Keep watching — it may come up later!"
-3. Reference specific points from the lecture when possible (e.g., "As the instructor explained at 01:23...").
+1. **PRIMARY SOURCE**: Use the LECTURE TRANSCRIPT below as your main source. Reference specific points from the lecture when possible (e.g., "As the instructor explained at 01:23...").
+2. **SUPPLEMENTARY SOURCE**: If the transcript doesn't fully answer the question but the COURSE MATERIALS section has relevant information, use it to provide a complete answer. Clearly indicate when you're drawing from course materials vs. the lecture.
+3. If NEITHER source covers the student's question, tell them: "This topic hasn't been covered yet in the lecture or available course materials."
 4. Be concise and educational. Use examples if helpful.
 5. Format your response with Markdown for readability.
 
 --- LECTURE TRANSCRIPT (0:00 to {time_str}) ---
 {transcript_context}
 --- END TRANSCRIPT ---"""
+
+    if has_supplement:
+        system_prompt += f"""
+
+--- COURSE MATERIALS ({video_topic}) ---
+{supplementary_context}
+--- END COURSE MATERIALS ---"""
 
     full_prompt = f"{system_prompt}\n\nStudent Question: {request.question}"
     
@@ -1295,8 +1347,15 @@ IMPORTANT RULES:
                 full_response += chunk
                 yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
             
-            # Send completion event
-            yield f"data: {json.dumps({'type': 'complete', 'data': {'answer': full_response, 'timestamp': time_str}})}\n\n"
+            # Send completion event with source metadata
+            completion_data = {
+                'answer': full_response,
+                'timestamp': time_str,
+                'topic': video_topic,
+                'used_resources': has_supplement,
+                'resource_sources': resource_sources,
+            }
+            yield f"data: {json.dumps({'type': 'complete', 'data': completion_data})}\n\n"
                 
         except Exception as e:
             logger.error(f"Video chat streaming error: {e}", exc_info=True)
