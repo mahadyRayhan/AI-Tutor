@@ -1164,9 +1164,23 @@ class ChainOfThoughtRAGAgent:
             "can you", "give me", "show me", "example", "simple",
             "don't understand", "don't get", "confused", "struggling", "teach me"
         )
+        # --- FLEXIBLE POP QUIZ TRIGGER ---
         is_learning_request = any(p in q_lower_quiz for p in learning_phrases)
+        is_frustrated = learning_profile.get("frustration_level") in ["high", "rage"]
+        is_coding = state.intent in ["DEBUG", "REVIEW", "PROBLEM"]
         
-        if user_msg_count > 0 and user_msg_count % 5 == 0 and not is_in_quiz and not is_in_plan and not is_learning_request:
+        # Only quiz if they are in a normal state, not actively coding/debugging, and not asking for help
+        should_trigger_quiz = (
+            user_msg_count > 0 and 
+            user_msg_count % 5 == 0 and 
+            not is_in_quiz and 
+            not is_in_plan and 
+            not is_learning_request and 
+            not is_frustrated and 
+            not is_coding
+        )
+        
+        if should_trigger_quiz:
             self.logger.info("🎯 Triggering Proactive Pop Quiz!")
             
             # FIX: Use ACTUAL mastered concepts from the DB, not bot message metadata.

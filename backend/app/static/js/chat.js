@@ -206,8 +206,80 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let currentMarkdown = "";
 
+        // ── Typewriter Buffer ──────────────────────────────────
+        // Characters arrive from SSE in bursts. We drip-feed them
+        // at a steady pace so the UI feels smooth and readable.
+        let fullMarkdown = "";          // all text received so far
+        let renderedLength = 0;         // how much we've rendered
+        let typewriterTimer = null;
+        let streamDone = false;         // has the SSE stream closed?
+        let completeEvent = null;       // stash the 'complete' event
+
+        const CHAR_DELAY = 12;          // ms per character (~80 chars/s)
+        const CHUNK_SIZE = 3;           // render N chars per tick for speed
+
+        function renderNextChunk() {
+            if (renderedLength < fullMarkdown.length) {
+                renderedLength = Math.min(renderedLength + CHUNK_SIZE, fullMarkdown.length);
+                const textContainer = document.getElementById(`text-${progId}`);
+                if (textContainer) {
+                    textContainer.innerHTML = marked.parse(fullMarkdown.slice(0, renderedLength));
+                }
+                scrollToBottom();
+                typewriterTimer = setTimeout(renderNextChunk, CHAR_DELAY);
+            } else if (streamDone && completeEvent) {
+                // Buffer fully drained AND stream is done → do final render
+                finishRender(completeEvent);
+                completeEvent = null;
+            }
+            // else: buffer caught up to received text, wait for more
+        }
+
+        function startTypewriter() {
+            if (!typewriterTimer) {
+                typewriterTimer = setTimeout(renderNextChunk, CHAR_DELAY);
+            }
+        }
+
+        // Final rich render after typewriter finishes
+        function finishRender(data) {
+            if (data.data.session_id) currentSessionId = data.data.session_id;
+
+            // --- Update Pending Challenges UI ---
+            if (data.data.skipped_challenges !== undefined) {
+                updatePendingChallengesUI(data.data.skipped_challenges);
+            }
+
+            botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(data.data.answer);
+            displaySources(data.data.sources);
+            
+            renderDiagrams(botDiv);         
+            Prism.highlightAllUnder(botDiv); 
+            injectCopyButtons(botDiv);       
+            
+            displaySuggestions(data.data.suggestions, botDiv);
+            addFeedbackButtons(botDiv, rawText);
+            loadChatHistory();
+
+            if (data.data.warmup_topic) {
+                const topicSpan = document.getElementById('warmupTopicName');
+                const modal = document.getElementById('warmupModal');
+                const input = document.getElementById('warmupInput');
+                
+                if (topicSpan && modal && input) {
+                    topicSpan.innerText = data.data.warmup_topic;
+                    input.value = "";
+                    modal.style.display = 'flex';
+                    setTimeout(() => input.focus(), 50); 
+                } else {
+                    console.error("Warmup Modal HTML elements not found!");
+                }
+            }
+            scrollToBottom();
+        }
+
+        // ── SSE Read Loop ──────────────────────────────────────
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -223,56 +295,24 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                             const statusText = document.getElementById(`status-text-${progId}`);
                             if (statusText) statusText.innerText = data.message;
                         }
-                        // 2. TOKEN STREAM
+                        // 2. TOKEN STREAM → buffer, don't render instantly
                         else if (data.type === 'token' || data.type === 'answer') {
-                            // Hide the ghost lines, but KEEP the spinner alive
+                            // Hide skeleton on first token
                             const skeletonLines = document.querySelectorAll(`#${progId} .skeleton-line`);
                             skeletonLines.forEach(line => line.style.display = 'none');
 
-                            currentMarkdown += data.text;
-
-                            // Render markdown into the dedicated text container
-                            const textContainer = document.getElementById(`text-${progId}`);
-                            if (textContainer) {
-                                textContainer.innerHTML = marked.parse(currentMarkdown);
-                            }
-                            scrollToBottom();
+                            fullMarkdown += data.text;
+                            startTypewriter();  // kick off drip-feed if not running
                         }
-                        // 3. COMPLETE
+                        // 3. COMPLETE → stash and let typewriter finish
                         else if (data.type === 'complete') {
-                            if (data.data.session_id) currentSessionId = data.data.session_id;
-
-                            // --- NEW: Update Pending Challenges UI ---
-                            if (data.data.skipped_challenges !== undefined) {
-                                updatePendingChallengesUI(data.data.skipped_challenges);
-                            }
-                            // -----------------------------------------
-
-                            botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(data.data.answer);
-                            displaySources(data.data.sources);
-                            
-                            renderDiagrams(botDiv);         
-                            Prism.highlightAllUnder(botDiv); 
-                            injectCopyButtons(botDiv);       
-                            
-                            displaySuggestions(data.data.suggestions, botDiv);
-                            addFeedbackButtons(botDiv, rawText);
-                            loadChatHistory();
-
-                            if (data.data.warmup_topic) {
-                                const topicSpan = document.getElementById('warmupTopicName');
-                                const modal = document.getElementById('warmupModal');
-                                const input = document.getElementById('warmupInput');
-                                
-                                if (topicSpan && modal && input) {
-                                    topicSpan.innerText = data.data.warmup_topic;
-                                    input.value = ""; // clear old input
-                                    modal.style.display = 'flex';
-                                    // Focus after a tiny delay to ensure display is complete
-                                    setTimeout(() => input.focus(), 50); 
-                                } else {
-                                    console.error("Warmup Modal HTML elements not found!");
-                                }
+                            completeEvent = data;
+                            streamDone = true;
+                            // If typewriter already caught up, finish immediately
+                            if (renderedLength >= fullMarkdown.length) {
+                                if (typewriterTimer) clearTimeout(typewriterTimer);
+                                finishRender(data);
+                                completeEvent = null;
                             }
                         }
                         // 4. PROFILER
@@ -283,6 +323,13 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                 }
             }
         }
+
+        // Safety: if stream ends without a 'complete' event, clean up typewriter
+        streamDone = true;
+        if (!completeEvent && typewriterTimer) {
+            // Let the remaining buffer drain naturally
+        }
+
     } catch (e) {
         console.error(e);
         botDiv.innerHTML = "<span style='color:#ff897d'>Connection failed.</span>";

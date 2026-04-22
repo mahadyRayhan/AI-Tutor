@@ -163,7 +163,18 @@ class SentinelAgent(BaseAgent):
         ]
         
         # Only block if off-topic AND no C-context keywords present
-        if any(kw in query_lower for kw in off_topic_keywords) and not has_c_context:
+        # if any(kw in query_lower for kw in off_topic_keywords) and not has_c_context:
+        off_topic_keywords = [
+            "bake", "baking", "cook", "cooking", "recipe", "weather", "president",
+            "capital of", "sing", "song", "poem", "joke", "movie", "football",
+            "basketball", "soccer", "baseball", "tennis", "history", "geography", 
+            "python", "java ", "javascript", "html", "css", "pizza", "pasta"
+        ]
+        
+        is_analogy = any(w in query_lower for w in ["like a", "analogy", "metaphor", "compare", "imagine"])
+        
+        # Only block if off-topic, NO C-context is present, AND they aren't asking for an analogy
+        if any(kw in query_lower for kw in off_topic_keywords) and not has_c_context and not is_analogy:
             self.logger.warning(f"🚨 [Sentinel L1.5] BLOCKED as off-topic: '{state.query[:80]}'")
             state.intent = "OFF_TOPIC"
             msg = "👋 I am an AI Tutor specialized strictly in **C Programming**.\n\n"
