@@ -94,6 +94,26 @@
 
                 <!-- Right: Utility actions -->
                 <div class="top-bar-right">
+                    <!-- 🎯 PENDING CHALLENGES BUTTON -->
+                    <button class="toolbar-btn" id="pendingBtn" onclick="togglePendingDropdown()" style="display: none;" title="Pending Tasks">
+                        <span style="position: relative; display: flex; align-items: center;">
+                            🎯
+                            <span id="pendingBadge" style="position:absolute; top:-6px; right:-8px; background:#f87171; color:#fff; border-radius:50%; font-size:0.65rem; font-weight:bold; width:16px; height:16px; display:flex; align-items:center; justify-content:center;">0</span>
+                        </span>
+                        <span class="hide-mobile" style="margin-left: 6px;">Tasks</span>
+                    </button>
+
+                    <!-- DROPDOWN MENU -->
+                    <div id="pendingDropdown" class="pending-dropdown" style="display: none;">
+                        <div class="pending-dropdown-header">
+                            <h4 style="margin: 0; font-size: 0.9rem; color: var(--text-primary);">Pending Micro-Challenges</h4>
+                            <span id="pendingCountText" style="font-size: 0.8rem; color: var(--text-muted); background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 10px;">0/5</span>
+                        </div>
+                        <div id="pendingDropdownList" style="max-height: 250px; overflow-y: auto;">
+                            <!-- Items injected here -->
+                        </div>
+                    </div>
+                    <!-- -------------------------------- -->
                     <button class="toolbar-btn" onclick="toggleResources()" title="Toggle sources & context panel" aria-label="Toggle sources panel">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                         <span class="hide-mobile">Sources</span>
@@ -350,6 +370,30 @@
         </div>
     </div>
 
+    <!-- SOLVE CHALLENGE MODAL -->
+    <div id="solveModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:4000; justify-content:center; align-items:center;">
+        <div style="background: var(--sidebar-bg); padding: 25px; border-radius: 12px; width: 90%; max-width: 500px; border: 1px solid var(--border-color); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <h3 style="margin:0; font-size:1.2rem; color:var(--text-primary);">Solving: <span id="solveModalTopic" style="color:var(--accent-color);">Topic</span></h3>
+                <button onclick="closeSolveModal()" style="background:none; border:none; color:#aaa; font-size:1.5rem; cursor:pointer;">&times;</button>
+            </div>
+            
+            <!-- NEW: QUESTION BOX -->
+            <div style="background: rgba(168, 199, 250, 0.08); padding: 12px 15px; border-radius: 8px; border-left: 3px solid var(--accent-color); margin-bottom: 15px; font-size: 0.9rem;">
+                <div id="solveModalQuestion" style="color: var(--text-primary); line-height: 1.5; font-family: inherit;">
+                    <!-- Question injected here -->
+                </div>
+            </div>
+            <!-- ------------------- -->
+            
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:10px;">Write your code or explanation below:</p>
+            <textarea id="solveModalInput" rows="5" placeholder="e.g. int arr[5];" style="width:100%; box-sizing:border-box; padding:12px; border-radius:8px; border:1px solid var(--border-color); background:var(--input-bg); color:var(--text-primary); font-family:monospace; resize:vertical; outline:none;"></textarea>
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:15px;">
+                <button onclick="closeSolveModal()" style="padding:8px 16px; background:transparent; color:var(--text-muted); border:1px solid var(--border-color); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button onclick="submitSolveModal()" style="padding:8px 16px; background:var(--accent-color); color:#000; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">Submit Answer</button>
+            </div>
+        </div>
+    </div>
     <script src="/static/js/chat.js?v=4" defer></script>
 </body>
 

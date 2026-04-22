@@ -2,6 +2,7 @@ const API_URL = "";
 let currentUser = null;
 let currentSessionId = null;
 let activeChallenge = null;
+let globalPendingChallenges = [];
 
 // --- 1. GLOBAL FUNCTIONS (So buttons can find them) ---
 window.startTopic = function (text) {
@@ -128,16 +129,31 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
     let displayUserText = rawText;
     if (rawText.startsWith("[WARMUP_ANSWER]")) {
         displayUserText = rawText.replace("[WARMUP_ANSWER]", "").trim();
+    } else if (rawText.startsWith("[SOLVE_CHALLENGE]")) {
+        // [SOLVE_CHALLENGE] Arrays | int arr[5];
+        const parts = rawText.replace("[SOLVE_CHALLENGE]", "").split("|");
+        const topic = parts[0].trim();
+        const code = parts.slice(1).join("|").trim();
+        // Format it beautifully as a Markdown code block
+        displayUserText = `Here is my answer for **${topic}**: \n\`\`\`c\n${code}\n\`\`\``;
     }
 
     // Only show bubble if NOT hidden
     if (!hidden) {
         const userDiv = document.createElement('div');
         userDiv.className = 'message user';
-        let displayText = displayUserText.replace(/\n/g, '<br>');
-        if (displayUserText.includes('{') || displayUserText.includes(';')) {
-            displayText = `<pre><code class="language-c">${displayUserText.replace(/</g, '&lt;')}</code></pre>`;
+        
+        // Parse it with Marked if it has a markdown block, otherwise use basic formatting
+        let displayText = displayUserText;
+        if (displayUserText.includes('```c')) {
+            displayText = marked.parse(displayUserText);
+        } else {
+            displayText = displayUserText.replace(/\n/g, '<br>');
+            if (displayUserText.includes('{') || displayUserText.includes(';')) {
+                displayText = `<pre><code class="language-c">${displayUserText.replace(/</g, '&lt;')}</code></pre>`;
+            }
         }
+        
         userDiv.innerHTML = `<div class="msg-sender">You</div>` + displayText;
         document.getElementById('messages').appendChild(userDiv);
         Prism.highlightAllUnder(userDiv);
@@ -226,6 +242,12 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                         else if (data.type === 'complete') {
                             if (data.data.session_id) currentSessionId = data.data.session_id;
 
+                            // --- NEW: Update Pending Challenges UI ---
+                            if (data.data.skipped_challenges !== undefined) {
+                                updatePendingChallengesUI(data.data.skipped_challenges);
+                            }
+                            // -----------------------------------------
+
                             botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(data.data.answer);
                             displaySources(data.data.sources);
                             
@@ -266,6 +288,53 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
         botDiv.innerHTML = "<span style='color:#ff897d'>Connection failed.</span>";
     }
 };
+
+function updatePendingChallengesUI(challenges) {
+    const btn = document.getElementById('pendingBtn');
+    const badge = document.getElementById('pendingBadge');
+    const countText = document.getElementById('pendingCountText');
+    const list = document.getElementById('pendingDropdownList');
+    
+    if (!btn || !list) return;
+
+    if (challenges && challenges.length > 0) {
+        btn.style.display = 'inline-flex';
+        badge.innerText = challenges.length;
+        if (countText) countText.innerText = `${challenges.length}/5`;
+        
+        list.innerHTML = '';
+        challenges.forEach(challenge => {
+            // Handle both legacy strings and new dicts safely
+            let topic = typeof challenge === 'string' ? challenge : challenge.topic;
+            let question = typeof challenge === 'string' ? `Write a code snippet for ${topic}.` : challenge.question;
+            
+            // Make the text safe to pass into the onclick string without breaking HTML
+            let safeQuestion = encodeURIComponent(question);
+
+            const div = document.createElement('div');
+            div.className = 'pending-item';
+            div.innerHTML = `
+                <span style="font-weight:600; font-size:0.9rem; color:var(--text-secondary);">${topic}</span>
+                <button class="pending-item-btn" onclick="openSolveModal('${topic}', '${safeQuestion}')">Solve</button>
+            `;
+            list.appendChild(div);
+        });
+    } else {
+        btn.style.display = 'none';
+        document.getElementById('pendingDropdown').style.display = 'none';
+    }
+}
+
+function togglePendingModal() {
+    const modal = document.getElementById('pendingModal');
+    modal.style.display = modal.style.display === 'flex' ? 'none' : 'flex';
+}
+
+function retryChallenge(topic) {
+    togglePendingModal();
+    // Send the hidden instruction tag
+    window.sendMessage(`[RETRY_CHALLENGE] ${topic}`, true);
+}
 
 function submitWarmup() {
     const ans = document.getElementById('warmupInput').value.trim();
@@ -615,6 +684,12 @@ async function loadSession(sessionId) {
             }
             msgDiv.appendChild(div);
         });
+
+        if (sessionData.state && sessionData.state.skipped_challenges) {
+            updatePendingChallengesUI(sessionData.state.skipped_challenges);
+        } else {
+            updatePendingChallengesUI([]);
+        }
         Prism.highlightAllUnder(msgDiv);
         injectCopyButtons(msgDiv);
         scrollToBottom();
@@ -1448,3 +1523,110 @@ function renderMarkdownCr(text) {
 // Init
 const stored = localStorage.getItem('c_tutor_user');
 if (stored) { currentUser = JSON.parse(stored); routeUser(); }
+
+let currentSolveTopic = "";
+
+function togglePendingDropdown() {
+    const dropdown = document.getElementById('pendingDropdown');
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+}
+
+// Close dropdown if clicked outside
+document.addEventListener('click', function(event) {
+    const dropdown = document.getElementById('pendingDropdown');
+    const btn = document.getElementById('pendingBtn');
+    if (dropdown && btn && !dropdown.contains(event.target) && !btn.contains(event.target)) {
+        dropdown.style.display = 'none';
+    }
+});
+
+function updatePendingChallengesUI(challenges) {
+    const btn = document.getElementById('pendingBtn');
+    const badge = document.getElementById('pendingBadge');
+    const countText = document.getElementById('pendingCountText');
+    const list = document.getElementById('pendingDropdownList');
+    
+    if (!btn || !list) return;
+
+    if (challenges && challenges.length > 0) {
+        btn.style.display = 'inline-flex';
+        badge.innerText = challenges.length;
+        if (countText) countText.innerText = `${challenges.length}/5`;
+        
+        list.innerHTML = '';
+        
+        challenges.forEach(challenge => {
+            // 1. Safely extract topic and question, handling both old and new data formats
+            let topicStr = "Unknown Topic";
+            let questionStr = "Write a code snippet for this topic.";
+
+            if (typeof challenge === 'string') {
+                topicStr = challenge;
+            } else if (typeof challenge === 'object' && challenge !== null) {
+                topicStr = challenge.topic || "Unknown Topic";
+                questionStr = challenge.question || questionStr;
+            }
+
+            // 2. Create the wrapper div
+            const div = document.createElement('div');
+            div.className = 'pending-item';
+            
+            // 3. Create the text label
+            const span = document.createElement('span');
+            span.style.fontWeight = '600';
+            span.style.fontSize = '0.9rem';
+            span.style.color = 'var(--text-secondary)';
+            span.innerText = topicStr; // Safe from HTML injection
+            
+            // 4. Create the button and attach the event listener directly
+            const solveBtn = document.createElement('button');
+            solveBtn.className = 'pending-item-btn';
+            solveBtn.innerText = 'Solve';
+            
+            solveBtn.addEventListener('click', () => {
+                openSolveModal(topicStr, questionStr);
+            });
+            
+            // 5. Append everything to the list
+            div.appendChild(span);
+            div.appendChild(solveBtn);
+            list.appendChild(div);
+        });
+    } else {
+        btn.style.display = 'none';
+        document.getElementById('pendingDropdown').style.display = 'none';
+    }
+}
+
+function openSolveModal(topic, rawQuestion) {
+    document.getElementById('pendingDropdown').style.display = 'none'; 
+    currentSolveTopic = topic;
+    document.getElementById('solveModalTopic').innerText = topic;
+    
+    // Render the question using Markdown safely
+    const questionHtml = rawQuestion ? marked.parse(rawQuestion) : "No question text available.";
+    document.getElementById('solveModalQuestion').innerHTML = questionHtml;
+    
+    // Highlight any code blocks in the question
+    Prism.highlightAllUnder(document.getElementById('solveModalQuestion'));
+    
+    document.getElementById('solveModalInput').value = '';
+    document.getElementById('solveModal').style.display = 'flex';
+    setTimeout(() => document.getElementById('solveModalInput').focus(), 100);
+}
+
+function closeSolveModal() {
+    document.getElementById('solveModal').style.display = 'none';
+    currentSolveTopic = "";
+}
+
+function submitSolveModal() {
+    const code = document.getElementById('solveModalInput').value.trim();
+    if (!code) return;
+    
+    const topic = currentSolveTopic;
+    closeSolveModal();
+    
+    // Pass 'false' so it IS visible in the chat UI and logged to SQLite
+    window.sendMessage(`[SOLVE_CHALLENGE] ${topic} | ${code}`, false);
+}

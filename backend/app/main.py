@@ -360,14 +360,18 @@ async def chat_stream(request: ChatRequest):
                 if event["type"] == "complete":
                     final_data = event["data"]
                     
-                    # CRITICAL FIX: Ensure we capture the final authoritative answer
-                    # This handles cases like Gatekeeper which don't stream tokens
+                    # Ensure we capture the final authoritative answer
                     if final_data.get('answer'):
-                        # Sanitize mermaid diagrams before sending to frontend
                         final_data['answer'] = cot_rag_agent._sanitize_mermaid(final_data['answer'])
                         full_bot_response = final_data.get('answer')
                         
                     final_sources = final_data.get('sources', [])
+                    
+                    # --- NEW: INJECT GLOBAL SKIPPED CHALLENGES INTO PAYLOAD ---
+                    user_row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (request.username,))
+                    user_profile = json.loads(user_row['learning_profile']) if user_row and user_row['learning_profile'] else {}
+                    event["data"]["skipped_challenges"] = user_profile.get("skipped_challenges", [])
+                    # ---------------------------------------------------
                     
                     detected_topic = "General"
                     

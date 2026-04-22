@@ -166,6 +166,17 @@ class ChainOfThoughtRAGAgent:
         """
         return self.llm_interface.generate_response(prompt).strip().upper()
     
+    def _get_global_skipped_challenges(self, username: str) -> list:
+        row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
+        profile = json.loads(row['learning_profile']) if row and row['learning_profile'] else {}
+        return profile.get("skipped_challenges", [])
+
+    def _update_global_skipped_challenges(self, username: str, skipped: list):
+        row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
+        profile = json.loads(row['learning_profile']) if row and row['learning_profile'] else {}
+        profile["skipped_challenges"] = skipped
+        db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), username))
+    
     def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
         # Same as before
         prereqs = []
@@ -1106,6 +1117,35 @@ class ChainOfThoughtRAGAgent:
             profile=learning_profile
         )
 
+        # =========================================================
+        # --- NEW: PENDING CHALLENGE SOLVER INTERCEPTOR ---
+        # =========================================================
+        is_pending_solve = False
+        if query.startswith("[SOLVE_CHALLENGE]"):
+            parts = query.replace("[SOLVE_CHALLENGE]", "").split("|", 1)
+            solve_topic = parts[0].strip() if len(parts) > 0 else "Concept"
+            solve_ans = parts[1].strip() if len(parts) > 1 else ""
+            
+            # 1. Remove from GLOBAL pending queue
+            skipped = self._get_global_skipped_challenges(username)
+            new_skipped = []
+            for c in skipped:
+                if isinstance(c, dict) and c.get("topic") == solve_topic: continue
+                if isinstance(c, str) and c == solve_topic: continue
+                new_skipped.append(c)
+                
+            self._update_global_skipped_challenges(username, new_skipped)
+            
+            # 2. Force the pipeline state to route to the Code Reviewer
+            state.original_query = solve_ans
+            state.query = f"[CONTEXT: Evaluating pending micro-challenge for '{solve_topic}'].\n\n{solve_ans}"
+            state.intent = "REVIEW"
+            state.entities = [solve_topic]
+            is_pending_solve = True
+            
+            should_skip_context = True # Skip LLM rewrites
+        # =========================================================
+
         # --- 5. PROACTIVE POP QUIZZES ---
         msg_list = current_state.get("messages", []) if current_state else []
         if not msg_list and session_id:
@@ -1169,6 +1209,8 @@ class ChainOfThoughtRAGAgent:
         if feedback_mode:
             state.intent = "CONCEPT"
             state.entities = [current_state.get("challenge_topic", "C Programming")]
+        elif is_pending_solve:
+            state.intent = "REVIEW" # Bypass sentinel to protect forced intent
         else:
             async for event in self.sentinel.process(state):
                 yield event
@@ -1211,7 +1253,7 @@ class ChainOfThoughtRAGAgent:
         # --- FIX 1: STRICT INTENT SANITIZATION ---
         # Prevent the ML Classifier from hallucinating heavy intents on simple text
         # =========================================================
-        if state.intent == "REVIEW":
+        if state.intent == "REVIEW" and not is_pending_solve:
             # If they didn't type a semicolon, bracket, or equals sign, it's NOT a code review.
             has_code_indicators = any(c in state.original_query for c in [";", "{", "}", "="])
             if not has_code_indicators:
@@ -1223,62 +1265,107 @@ class ChainOfThoughtRAGAgent:
             if not is_project_request:
                 state.intent = "CONCEPT" # Downgrade to standard explanation
 
-        # 3. THE SOCRATIC LOCK
-        if current_state.get("awaiting_micro_challenge") and not feedback_mode:
-            user_input_lower = state.original_query.lower()
-            challenge_topic = current_state.get("challenge_topic", "that concept")
+        # --- NEW: RETRY PENDING CHALLENGE HANDLER ---
+        if query.strip().startswith("[RETRY_CHALLENGE]"):
+            retry_topic = query.replace("[RETRY_CHALLENGE]", "").strip()
+            skipped = current_state.get("skipped_challenges", [])
+            
+            if retry_topic in skipped:
+                skipped.remove(retry_topic)
+            
+            history_manager.update_session_state(username, session_id, {
+                "skipped_challenges": skipped,
+                "awaiting_micro_challenge": True,
+                "challenge_topic": retry_topic
+            })
+            
+            prompt = f"The student wants to retry their pending micro-challenge about '{retry_topic}'. Generate a short, encouraging 1-2 sentence micro-challenge asking them to write 1 line of code related to {retry_topic}. Stop generating immediately after asking the question."
+            challenge_msg = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
+            
+            yield {"type": "complete", "data": {"answer": f"Awesome, let's clear that pending challenge!\n\n{challenge_msg}", "sources": [], "intent": "GUIDANCE", "suggestions": ["I'm stuck (Skip)"]}}
+            return
 
-            # 1. Did they click "Can I have a hint?"
-            if "hint" in user_input_lower:
-                msg = f"💡 **Hint for {challenge_topic}:**\nLook closely at the 'Example from Class' section above. How did they write the syntax? Give it a try, or click 'Skip' if you are truly stuck!"
+        # 3. THE SOCRATIC LOCK
+        if current_state.get("awaiting_micro_challenge") and not feedback_mode and not is_pending_solve:
+            challenge_topic = current_state.get("challenge_topic", "that concept")
+            challenge_text = current_state.get("challenge_text", f"Write a quick code snippet demonstrating {challenge_topic}.")
+            
+            # GET GLOBALLY
+            skipped_challenges = self._get_global_skipped_challenges(username)
+            user_input_lower = state.original_query.lower()
+
+            is_hint = "hint" in user_input_lower
+            is_explicit_skip = any(w in user_input_lower for w in ["skip", "stuck", "idk", "don't know", "dont know"])
+            
+            # INTENT-BASED DETECTION: Did they change the subject?
+            is_bypass = False
+            if state.intent in ["PROBLEM", "COMPLEX_PROBLEM", "GREETING", "OFF_TOPIC", "SECURITY_RISK"]:
+                is_bypass = True
+            elif state.intent == "CONCEPT":
+                # If they ask a new question (e.g. "what is a loop?"), it's a bypass.
+                # If it's just a statement (e.g. "a loop repeats code"), they might be answering.
+                question_words = ("what", "how", "why", "can", "explain", "define", "tell")
+                if "?" in user_input_lower or user_input_lower.startswith(question_words):
+                    is_bypass = True
+
+            # 1. Ask for a Hint
+            if is_hint:
+                msg = f"💡 **Hint for {challenge_topic}:**\nLook closely at the 'Example from Class' section above. Give it a try, or click 'Skip' if you are stuck!"
                 yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDANCE", "suggestions": ["I'm stuck (Skip)"]}}
                 return
 
-            # 2. Did they click "I'm stuck (Skip)"?
-            if "skip" in user_input_lower or "stuck" in user_input_lower or "idk" in user_input_lower:
-                history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
-                goals_stack = current_state.get("pending_goals", [])
-                
-                msg = "No worries at all! Learning C takes practice. Let's move on."
-                if goals_stack:
-                    # Pop the most recent goal from the stack
-                    pending = goals_stack.pop()
-                    msg += f"\n\nNow, back to your question: **{pending}**"
-                    state.query = pending
-                    state.original_query = pending
-                    state.intent = "CONCEPT"
-                    history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
-                    # DO NOT RETURN here, let the code fall through to the Socratic Agent below!
-                else:
-                    yield {"type": "complete", "data": {"answer": msg + "\nWhat would you like to explore next?", "sources": [], "intent": "GUIDANCE", "suggestions": ["Teach me something new"]}}
+            # 2. Bypass Detection (Explicit Skip or Changed Subject)
+            if is_explicit_skip or is_bypass:
+                if len(skipped_challenges) >= 5:
+                    msg = f"🛑 **Challenge Limit Reached!**\n\nYou currently have 5 pending micro-challenges in your Task Menu. To ensure we're building a solid foundation, please clear at least one of them before we move on to new topics!"
+                    yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDANCE", "suggestions": []}}
                     return
+                
+                topic_exists = any(isinstance(c, dict) and c.get("topic") == challenge_topic for c in skipped_challenges) or (challenge_topic in skipped_challenges)
+                
+                if not topic_exists:
+                    skipped_challenges.append({
+                        "topic": challenge_topic, 
+                        "question": challenge_text
+                    })
+                
+                # SAVE GLOBALLY
+                self._update_global_skipped_challenges(username, skipped_challenges)
+                history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
 
-            # 3. Did they try to bypass the challenge by asking a NEW question?
-            has_code = any(c in state.original_query for c in [";", "{", "}", "=", "(", ")"])
-            is_question = ("?" in state.original_query or state.original_query.lower().startswith(("what", "how", "why")))
-
-            if not has_code and is_question:
-                # Push the new question onto the goals stack
-                goals_stack = current_state.get("pending_goals", [])
-                if state.original_query not in goals_stack:
-                    goals_stack.append(state.original_query)
-                history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
-                msg = f"I'd be happy to explain **{state.original_query}** next! \n\nBut first, I want to make sure you understood **{challenge_topic}**. Give my micro-challenge a try! *(Or click 'skip' if you are stuck).* "
-                yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDANCE", "suggestions": ["I'm stuck (Skip)", "Can I have a hint?"]}}
-                return
-
-            # 4. If they actually submitted an answer (Code or Text)
-            history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
-
-            # Route code to the Reviewer, and plain text to the Socratic Agent
-            if has_code:
-                state.intent = "REVIEW"
-                # FIX: Do NOT merge pending goal into the review prompt.
-                # The reviewer will show pending goals as suggestion buttons.
-                state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this code. Keep it brief."
+                if is_explicit_skip:
+                    goals_stack = current_state.get("pending_goals", [])
+                    msg = f"No worries! I've saved **{challenge_topic}** to your Pending Tasks menu (top right). We can revisit it later."
+                    
+                    if goals_stack:
+                        pending = goals_stack.pop()
+                        msg += f"\n\nNow, back to your question: **{pending}**"
+                        state.query = pending
+                        state.original_query = pending
+                        state.intent = "CONCEPT"
+                        history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
+                        # Let it fall through to Socratic Agent
+                    else:
+                        msg += "\n\nWhat would you like to explore next?"
+                        yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "GUIDANCE", "suggestions": ["Teach me something new"]}}
+                        return
+                else:
+                    # Natural Bypass: They asked a new question.
+                    # Just let it fall through so the agent answers their new question naturally!
+                    self.logger.info(f"⏭️ Bypassed micro-challenge for {challenge_topic}, added to queue.")
+                    pass 
             else:
-                state.intent = "CONCEPT" 
-                state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this briefly."
+                # 3. They are Answering the Challenge!
+                history_manager.update_session_state(username, session_id, {"awaiting_micro_challenge": False})
+
+                # Ensure it routes correctly based on whether they wrote code or text
+                has_code = any(c in state.original_query for c in [";", "{", "}", "=", "(", ")"])
+                if has_code:
+                    state.intent = "REVIEW"
+                    state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this code. Keep it brief."
+                else:
+                    state.intent = "CONCEPT" 
+                    state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this briefly."
 
         # 4. NEW SCAFFOLDING TRIGGERS 
         if not is_in_plan:
@@ -1367,23 +1454,28 @@ class ChainOfThoughtRAGAgent:
                 
                 topic_name = state.entities[0] if state.entities else "the last topic"
                 
-                # Validate topic_name — prevent garbage entities like "can", "give", "just"
-                garbage_words = {'can', 'you', 'give', 'show', 'just', 'one', 'simple', 'some',
-                                'example', 'want', 'need', 'please', 'help', 'like', 'know',
-                                'learn', 'think', 'make', 'write', 'get', 'start', 'where'}
+                # Validate topic_name...
+                garbage_words = {'can', 'you', 'give', 'show', 'just', 'one', 'simple'}
                 if topic_name.lower() in garbage_words:
-                    # Try to find a real C topic from entities list
-                    real_topic = next(
-                        (e for e in state.entities if e.lower() not in garbage_words and len(e) > 2),
-                        "the last topic"
-                    )
-                    self.logger.warning(f"⚠️ Rejected garbage challenge_topic '{topic_name}', using '{real_topic}'")
+                    real_topic = next((e for e in state.entities if e.lower() not in garbage_words and len(e) > 2), "the last topic")
                     topic_name = real_topic
+                
+                # --- NEW: EXTRACT THE MICRO-CHALLENGE TEXT FROM THE LLM RESPONSE ---
+                full_text = event["data"].get("answer", "")
+                import re
+                # Use regex to grab everything after the "Your Turn!" header
+                match = re.search(r"## Your Turn!.*?\n(.*)", full_text, re.IGNORECASE | re.DOTALL)
+                extracted_question = match.group(1).strip() if match else f"Write a quick code snippet demonstrating {topic_name}."
                 
                 history_manager.update_session_state(
                     username, session_id, 
-                    {"awaiting_micro_challenge": True, "challenge_topic": topic_name}
+                    {
+                        "awaiting_micro_challenge": True, 
+                        "challenge_topic": topic_name,
+                        "challenge_text": extracted_question # Save it here!
+                    }
                 )
+
                 
                 # --- B2 FIX: PERSIST MASTERY AFTER CONCEPT EXPLANATION ---
                 # if state.intent == "CONCEPT" and state.entities:
