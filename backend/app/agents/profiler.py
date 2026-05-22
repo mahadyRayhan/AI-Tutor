@@ -83,12 +83,9 @@ class ProfilerAgent(BaseAgent):
     async def analyze_sentiment(self, user_id: str, last_message: str):
         """
         Real-time Emotion Check mapping to SAGE Academic Emotions.
-        Updates the user's frustration level dynamically in SQLite.
+        Updates the user's frustration level and delta (ΔF) dynamically in SQLite.
         """
         try:
-            # ---------------------------------------------------------
-            # TIER 1: Fast Heuristic Check (Claude Leak approach)
-            # ---------------------------------------------------------
             fast_signal = self._fast_evaluate(last_message)
             
             if fast_signal.is_keep_going:
@@ -96,38 +93,56 @@ class ProfilerAgent(BaseAgent):
                 
             frustration_level = "normal"
             detected_emotion = "neutral"
+            f_score = 0.2 # Base baseline for normal
 
             if fast_signal.is_rage:
                 self.logger.warning(f"⚠️ [Tier 1] RAGE Detected for {user_id}: {fast_signal.negative_hits}")
                 frustration_level = "rage"
                 detected_emotion = "anger"
+                f_score = 1.0 # Max frustration
             else:
-                # ---------------------------------------------------------
-                # TIER 2: Deep Semantic Check (For polite/academic frustration)
-                # ---------------------------------------------------------
                 result = self.emotion_classifier(last_message)[0][0]
-                detected_emotion = result['label'] # 'anger', 'joy', 'neutral', 'sadness', 'fear'
+                detected_emotion = result['label']
                 score = result['score']
 
-                # Map ML output to SAGE Core Academic Emotions
                 if detected_emotion in ['anger', 'disgust', 'sadness', 'fear'] and score > 0.6:
                     self.logger.warning(f"⚠️ [Tier 2] Academic Frustration Detected for {user_id}: {detected_emotion} ({score:.2f})")
                     frustration_level = "high"
+                    f_score = 0.7 # High frustration
                 elif detected_emotion == 'joy' and score > 0.7:
-                    frustration_level = "delighted" # Maps to SAGE "Delight/Flow state"
+                    frustration_level = "delighted" 
+                    f_score = 0.0 # Zero frustration (flow state)
 
             # ---------------------------------------------------------
-            # UPDATE SQLITE STATE
+            # UPDATE SQLITE STATE & CALCULATE ΔF
             # ---------------------------------------------------------
             row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (user_id,))
             profile = json.loads(row['learning_profile']) if row and row['learning_profile'] else {}
 
-            # Only write to DB if the state actually changed (saves DB calls)
-            if profile.get("frustration_level") != frustration_level:
-                profile["frustration_level"] = frustration_level
-                db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), user_id))
+            # Retrieve or initialize the rolling history of frustration scores
+            f_history = profile.get("frustration_history", [0.2])
+            
+            # Calculate ΔF = F_t - F_{t-1}
+            f_t_minus_1 = f_history[-1] if f_history else 0.2
+            delta_f = f_score - f_t_minus_1
 
-            print(f"\n🧠 [PROFILER] User: {user_id} | Emotion: {detected_emotion.upper()} | Frustration Level: {frustration_level.upper()}\n")
+            # Update rolling history (keep last 3 states)
+            f_history.append(f_score)
+            if len(f_history) > 3:
+                f_history.pop(0)
+
+            # Update the profile JSON
+            profile["frustration_level"] = frustration_level
+            profile["frustration_history"] = f_history
+            profile["delta_f"] = delta_f
+            
+            # Initialize Strike Counter if it doesn't exist (For Sentinel)
+            if "off_topic_strikes" not in profile:
+                profile["off_topic_strikes"] = 0
+
+            db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), user_id))
+
+            print(f"\n🧠 [PROFILER] Emotion: {detected_emotion.upper()} | Level: {frustration_level.upper()} | F_t: {f_score} | ΔF: {delta_f:.2f}\n")
             return frustration_level
             
         except Exception as e:

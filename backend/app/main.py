@@ -18,7 +18,7 @@ from pyinstrument import Profiler
 from fastapi.staticfiles import StaticFiles # Needed to serve the reports
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, Depends
 from fastapi import Request
 from pathlib import Path
 
@@ -1109,8 +1109,23 @@ async def delete_session(session_id: str, username: str):
 
 @app.post("/api/v1/user/goal")
 async def set_user_goal(req: GoalRequest):
+    # =========================================================
+    # META-SECURITY: PREVENT GOAL POISONING
+    # Ensure the student isn't setting a malicious goal to bypass S_goal
+    # =========================================================
+    malicious_keywords = [
+        "hack", "exploit", "virus", "keylogger", "bypass", "ddos", 
+        "exam answer", "cheat", "malware", "steal", "destroy"
+    ]
+    if any(w in req.goal.lower() for w in malicious_keywords):
+        raise HTTPException(
+            status_code=400, 
+            detail="Goal rejected. Please choose a constructive educational goal (e.g., 'Build a calculator' or 'Learn Memory Management')."
+        )
+        
     from app.core.user_knowledge_manager import knowledge_manager
     knowledge_manager.set_goal(req.username, req.goal)
+    
     # Invalidate cache when the goal updates
     LEARNING_PATH_CACHE.pop(req.username, None)
     return {"status": "success", "goal": req.goal}

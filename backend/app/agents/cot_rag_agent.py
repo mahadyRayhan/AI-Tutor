@@ -98,7 +98,8 @@ class ChainOfThoughtRAGAgent:
         
         try:
             rewritten = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
-            rewritten = rewritten.strip().replace('"', '')
+            # --- NEW FIX: STRIP MARKDOWN ASTERISKS TOO ---
+            rewritten = rewritten.strip().replace('"', '').replace('**', '')
             
             # --- A1 FIX: STRIP LLM ECHO PATTERNS ---
             for prefix in ["Rewritten Question:", "Rewritten:", "Question:", "Standalone Question:"]:
@@ -170,6 +171,56 @@ class ChainOfThoughtRAGAgent:
         row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
         profile = json.loads(row['learning_profile']) if row and row['learning_profile'] else {}
         return profile.get("skipped_challenges", [])
+
+    def _calculate_code_complexity(self, text: str) -> int:
+        """C_{code} = AST_depth proxy. Returns 0 if no code."""
+        # Fast heuristic: if no braces or semicolons, it's not code
+        if "{" not in text and ";" not in text:
+            return 0
+        
+        complexity = 0
+        complexity += text.count("for") + text.count("while") # Loops
+        complexity += text.count("if") + text.count("switch") # Branching
+        complexity += text.count("*") + text.count("&")       # Pointers/Memory
+        complexity += text.count("{")                         # Nesting depth proxy
+        return complexity
+
+    def _determine_m_state(self, query_lower: str, intent: str, c_code: int, delta_f: float) -> str:
+        """M_{state} = FSM_{metacog}.step(q_t)"""
+        helpless_phrases = ["just tell me", "i give up", "i can't do this", "im stuck", "too hard", "idk"]
+        
+        # Any State -> Helplessness
+        if any(p in query_lower for p in helpless_phrases) or delta_f > 0.5:
+            return "Helplessness"
+        
+        # Planning -> Monitoring (If they submit code or ask to debug)
+        if intent == "DEBUG" or c_code > 0:
+            return "Monitoring"
+            
+        # Monitoring -> Reflecting (If they summarize/explain)
+        reflect_phrases = ["so that means", "basically", "to summarize", "is it like"]
+        if intent == "CONCEPT" and any(p in query_lower for p in reflect_phrases):
+            return "Reflecting"
+            
+        return "Planning" # Default state
+
+    def _calculate_goal_alignment(self, query: str, user_goal: str) -> float:
+        """s_{goal} = cos(Emb(q), Emb(G_{macro}))"""
+        # =========================================================
+        # FIX: FAIL-SAFE DEFAULT
+        # If no goal is set, alignment is 0.0. Malicious queries are strictly blocked.
+        # =========================================================
+        if not user_goal or user_goal.strip() == "": 
+            return 0.0 
+        
+        try:
+            q_emb = self.llm_fast.get_embedding(query)
+            g_emb = self.llm_fast.get_embedding(user_goal)
+            if q_emb and g_emb:
+                return float(dot(q_emb, g_emb) / (norm(q_emb) * norm(g_emb)))
+        except Exception as e:
+            self.logger.error(f"Goal Alignment Error: {e}")
+        return 0.0 # Neutral fallback changed to 0.0 for strict security
 
     def _update_global_skipped_challenges(self, username: str, skipped: list):
         row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
@@ -671,9 +722,9 @@ class ChainOfThoughtRAGAgent:
 
         return intent, entities
 
-    def _check_gatekeeping(self, query, intent, entities, username, session_id):
+    def _check_gatekeeping(self, query, intent, entities, username, session_id, force_bypass=False):
         # 1. Prerequisite Check
-        if "anyway" in query.lower() or "i know" in query.lower(): return None # User Override
+        if force_bypass or "anyway" in query.lower() or "i know" in query.lower(): return None # User Override
         
         # Don't check prereqs for simple greetings or non-concept intents
         if intent not in ["CONCEPT", "PROBLEM"]: return None
@@ -870,8 +921,22 @@ class ChainOfThoughtRAGAgent:
         is_force_teach = "teach me" in query.lower() and "anyway" in query.lower()
         is_verify_request = "verify" in query.lower() and "know" in query.lower()
         
-        # NEW: Don't let the LLM rewrite raw code blocks!
-        # If it has brackets or semicolons, it's code, leave it alone.
+        # =========================================================
+        # FIX: RESTORE ORIGINAL METAPHOR ON BYPASS
+        # =========================================================
+        force_gatekeeper_bypass = False
+        if is_force_teach:
+            force_gatekeeper_bypass = True
+            goals_stack = current_state.get("pending_goals", [])
+            if goals_stack:
+                # Pop the original request (e.g., "Explain pointers like a pizza guy")
+                original_request = goals_stack.pop() 
+                query = original_request
+                search_query = original_request
+                history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
+                self.logger.info(f"🔄 [Bypass] Restored original query: '{query}'")
+        # =========================================================
+
         is_raw_code = "{" in query or "}" in query or ";" in query
         
         # FIX: Handle "Back to:" pending goal button clicks
@@ -1107,6 +1172,15 @@ class ChainOfThoughtRAGAgent:
         # Inject the freshly calculated emotion directly into the profile!
         learning_profile["frustration_level"] = current_frustration
 
+        # --- CALCULATE SENSORY MATH (PHASE 1) ---
+        q_lower = query.lower().strip()
+        c_code_val = self._calculate_code_complexity(query)
+        m_state_val = self._determine_m_state(q_lower, pre_intent or "CONCEPT", c_code_val, current_frustration_delta := learning_profile.get("delta_f", 0.0))
+        s_goal_val = self._calculate_goal_alignment(query, user_goal)
+        n_strike_val = learning_profile.get("off_topic_strikes", 0)
+
+        self.logger.info(f"📊 [PHASE 1] C_code: {c_code_val} | M_state: {m_state_val} | s_goal: {s_goal_val:.2f} | N_strike: {n_strike_val}")
+
         state = AgentState(
             query=search_query,
             original_query=query, 
@@ -1114,7 +1188,12 @@ class ChainOfThoughtRAGAgent:
             session_id=session_id,
             user_role=user_role,
             user_goal=user_goal,
-            profile=learning_profile
+            profile=learning_profile,
+            s_goal=s_goal_val,
+            c_code=c_code_val,
+            m_state=m_state_val,
+            delta_f=current_frustration_delta,
+            n_strike=n_strike_val
         )
 
         # =========================================================
@@ -1252,15 +1331,24 @@ class ChainOfThoughtRAGAgent:
             self.logger.info(f"🗂️ [TOPIC CACHE] Saved new anchor topic: {cached_topic}")
             
         else:
-            # User is emotional ("I'm sad") or vague ("I don't get it"). Retrieve the cached topic!
             cached_topic = current_state.get("last_valid_topic", "C Programming")
-            state.entities = [cached_topic] # Force the pipeline to remember the topic
             
-            # CRITICAL: Overwrite the RAG query so ChromaDB searches for the cached topic
-            # instead of searching for their emotional outburst!
-            if learning_profile.get("frustration_level") in ["high", "rage"] or "confused" in state.original_query.lower():
-                state.query = cached_topic
-                self.logger.info(f"🧠 [TOPIC CACHE] Overriding vector search with cached topic: {cached_topic}")
+            # --- FIX: ONLY OVERRIDE IF VAGUE OR FRUSTRATED ---
+            is_vague = len(state.original_query.split()) <= 4
+            is_frustrated = learning_profile.get("frustration_level") in ["high", "rage"]
+            
+            if is_vague or is_frustrated or "confused" in state.original_query.lower():
+                state.entities = [cached_topic]
+                self.logger.info(f"🧠 [TOPIC CACHE] Overriding vague/emotional query with cached topic: {cached_topic}")
+                
+                # If they are actively raging/confused, override the RAG search entirely
+                if is_frustrated or "confused" in state.original_query.lower():
+                    state.query = cached_topic
+            else:
+                # Let specific, long queries (like "Show me how to write a virus") pass through 
+                # so the RAG agent fails naturally and doesn't hallucinate previous topics.
+                self.logger.info(f"⏭️ [TOPIC CACHE] Query is specific. Bypassing amnesia cache.")
+        # =========================================================
         # =========================================================
 
         # =========================================================
@@ -1408,7 +1496,7 @@ class ChainOfThoughtRAGAgent:
 
         # 7. GATEKEEPER CHECK
         gatekeeper_result = self._check_gatekeeping(
-            state.query, state.intent, state.entities, state.user_id, state.session_id
+            state.query, state.intent, state.entities, state.user_id, state.session_id, force_gatekeeper_bypass
         )
         if gatekeeper_result:
             yield {"type": "complete", "data": gatekeeper_result}

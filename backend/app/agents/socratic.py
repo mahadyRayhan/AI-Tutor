@@ -204,6 +204,32 @@ class SocraticTutorAgent(BaseAgent):
  
     def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = []) -> str:
         
+        # =========================================================
+        # C_style: Few-Shot Personalization Vector
+        # Calculates the argmax of empirical win rates for this user
+        # =========================================================
+        # Note: In production, this data is aggregated from Mem_LT.
+        # We use a default structure if the user is new.
+        style_stats = profile.get("style_win_rates", {
+            "analogy": {"wins": 0, "total": 0},
+            "technical": {"wins": 0, "total": 0},
+            "visual": {"wins": 0, "total": 0}
+        })
+        
+        k_min = 3 # Cold-start threshold prevents dividing by zero / small sample bias
+        best_style = "analogy" # Global prior (default)
+        best_win_rate = 0.0
+        
+        for style_name, stats in style_stats.items():
+            # Apply the corrected Tier 1 Formula: wins / max(total, k_min)
+            total = max(stats["total"], k_min) 
+            win_rate = stats["wins"] / total
+            if win_rate > best_win_rate:
+                best_win_rate = win_rate
+                best_style = style_name
+                
+        self.logger.info(f"🎨 [C_style] Selected pedagogical style: {best_style.upper()} (Win Rate: {best_win_rate:.2f})")
+
         goal_section = ""
         if user_goal:
             goal_section = f"## Connection to Your Goal\nExplain explicitly how this helps achieve: '{user_goal}'"
@@ -221,7 +247,7 @@ class SocraticTutorAgent(BaseAgent):
         is_literal = prefs.get("literal_mode", False)
 
         # =========================================================
-        # 1. HIGH FRUSTRATION OVERRIDE (SAGE PROTOCOL)
+        # 1. HIGH FRUSTRATION OVERRIDE
         # =========================================================
         if frustration_level in ["high", "rage"]:
             style_instruction = (
@@ -251,18 +277,21 @@ class SocraticTutorAgent(BaseAgent):
             """
 
         # =========================================================
-        # 3. STANDARD TUTORING MODE
+        # 3. STANDARD TUTORING MODE (Applying C_style)
         # =========================================================
         else:
-            if is_literal:
+            # We apply the dynamically calculated 'best_style' here!
+            if is_literal or best_style == "technical":
                 style_instruction = "TONE: Highly technical, literal, precise. DO NOT use metaphors or analogies."
+            elif best_style == "visual":
+                style_instruction = "TONE: Spatial and structural. Heavily emphasize the visual layout of memory and execution flow."
             else:
-                style_instruction = "TONE: Standard academic tone, encouraging, structured."
+                style_instruction = "TONE: Standard academic tone, encouraging. Heavily rely on relatable real-world analogies."
                 
             format_builder = ["**STRICT RESPONSE FORMAT:**\nYou MUST use ONLY the exact Markdown headers (##) requested below."]
             
             if prefs.get("show_explanation", True):
-                if is_literal:
+                if is_literal or best_style == "technical":
                     format_builder.append("## Explanation\n[Clear, literal, technical definition. Min 3 sentences. NO ANALOGIES.]")
                 else:
                     format_builder.append("## Explanation\n[Clear text explanation. Min 3 sentences. Use relatable real-world analogies.]")
@@ -283,16 +312,11 @@ class SocraticTutorAgent(BaseAgent):
             
             format_rules = "\n\n".join(format_builder)
 
-        # Apply Custom Instructions globally
         if custom_inst:
             style_instruction += f"\n\n**STUDENT'S CUSTOM INSTRUCTIONS:**\n{custom_inst}"
 
-        # Safely grab the cached topic
         current_topic = entities[0] if entities else "C Programming"
 
-        # =========================================================
-        # ASSEMBLE FINAL PROMPT
-        # =========================================================
         return f"""
         You are an expert C Programming Tutor.
         

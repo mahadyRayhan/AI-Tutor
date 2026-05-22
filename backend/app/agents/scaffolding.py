@@ -326,15 +326,22 @@ class ScaffoldingAgent(BaseAgent):
                 history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
         else:
             # =========================================================
-            # --- TRIGGER ESCALATION MENU ---
+            # C_scaff: Remediation Escalation
+            # Trigger if Fail_v >= 3 OR M_state == Helplessness
             # =========================================================
             failed_attempts = active_plan.get('failed_attempts', 0) + 1
             active_plan['failed_attempts'] = failed_attempts
             history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": active_plan})
 
-            if failed_attempts >= 3:
-                answer_text = f"⚠️ **It looks like we are stuck here.** \n\n"
-                answer_text += f"You have tried this step {failed_attempts} times. Learning to code is hard, and it's completely okay to hit a wall!\n\n"
+            # The Math: Force escalation if they are helpless, regardless of attempt count
+            if failed_attempts >= 3 or state.m_state == "Helplessness":
+                self.logger.info(f"🧗 [C_scaff] Escalating to Micro-Step (Fails: {failed_attempts}, M_state: {state.m_state})")
+                
+                if state.m_state == "Helplessness":
+                    answer_text = f"🛑 **Hold on, it's okay!** I can see you are feeling stuck. Programming is tough, but you can do this.\n\n"
+                else:
+                    answer_text = f"⚠️ **It looks like we are stuck here.** You've tried this {failed_attempts} times.\n\n"
+                    
                 answer_text += "**How would you like to proceed?**\n"
                 answer_text += "1. **Get Partial Code:** I can give you the code structure for this step with a heavy hint.\n"
                 answer_text += "2. **Consult TA:** I can write a summary of what you've tried so far, so you can email your Instructor for human help.\n\n"
@@ -344,6 +351,7 @@ class ScaffoldingAgent(BaseAgent):
 
                 sugg_list = ["Give me Partial Code", "Help me message the TA", "Stop guided mode"]
             else:
+                # Normal Scaffolding Hint (Fail_v = 1 or 2)
                 if evaluation.get('visual_aid'):
                     clean_visual = self._clean_guided_visual(evaluation['visual_aid'])
                     answer_text += f"\n\nHere is a visual aid:\n```mermaid\n{clean_visual}\n```"

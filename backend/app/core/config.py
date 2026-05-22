@@ -33,6 +33,7 @@ DEFAULT_GOOGLE_MODEL_ID = "gemini-3.1-flash-lite-preview"
 DEFAULT_GOOGLE_EMBEDDING_MODEL = "gemini-embedding-001"
 DEFAULT_OPENAI_CHAT_MODEL = "gpt-4-turbo"
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+SYSTEM_TYPE = os.getenv("SYSTEM_TYPE", "math-system")
 
 # --- Default Paths (Now built from PROJECT_ROOT) ---
 RESOURCES_DIR = PROJECT_ROOT / "resources"
@@ -227,6 +228,23 @@ INTENT_CLASSIFIER_MODE = os.getenv("INTENT_CLASSIFIER_MODE", "fast")
 MODELS_CACHE_DIR = PROJECT_ROOT / "models"
 if not MODELS_CACHE_DIR.exists():
     MODELS_CACHE_DIR.mkdir(parents=True)
+
+# =========================================================
+# NEURO-SYMBOLIC HYPERPARAMETERS (\tau)
+# =========================================================
+# Security & Semantic Radius
+TAU_BASE = 0.7        # Base acceptable cosine similarity for off-script queries
+ALPHA = 0.1           # Decay rate for mastery-adaptive security radius
+
+# Affective & Cognitive Overload
+TAU_DELTA_F = 0.1     # Threshold for escalating frustration (ΔF)
+TAU_RAGE = 0.85       # Absolute threshold for rage state (F_t)
+TAU_COMP = 5          # AST depth / code complexity threshold
+
+# Attention & Debt Ceilings
+TAU_STRIKE = 3        # Max off-topic strikes before Attention Hijacking block
+TAU_QUEUE = 5         # Max pending micro-challenges before Cognitive Debt block
+K_MIN = 3             # Cold-start threshold for Few-Shot Personalization
 
 # Utility function to check if query should trigger multimedia
 def should_generate_multimedia(query: str, user_role: str, query_domain: str) -> bool:

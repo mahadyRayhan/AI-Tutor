@@ -33,21 +33,19 @@ class HistoryManager:
         """, (session_id, username, title, "{}", datetime.now()))
         return session_id
 
-    def add_message(self, username: str, session_id: str, role: str, content: str, sources: list = None) -> int:
+    def add_message(self, username: str, session_id: str, role: str, content: str, sources: list = None, action_taken: str = None) -> int:
         # 1. Ensure Session Exists
         sess = db.fetch_one("SELECT 1 FROM sessions WHERE session_id = ?", (session_id,))
         if not sess:
             self.create_session(username) 
 
-        # 2. Update Title based on first USER message (ignore bot greeting)
-        # Ignore system messages that start with "["
+        # 2. Update Title based on first USER message
         if role == "user" and not content.strip().startswith("["):
             user_count = db.fetch_one(
                 "SELECT count(*) as c FROM messages WHERE session_id = ? AND role = 'user' AND content NOT LIKE '[%]'",
                 (session_id,)
             )
             if user_count['c'] == 0:
-                import re
                 clean_content = content.strip()
                 new_title = clean_content[:40] + "..." if len(clean_content) > 40 else clean_content
                 db.execute("UPDATE sessions SET title = ? WHERE session_id = ?", (new_title, session_id))
@@ -55,15 +53,16 @@ class HistoryManager:
         # 3. Insert Message with DEFAULTS
         sources_json = json.dumps(sources) if sources else None
         
-        # --- ROOT CAUSE FIX IS HERE ---
-        # We explicitly insert 'General' for topic and 'PROCESSING' for intent.
-        # This prevents NULLs even if the analytics step crashes later.
         default_topic = "General"
         default_intent = "PROCESSING" if role == 'user' else "RESPONSE"
+        
+        # If bot, default action to Direct_Teach if not specified
+        if role == 'bot' and not action_taken:
+            action_taken = "Direct_Teach"
 
         cursor = db.conn.execute("""
-            INSERT INTO messages (session_id, username, role, content, sources, timestamp, intent, topic)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (session_id, username, role, content, sources, timestamp, intent, topic, action_taken)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session_id, 
             username, 
@@ -71,8 +70,9 @@ class HistoryManager:
             content, 
             sources_json, 
             datetime.now(), 
-            default_intent, # <--- No more NULL
-            default_topic   # <--- No more NULL
+            default_intent, 
+            default_topic,
+            action_taken # <--- Tracks At for the MDP
         ))
         db.conn.commit()
         

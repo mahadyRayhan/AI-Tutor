@@ -120,7 +120,12 @@ class SQLiteDB:
                 self.conn.execute("ALTER TABLE user_feedback ADD COLUMN feedback_text TEXT")
             except sqlite3.OperationalError:
                 pass # Column already exists
-
+                
+            try:
+                self.conn.execute("ALTER TABLE messages ADD COLUMN action_taken TEXT")
+            except sqlite3.OperationalError:
+                pass # Column already exists
+            
     def execute(self, query, params=()):
         """Execute a write operation"""
         with self.conn:

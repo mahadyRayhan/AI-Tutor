@@ -8,15 +8,23 @@ class AgentState(BaseModel):
     session_id: str
     user_role: str = "student"
     user_goal: Optional[str] = None
-    profile: Dict[str, Any] = {} # e.g. {"attention_span": "short"}
+    profile: Dict[str, Any] = {} 
+    
+    # --- NEW: Phase 1 Sensory Variables ---
+    s_goal: float = 0.0          # Goal Alignment Score
+    c_code: int = 0              # Code Complexity
+    m_state: str = "Planning"    # Metacognitive State
+    delta_f: float = 0.0         # Frustration Trajectory
+    n_strike: int = 0            # Off-topic strikes
+    # --------------------------------------
     
     # Internal State (Passed between agents)
     intent: Optional[str] = None
     entities: List[str] = []
-    history: List[Dict] = [] # Last few messages
+    history: List[Dict] = [] 
     
     # Flags
-    stop_processing: bool = False # If True, return 'final_response' immediately
+    stop_processing: bool = False 
     final_response: Optional[str] = None
     sources: List[Dict] = []
     suggestions: List[str] = []
