@@ -334,6 +334,7 @@ async def chat_stream(request: ChatRequest):
     async def generate_stream():
         full_bot_response = ""
         final_sources = []
+        style_used_for_session = None
         
         try:
             if not cot_rag_agent:
@@ -359,7 +360,8 @@ async def chat_stream(request: ChatRequest):
                 # B. Handle Completion (Metadata)
                 if event["type"] == "complete":
                     final_data = event["data"]
-                    
+                    style_used_for_session = final_data.get("style_used")
+
                     # Ensure we capture the final authoritative answer
                     if final_data.get('answer'):
                         final_data['answer'] = cot_rag_agent._sanitize_mermaid(final_data['answer'])
@@ -442,7 +444,7 @@ async def chat_stream(request: ChatRequest):
             # We save whatever response we have, even if the stream crashed
             if full_bot_response.strip():
                 try:
-                    history_manager.add_message(request.username, session_id, "bot", full_bot_response, final_sources)
+                    history_manager.add_message(request.username, session_id, "bot", full_bot_response, final_sources, style_used=style_used_for_session)
                     # Invalidate learning path cache so it immediately updates based on new history/mastery
                     LEARNING_PATH_CACHE.pop(request.username, None)
                 except Exception as save_err:
@@ -1152,6 +1154,30 @@ async def handle_feedback(req: FeedbackRequest):
         feedback_type=req.feedback_type,
         feedback_text=req.feedback_text
     )
+
+    # Update UCB1 style win rates based on thumbs up/down
+    if req.feedback_type in ["up", "down"]:
+        last_bot = db.fetch_one(
+            "SELECT style_used FROM messages WHERE session_id=? AND role='bot' AND style_used IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
+            (req.session_id,)
+        )
+        if last_bot and last_bot["style_used"]:
+            style = last_bot["style_used"]
+            row = db.fetch_one("SELECT learning_profile FROM users WHERE username=?", (req.username,))
+            profile = json.loads(row["learning_profile"] or "{}") if row and row["learning_profile"] else {}
+            win_rates = profile.get("style_win_rates", {
+                "analogy":   {"wins": 0, "total": 0},
+                "technical": {"wins": 0, "total": 0},
+                "visual":    {"wins": 0, "total": 0}
+            })
+            if style in win_rates:
+                win_rates[style]["total"] += 1
+                if req.feedback_type == "up":
+                    win_rates[style]["wins"] += 1
+            profile["style_win_rates"] = win_rates
+            db.execute("UPDATE users SET learning_profile=? WHERE username=?",
+                       (json.dumps(profile), req.username))
+            logger.info(f"🎨 [UCB1] {req.feedback_type.upper()} → style='{style}' | wins={win_rates[style]['wins']}/{win_rates[style]['total']}")
 
     # --- FIX 1: Add distinct system tags and simplify the rewrite request ---
     if req.feedback_type in ["simplify", "deep_dive"]:

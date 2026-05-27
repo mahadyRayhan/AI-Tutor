@@ -33,7 +33,7 @@ class HistoryManager:
         """, (session_id, username, title, "{}", datetime.now()))
         return session_id
 
-    def add_message(self, username: str, session_id: str, role: str, content: str, sources: list = None, action_taken: str = None) -> int:
+    def add_message(self, username: str, session_id: str, role: str, content: str, sources: list = None, action_taken: str = None, style_used: str = None) -> int:
         # 1. Ensure Session Exists
         sess = db.fetch_one("SELECT 1 FROM sessions WHERE session_id = ?", (session_id,))
         if not sess:
@@ -61,18 +61,19 @@ class HistoryManager:
             action_taken = "Direct_Teach"
 
         cursor = db.conn.execute("""
-            INSERT INTO messages (session_id, username, role, content, sources, timestamp, intent, topic, action_taken)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (session_id, username, role, content, sources, timestamp, intent, topic, action_taken, style_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            session_id, 
-            username, 
-            role, 
-            content, 
-            sources_json, 
-            datetime.now(), 
-            default_intent, 
+            session_id,
+            username,
+            role,
+            content,
+            sources_json,
+            datetime.now(),
+            default_intent,
             default_topic,
-            action_taken # <--- Tracks At for the MDP
+            action_taken,
+            style_used
         ))
         db.conn.commit()
         

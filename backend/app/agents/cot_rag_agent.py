@@ -232,7 +232,7 @@ class ChainOfThoughtRAGAgent:
         # Same as before
         prereqs = []
         for entity in initial_entities:
-            cypher = "MATCH (target) WHERE toLower(target.name) CONTAINS toLower($name) OR toLower($name) CONTAINS toLower(target.name) MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req) RETURN req.name as name"
+            cypher = "MATCH (target) WHERE (toLower(target.name) CONTAINS toLower($name) OR toLower($name) CONTAINS toLower(target.name)) AND NOT target:Section MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req) RETURN req.name as name"
             results = self.graph_db.execute_query(cypher, {"name": entity})
             for record in results: prereqs.append(record['name'])
         return list(set(prereqs))
@@ -920,7 +920,10 @@ class ChainOfThoughtRAGAgent:
         is_in_plan = active_plan.get("is_active", False)
         is_force_teach = "teach me" in query.lower() and "anyway" in query.lower()
         is_verify_request = "verify" in query.lower() and "know" in query.lower()
-        
+        _quiz_kws = ("quiz me", "test me on", "test my knowledge", "give me a quiz",
+                     "ask me a question", "challenge me on", "another question", "try another")
+        is_quiz_request = any(kw in query.lower() for kw in _quiz_kws)
+
         # =========================================================
         # FIX: RESTORE ORIGINAL METAPHOR ON BYPASS
         # =========================================================
@@ -962,7 +965,7 @@ class ChainOfThoughtRAGAgent:
         # FIX: Handle "Rigorous Analysis" button click
         is_rigorous_analysis = q_lower_stripped in ["rigorous analysis", "🧐 rigorous analysis"]
         
-        should_skip_context = is_force_teach or is_verify_request or is_in_quiz or is_in_plan or is_raw_code or feedback_mode is not None or is_complete_question or is_rigorous_analysis
+        should_skip_context = is_force_teach or is_verify_request or is_quiz_request or is_in_quiz or is_in_plan or is_raw_code or feedback_mode is not None or is_complete_question or is_rigorous_analysis
 
         # --- RIGOROUS ANALYSIS HANDLER ---
         if is_rigorous_analysis:
@@ -1076,10 +1079,18 @@ class ChainOfThoughtRAGAgent:
                 
                 # ONLY trigger the warmup modal if this is an initial login!
                 if is_initial_login:
-                    valid_warmups = [c for c in known_concepts if len(c.split()) <= 3 and "?" not in c]
-                    
-                    if valid_warmups:
-                        warmup_topic = random.choice(valid_warmups).title()
+                    # SM-2: prefer concepts whose spaced-repetition review date has arrived
+                    due_concepts = knowledge_manager.get_due_for_review(username)
+                    valid_due = [c for c in due_concepts if len(c.split()) <= 3 and "?" not in c]
+
+                    if valid_due:
+                        warmup_topic = valid_due[0].title()
+                        greeting += f"📅 <b>Spaced Review:</b> It's a good time to revisit <b>{warmup_topic}</b>.<br>"
+                    else:
+                        valid_warmups = [c for c in known_concepts if len(c.split()) <= 3 and "?" not in c]
+                        warmup_topic = random.choice(valid_warmups).title() if valid_warmups else None
+
+                    if warmup_topic:
                         history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": warmup_topic})
             else:
                 greeting += "We have a blank slate! What topic should we dive into first?"
@@ -1126,7 +1137,8 @@ class ChainOfThoughtRAGAgent:
         else:
             pre_intent = None
         
-        if pre_intent == "GREETING":
+        _in_active_quiz = current_state.get("awaiting_confidence_rating") or current_state.get("awaiting_quiz_answer")
+        if pre_intent == "GREETING" and not _in_active_quiz:
             self.logger.info(f"👋 [GREETING] Intercepted casual message: '{query}'")
             
             # Build a warm, human-like greeting
@@ -1381,7 +1393,7 @@ class ChainOfThoughtRAGAgent:
                 "challenge_topic": retry_topic
             })
             
-            prompt = f"The student wants to retry their pending micro-challenge about '{retry_topic}'. Generate a short, encouraging 1-2 sentence micro-challenge asking them to write 1 line of code related to {retry_topic}. Stop generating immediately after asking the question."
+            prompt = f"The student wants to retry their pending micro-challenge about '{retry_topic}'. Write a short, encouraging 1-2 sentence challenge asking them to write 1 line of C code related to {retry_topic}. End your response with the challenge question. Do not provide the answer."
             challenge_msg = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
             
             yield {"type": "complete", "data": {"answer": f"Awesome, let's clear that pending challenge!\n\n{challenge_msg}", "sources": [], "intent": "GUIDANCE", "suggestions": ["I'm stuck (Skip)"]}}
@@ -1565,9 +1577,12 @@ class ChainOfThoughtRAGAgent:
                 # --- NEW: EXTRACT THE MICRO-CHALLENGE TEXT FROM THE LLM RESPONSE ---
                 full_text = event["data"].get("answer", "")
                 import re
-                # Use regex to grab everything after the "Your Turn!" header
+                # Extract challenge question after the "Your Turn!" header
                 match = re.search(r"## Your Turn!.*?\n(.*)", full_text, re.IGNORECASE | re.DOTALL)
-                extracted_question = match.group(1).strip() if match else f"Write a quick code snippet demonstrating {topic_name}."
+                extracted_question = match.group(1).strip() if match else ""
+                # Fallback covers both: no match AND match with empty capture (LLM stopped early)
+                if not extracted_question:
+                    extracted_question = f"Try it: write a line of C code that demonstrates `{topic_name}`."
                 
                 history_manager.update_session_state(
                     username, session_id, 

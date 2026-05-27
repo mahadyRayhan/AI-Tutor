@@ -68,13 +68,13 @@ class ExaminerAgent(BaseAgent):
         is_verify_request = "(verify)" in state.query.lower()
         
         if state.intent == "QUIZ" or is_verify_request:
-            state.intent = "QUIZ" 
-            async for event in self._start_quiz(state):
+            state.intent = "QUIZ"
+            async for event in self._start_quiz(state, current_session_state):
                 yield event
             state.stop_processing = True
             return
 
-    async def _start_quiz(self, state: AgentState):
+    async def _start_quiz(self, state: AgentState, session_state: dict = None):
         """
         Initiates a new quiz session.
         
@@ -83,9 +83,36 @@ class ExaminerAgent(BaseAgent):
         3. Updates session state to expect an answer.
         4. Returns the question to the user.
         """
-        # Extract topic
-        match = re.search(r"know (.*?) \(verify\)", state.query.lower())
-        verify_topic = match.group(1).strip() if match else state.entities[0] if state.entities else "this concept"
+        # Extract topic — try patterns in priority order
+        _quiz_non_topics = {"quiz", "me", "test", "my", "knowledge", "ask", "challenge",
+                            "on", "about", "please", "another", "question", "try", "can", "give", "you"}
+        verify_topic = None
+
+        # Pattern 1: internal verify format "know X (verify)"
+        m = re.search(r"know (.*?) \(verify\)", state.query.lower())
+        if m:
+            verify_topic = m.group(1).strip()
+
+        # Pattern 2: "quiz me on X", "test me on X", "challenge me on X"
+        if not verify_topic:
+            m = re.search(r"(?:quiz|test|challenge)\s+me\s+on\s+(.+)", state.query.lower())
+            if m:
+                verify_topic = m.group(1).strip().rstrip(".")
+
+        # Pattern 3: "another question about X"
+        if not verify_topic:
+            m = re.search(r"(?:another question|try another).+?(?:about|on)\s+(.+)", state.query.lower())
+            if m:
+                verify_topic = m.group(1).strip().rstrip(".")
+
+        # Pattern 4: reuse last quiz topic from session state
+        if not verify_topic and session_state:
+            verify_topic = session_state.get("quiz_topic")
+
+        # Pattern 5: filter non-topic words from extracted entities
+        if not verify_topic:
+            topic_entities = [e for e in state.entities if e.lower() not in _quiz_non_topics]
+            verify_topic = topic_entities[0] if topic_entities else (state.entities[0] if state.entities else "this concept")
 
         yield {"type": "status", "message": "Fetching quiz...", "percent": 50}
 
@@ -125,9 +152,13 @@ class ExaminerAgent(BaseAgent):
         qa_pair = None
         if results and results[0]['data']:
             try:
-                pairs = json.loads(results[0]['data'])
                 import random
-                qa_pair = random.choice(pairs)
+                pairs = json.loads(results[0]['data'])
+                # Avoid repeating questions already asked this session
+                asked = set(session_state.get("asked_quiz_questions", [])) if session_state else set()
+                unseen = [p for p in pairs if p['q'] not in asked]
+                pool = unseen if unseen else pairs  # fallback to all if all seen
+                qa_pair = random.choice(pool)
             except: pass
 
         if qa_pair:
@@ -140,13 +171,19 @@ class ExaminerAgent(BaseAgent):
                 "local": qa_pair.get('a_vector_local')
             }
             
+            # Track this question so it won't repeat in the same session
+            asked_so_far = list(session_state.get("asked_quiz_questions", [])) if session_state else []
+            if qa_pair['q'] not in asked_so_far:
+                asked_so_far.append(qa_pair['q'])
+
             # Save State: We are waiting for a CONFIDENCE RATING, not the actual answer yet.
             history_manager.update_session_state(state.user_id, state.session_id, {
-                "awaiting_confidence_rating": True,    # <--- NEW FLAG
-                "pending_quiz_question": qa_pair['q'], # <--- Storing the question for later
+                "awaiting_confidence_rating": True,
+                "pending_quiz_question": qa_pair['q'],
                 "quiz_topic": verify_topic,
                 "quiz_vector": vector_data,
-                "quiz_correct_text": qa_pair['a']
+                "quiz_correct_text": qa_pair['a'],
+                "asked_quiz_questions": asked_so_far
             })
 
             if state.profile.get('is_surprise_quiz'):
@@ -209,9 +246,17 @@ class ExaminerAgent(BaseAgent):
         # result = self._fast_grade_answer(state.query, correct_vector, correct_vector_local)
         result = await self._smart_grade_answer(state.query, correct_vector, correct_vector_local, correct_text)
 
+        # SM-2 quality score: combines correctness with confidence calibration
+        if result['is_correct']:
+            sm2_quality = 5 if confidence_score >= 4 else 4
+        else:
+            sm2_quality = 0 if confidence_score >= 4 else (1 if confidence_score <= 2 else 2)
+        knowledge_manager.update_sm2(state.user_id, check_topic, sm2_quality)
+
         if result['is_correct']:
             knowledge_manager.mark_concept_as_known(state.user_id, check_topic)
-            
+            knowledge_manager.resolve_misconception(state.user_id, check_topic)
+
             # =========================================================
             # SAGE PDF PAGE 2: CALIBRATION ACCURACY (PASS SCENARIOS)
             # =========================================================
@@ -241,7 +286,10 @@ class ExaminerAgent(BaseAgent):
             # SAGE PDF PAGE 2: CALIBRATION ACCURACY (FAIL SCENARIOS)
             # =========================================================
             if confidence_score >= 4:
-                # High Confidence + FAIL = Illusion Busting
+                # High Confidence + FAIL = Misconception (not just a gap)
+                knowledge_manager.store_misconception(
+                    state.user_id, check_topic, state.query, correct_text or ""
+                )
                 msg = f"❌ **{result['feedback']}**\n\n"
                 msg += f"I noticed you felt very confident ({confidence_score}/5) before starting. It's incredibly common to feel like we understand code when reading it, but answering questions exposes the hidden gaps. Let's look at exactly where the logic broke down.\n\n"
             elif confidence_score <= 2:

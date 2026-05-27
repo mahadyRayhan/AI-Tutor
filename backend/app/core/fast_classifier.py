@@ -94,6 +94,11 @@ class FastClassifier:
         if any(q_lower.startswith(p) for p in problem_starters):
             return "PROBLEM"
         
+        quiz_keywords = ("quiz me", "test me on", "test my knowledge", "give me a quiz",
+                         "ask me a question", "challenge me on", "another question", "try another")
+        if any(kw in q_lower for kw in quiz_keywords):
+            return "QUIZ"
+
         debug_starters = ("why is", "fix", "debug", "error", "why does", "why doesn't")
         if any(q_lower.startswith(p) for p in debug_starters):
             return "DEBUG"

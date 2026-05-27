@@ -3,7 +3,8 @@
 
 import asyncio
 import json
-from typing import AsyncGenerator, Dict, Any, List 
+import math
+from typing import AsyncGenerator, Dict, Any, List
 from app.agents.base import BaseAgent
 from app.agents.schema import AgentState
 from app.db.vector_store import VectorStore
@@ -78,15 +79,17 @@ class SocraticTutorAgent(BaseAgent):
         suggest_task = asyncio.create_task(asyncio.to_thread(self._generate_suggestions, state.query, context_text))
 
         # 4. Select Prompt based on Intent
-        if state.intent == "DEBUG": 
+        if state.intent == "DEBUG":
             # Reuse Socratic Plan prompt for debugging logic as it encourages step-by-step thinking
             prompt = self._build_socratic_plan_prompt(state.query, context_text, state.user_goal)
+            style_used = None
         elif state.intent == "COMPLEX_PROBLEM":
             # Provide a high-level architectural plan without scaffolding
             prompt = self._build_complex_plan_prompt(state.query, context_text, state.user_goal)
-        else: 
+            style_used = None
+        else:
             # Default to Concept Explanation
-            prompt = self._build_concept_prompt(state.query, context_text, state.user_goal, state.profile, state.original_query, state.entities)
+            prompt, style_used = self._build_concept_prompt(state.query, context_text, state.user_goal, state.profile, state.original_query, state.entities)
 
         # 5. Stream Answer
         yield {"type": "status", "message": "Generating...", "percent": 100}
@@ -102,13 +105,20 @@ class SocraticTutorAgent(BaseAgent):
 
         # 7. Finalize
         state.stop_processing = True
-        
+
+        try:
+            suggestions = await asyncio.wait_for(suggest_task, timeout=8.0)
+        except (asyncio.TimeoutError, Exception):
+            suggest_task.cancel()
+            suggestions = ["Tell me more", "Show me an example", "What should I learn next?"]
+
         yield {
             "type": "complete",
             "data": {
-                "answer": full_answer, 
-                "sources": sources_payload, # <--- Updated
-                "suggestions": await suggest_task,
+                "answer": full_answer,
+                "sources": sources_payload,
+                "suggestions": suggestions,
+                "style_used": style_used,
                 "intent": state.intent,
                 "entities": state.entities,
                 "session_id": state.session_id
@@ -216,19 +226,27 @@ class SocraticTutorAgent(BaseAgent):
             "visual": {"wins": 0, "total": 0}
         })
         
-        k_min = 3 # Cold-start threshold prevents dividing by zero / small sample bias
-        best_style = "analogy" # Global prior (default)
-        best_win_rate = 0.0
-        
+        # UCB1 bandit: balance exploitation (win rate) with exploration (underused styles)
+        # Score = win_rate + sqrt(2 * ln(N) / n_s)
+        # Unvisited styles get infinite score, forcing initial exploration of all 3.
+        N = sum(s["total"] for s in style_stats.values())
+        best_style = "analogy"  # Global prior (default)
+        best_score = -1.0
+
         for style_name, stats in style_stats.items():
-            # Apply the corrected Tier 1 Formula: wins / max(total, k_min)
-            total = max(stats["total"], k_min) 
-            win_rate = stats["wins"] / total
-            if win_rate > best_win_rate:
-                best_win_rate = win_rate
+            n_s = stats["total"]
+            if n_s == 0:
                 best_style = style_name
-                
-        self.logger.info(f"🎨 [C_style] Selected pedagogical style: {best_style.upper()} (Win Rate: {best_win_rate:.2f})")
+                best_score = float('inf')
+                break
+            win_rate = stats["wins"] / n_s
+            exploration = math.sqrt(2 * math.log(max(N, 1)) / n_s)
+            ucb_score = win_rate + exploration
+            if ucb_score > best_score:
+                best_score = ucb_score
+                best_style = style_name
+
+        self.logger.info(f"🎨 [C_style] UCB1 selected: {best_style.upper()} (Score: {best_score:.3f}, N={N})")
 
         goal_section = ""
         if user_goal:
@@ -308,7 +326,7 @@ class SocraticTutorAgent(BaseAgent):
             if prefs.get("show_example_code", True):
                 format_builder.append("## Example from Class\n[Reference specific code from text]")
 
-            format_builder.append("## Your Turn! (Micro-Challenge)\n[Ask the student to write ONE line of code. Stop generating immediately after asking the question. NEVER provide the answer.]")
+            format_builder.append("## Your Turn! (Micro-Challenge)\n[Write one short, specific challenge question asking the student to write a single line of C code related to this topic. Example format: 'Try it: declare an integer variable called `score`.' Your response must end after this question. Do not add any explanation or answer after it.]")
             
             format_rules = "\n\n".join(format_builder)
 
@@ -334,7 +352,7 @@ class SocraticTutorAgent(BaseAgent):
         2. **STAY ON TOPIC:** Frame your response around the 'Current Topic Being Learned'. Do not randomly switch topics.
         
         {format_rules}
-        """
+        """, best_style
 
     def _build_socratic_plan_prompt(self, query: str, context: str, user_goal: str = None) -> str:
         goal_instruction = ""
