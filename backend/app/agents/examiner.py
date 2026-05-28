@@ -253,9 +253,18 @@ class ExaminerAgent(BaseAgent):
             sm2_quality = 0 if confidence_score >= 4 else (1 if confidence_score <= 2 else 2)
         knowledge_manager.update_sm2(state.user_id, check_topic, sm2_quality)
 
+        # BKT update: single probabilistic step based on correctness
+        from app.core.bkt_model import bkt
+        p_mastery = bkt.update(state.user_id, check_topic, result['is_correct'], evidence_type="quiz")
+
         if result['is_correct']:
-            knowledge_manager.mark_concept_as_known(state.user_id, check_topic)
             knowledge_manager.resolve_misconception(state.user_id, check_topic)
+            # BKT-gated mastery: mark known only when P(L) crosses 0.95 threshold
+            if bkt.is_mastered(state.user_id, check_topic):
+                knowledge_manager.mark_concept_as_known(state.user_id, check_topic)
+                self.logger.info(f"🏆 [BKT] Mastery unlocked: '{check_topic}' P(L)={p_mastery:.3f}")
+            else:
+                self.logger.info(f"📐 [BKT] '{check_topic}' P(L)={p_mastery:.3f} (threshold 0.95 not yet reached)")
 
             # =========================================================
             # SAGE PDF PAGE 2: CALIBRATION ACCURACY (PASS SCENARIOS)

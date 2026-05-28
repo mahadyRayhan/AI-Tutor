@@ -131,12 +131,16 @@ class SQLiteDB:
             except sqlite3.OperationalError:
                 pass
 
-            # SM-2 spaced repetition columns on user_knowledge
+            # SM-2 spaced repetition + BKT columns on user_knowledge
             for col, definition in [
-                ("interval_days", "INTEGER DEFAULT 1"),
-                ("ease_factor",   "REAL DEFAULT 2.5"),
-                ("due_date",      "TIMESTAMP"),
-                ("review_count",  "INTEGER DEFAULT 0"),
+                ("interval_days",   "INTEGER DEFAULT 1"),
+                ("ease_factor",     "REAL DEFAULT 2.5"),
+                ("due_date",        "TIMESTAMP"),
+                ("review_count",    "INTEGER DEFAULT 0"),
+                ("p_mastery",       "REAL DEFAULT 0.3"),
+                ("p_mastery_quiz",  "REAL DEFAULT 0.3"),
+                ("p_mastery_micro", "REAL DEFAULT 0.0"),
+                ("p_mastery_code",  "REAL DEFAULT 0.0"),
             ]:
                 try:
                     self.conn.execute(f"ALTER TABLE user_knowledge ADD COLUMN {col} {definition}")

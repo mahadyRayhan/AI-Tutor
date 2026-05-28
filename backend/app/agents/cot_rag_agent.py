@@ -1477,8 +1477,12 @@ class ChainOfThoughtRAGAgent:
                 if has_code:
                     state.intent = "REVIEW"
                     state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this code. Keep it brief."
+                    # BKT micro evidence: student attempted procedural code → always counts as attempt
+                    from app.core.bkt_model import bkt as _bkt_micro
+                    _bkt_micro.update(username, challenge_topic, True, evidence_type="micro")
+                    self.logger.info(f"📐 [BKT/MICRO] '{challenge_topic}' updated for {username}")
                 else:
-                    state.intent = "CONCEPT" 
+                    state.intent = "CONCEPT"
                     state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this briefly."
 
         # 4. NEW SCAFFOLDING TRIGGERS 

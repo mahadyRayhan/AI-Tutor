@@ -61,7 +61,26 @@ class CodeReviewerAgent(BaseAgent):
 
         state.final_response = full_response
         state.stop_processing = True
-        
+
+        # BKT code evidence: heuristic pass/fail from review content
+        if state.user_id and state.entities:
+            review_topic = state.entities[0] if state.entities else None
+            if review_topic:
+                _error_keywords = (
+                    "compilation error", "syntax error", "will not compile",
+                    "won't compile", "does not compile", "missing semicolon",
+                    "undefined variable", "segmentation fault", "memory leak",
+                    "infinite loop", "out of bounds", "buffer overflow",
+                )
+                resp_lower = full_response.lower()
+                has_errors = any(kw in resp_lower for kw in _error_keywords)
+                from app.core.bkt_model import bkt as _bkt_code
+                _bkt_code.update(state.user_id, review_topic, not has_errors, evidence_type="code")
+                self.logger.info(
+                    f"📐 [BKT/CODE] '{review_topic}' for {state.user_id}: "
+                    f"{'PASS' if not has_errors else 'FAIL'}"
+                )
+
         # Store code submission for Rigorous Analysis retrieval
         if state.session_id and state.user_id:
             history_manager.update_session_state(
