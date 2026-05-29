@@ -145,6 +145,13 @@ class VideoChatRequest(BaseModel):
     timestamp: float  # seconds into the video where student paused
     username: Optional[str] = "anonymous"
 
+class ClassroomHistoryRequest(BaseModel):
+    username: str
+    session_id: Optional[str] = None
+    video_title: str
+    question: str
+    answer: str
+
 class TutorPreferences(BaseModel):
     custom_instructions: str = ""
     show_explanation: bool = True
@@ -1480,6 +1487,20 @@ IMPORTANT RULES:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.post("/api/v1/history/save-classroom")
+async def save_classroom_history(req: ClassroomHistoryRequest):
+    """
+    Saves a classroom Q&A pair directly to history without going through the AI pipeline.
+    Creates a new session titled '📹 {video_title}' on first call, reuses it on subsequent calls.
+    """
+    session_id = req.session_id
+    if not session_id:
+        session_id = history_manager.create_session(req.username, title=f"📹 {req.video_title}")
+    history_manager.add_message(req.username, session_id, "user", req.question)
+    history_manager.add_message(req.username, session_id, "bot",  req.answer)
+    return {"session_id": session_id}
 
 
 @app.get("/api/v1/video/list")

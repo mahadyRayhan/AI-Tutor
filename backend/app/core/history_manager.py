@@ -39,16 +39,18 @@ class HistoryManager:
         if not sess:
             self.create_session(username) 
 
-        # 2. Update Title based on first USER message
+        # 2. Update Title based on first USER message (only if session still has default title)
         if role == "user" and not content.strip().startswith("["):
-            user_count = db.fetch_one(
-                "SELECT count(*) as c FROM messages WHERE session_id = ? AND role = 'user' AND content NOT LIKE '[%]'",
-                (session_id,)
-            )
-            if user_count['c'] == 0:
-                clean_content = content.strip()
-                new_title = clean_content[:40] + "..." if len(clean_content) > 40 else clean_content
-                db.execute("UPDATE sessions SET title = ? WHERE session_id = ?", (new_title, session_id))
+            sess_row = db.fetch_one("SELECT title FROM sessions WHERE session_id = ?", (session_id,))
+            if sess_row and sess_row["title"] == "New Chat":
+                user_count = db.fetch_one(
+                    "SELECT count(*) as c FROM messages WHERE session_id = ? AND role = 'user' AND content NOT LIKE '[%]'",
+                    (session_id,)
+                )
+                if user_count['c'] == 0:
+                    clean_content = content.strip()
+                    new_title = clean_content[:40] + "..." if len(clean_content) > 40 else clean_content
+                    db.execute("UPDATE sessions SET title = ? WHERE session_id = ?", (new_title, session_id))
 
         # 3. Insert Message with DEFAULTS
         sources_json = json.dumps(sources) if sources else None

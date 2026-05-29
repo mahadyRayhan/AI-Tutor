@@ -1032,6 +1032,7 @@ let classroomIsPaused = false;
 let classroomIsStreaming = false;
 let classroomVideoData = []; // Cached video list for reference
 let classroomChatMessages = [];
+let classroomSessionId = null; // Persists across Q&A for the same video
 
 // Topic → emoji mapping for cards
 const TOPIC_ICONS = {
@@ -1126,11 +1127,12 @@ function onClassroomVideoSelect(filename, title) {
     const videoEl = document.getElementById('classroomVideo');
     videoEl.src = `/videos/${encodeURIComponent(filename)}`;
     videoEl.load();
-    
+
     // Reset state
     classroomTimestamp = 0;
     classroomIsPaused = false;
     classroomChatMessages = [];
+    classroomSessionId = null; // New video = new session
     
     // Show player, hide picker
     document.getElementById('classroomPicker').style.display = 'none';
@@ -1479,31 +1481,23 @@ async function sendClassroomMessage() {
 // Save classroom Q&A into the chat history system
 async function saveClassroomToHistory(question, answer, timestamp) {
     if (!currentUser) return;
-    
-    const mins = Math.floor(timestamp / 60);
-    const secs = Math.floor(timestamp % 60);
-    const timeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    
-    const videoName = classroomVideoFilename.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
-    
+
+    const videoTitle = classroomVideoFilename.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+
     try {
-        // Use the regular chat endpoint with a special marker to create a session
-        const payload = {
-            message: `[CLASSROOM] Video: ${videoName} at ${timeStr}\n\nQuestion: ${question}`,
-            user_role: currentUser.role,
-            username: currentUser.username,
-            session_id: null   // Creates a new session for this Q&A
-        };
-        
-        // We just fire this to create history; we already have the answer
-        // The endpoint will create a new session visible in chat history
-        await fetch(`${API_URL}/api/v1/chat/stream`, {
+        const res = await fetch(`${API_URL}/api/v1/history/save-classroom`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+                username: currentUser.username,
+                session_id: classroomSessionId,   // null on first Q, reused after
+                video_title: videoTitle,
+                question: question,
+                answer: answer,
+            })
         });
-        
-        // Refresh history sidebar
+        const data = await res.json();
+        classroomSessionId = data.session_id;  // store for next question
         loadChatHistory();
     } catch (err) {
         console.error('Failed to save classroom history:', err);
