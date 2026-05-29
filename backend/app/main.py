@@ -34,7 +34,7 @@ from app.core.history_manager import history_manager
 from app.core.user_knowledge_manager import knowledge_manager
 from app.core.assignment_manager import assignment_manager
 from app.db.sqlite_db import db
-from app.services.video_service import transcribe_video, get_transcript_until, list_available_videos
+from app.services.video_service import transcribe_video, get_transcript_until, list_available_videos, get_or_generate_video_meta, find_timestamp_hints
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -1331,7 +1331,25 @@ async def video_chat_stream(request: VideoChatRequest):
             video_topic = topic_name
             break
     logger.info(f"🎬 [CLASSROOM] Video: {request.video_filename}, Topic: {video_topic}, Timestamp: {time_str}")
-    
+
+    # 4b. Meta-question: return high-level video summary, skip the full pipeline
+    _META_PATTERNS = (
+        "what is this video about", "what does this video cover", "what will i learn",
+        "what are the core concepts", "what topics are covered", "summarize this video",
+        "give me an overview", "what is covered", "overview of this video",
+        "what's in this video", "what is taught here", "what does this teach",
+    )
+    if any(p in request.question.lower() for p in _META_PATTERNS):
+        meta = get_or_generate_video_meta(str(video_path), llm_fast)
+        summary = meta.get("summary") or f"This video covers {video_topic} concepts in C programming."
+        logger.info(f"📋 [CLASSROOM] Meta-question → returning cached summary")
+
+        async def generate_meta():
+            yield f"data: {json.dumps({'type': 'token', 'text': summary})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'data': {'answer': summary, 'timestamp': time_str, 'topic': video_topic, 'used_resources': False, 'resource_sources': []}})}\n\n"
+
+        return StreamingResponse(generate_meta(), media_type="text/event-stream")
+
     # 5. Query vectorDB for supplementary resources (topic-filtered)
     supplementary_context = ""
     resource_sources = []
@@ -1392,7 +1410,36 @@ IMPORTANT RULES:
             async for chunk in llm_fast.stream_response_async(full_prompt):
                 full_response += chunk
                 yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
-            
+
+            # Timestamp hints (forward + backward)
+            hints = find_timestamp_hints(str(video_path), request.question, request.timestamp)
+            hint_text = ""
+
+            if hints.get("backward"):
+                h = hints["backward"]
+                bm, bs = int(h["start"] // 60), int(h["start"] % 60)
+                em, es = int(h["end"]   // 60), int(h["end"]   % 60)
+                hint_text += (
+                    f"\n\n---\n⏮️ **Already covered:** "
+                    f"This was discussed at **{bm:02d}:{bs:02d}–{em:02d}:{es:02d}** "
+                    f"in the video — you may want to revisit it."
+                )
+
+            if hints.get("forward"):
+                h = hints["forward"]
+                fm, fs = int(h["start"] // 60), int(h["start"] % 60)
+                em, es = int(h["end"]   // 60), int(h["end"]   % 60)
+                hint_text += (
+                    f"\n\n---\n⏭️ **Coming up ahead:** "
+                    f"This is also covered at **{fm:02d}:{fs:02d}–{em:02d}:{es:02d}** "
+                    f"in the video — keep watching!"
+                )
+
+            if hint_text:
+                full_response += hint_text
+                yield f"data: {json.dumps({'type': 'token', 'text': hint_text})}\n\n"
+                logger.info(f"⏱️ [CLASSROOM] Hints → backward={hints['backward']} forward={hints['forward']}")
+
             # Send completion event with source metadata
             completion_data = {
                 'answer': full_response,

@@ -121,6 +121,112 @@ def get_video_duration_from_transcript(video_path: str) -> float:
     return 0.0
 
 
+_STOP_WORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "can", "how", "what", "when",
+    "where", "who", "why", "which", "that", "this", "to", "of", "in",
+    "on", "at", "by", "for", "with", "about", "from", "and", "but", "or",
+    "i", "me", "my", "we", "you", "he", "she", "it", "they", "them",
+}
+
+
+def find_timestamp_hints(video_path: str, question: str, current_timestamp: float) -> Dict:
+    """
+    Searches transcript segments before and after current_timestamp for keywords
+    from the question. Returns both a forward hint and a backward hint (each may be None).
+
+    Returns:
+        {
+            "forward":  {"start": float, "end": float} | None,
+            "backward": {"start": float, "end": float} | None,
+        }
+    """
+    import re
+    segments = transcribe_video(video_path)
+
+    words = re.findall(r"[a-zA-Z]+", question.lower())
+    keywords = {w for w in words if w not in _STOP_WORDS and len(w) > 2}
+    if not keywords:
+        return {"forward": None, "backward": None}
+
+    past   = [s for s in segments if s["end"]   < current_timestamp]
+    future = [s for s in segments if s["start"] > current_timestamp]
+
+    def _best_window(segs: list) -> Optional[Dict]:
+        best_idx, best_score = -1, 0
+        for i, seg in enumerate(segs):
+            seg_words = set(re.findall(r"[a-zA-Z]+", seg["text"].lower()))
+            score = len(keywords & seg_words)
+            if score > best_score:
+                best_score, best_idx = score, i
+        if best_score < 2:
+            return None
+        start_seg = segs[best_idx]
+        end_seg   = start_seg
+        window_end = start_seg["start"] + 30.0
+        for seg in segs[best_idx:]:
+            if seg["start"] <= window_end:
+                end_seg = seg
+            else:
+                break
+        return {"start": start_seg["start"], "end": end_seg["end"]}
+
+    return {
+        "forward":  _best_window(future),
+        "backward": _best_window(past),
+    }
+
+
+def get_or_generate_video_meta(video_path: str, llm=None) -> Dict:
+    """
+    Returns a cached high-level one-sentence summary of the full video.
+    Generates once on first call and caches as {stem}.meta.json alongside the transcript.
+    Returns: {"summary": "This video introduces variables in C — ..."}
+    """
+    video_p = Path(video_path)
+    meta_path = video_p.parent / f"{video_p.stem}.meta.json"
+
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    if llm is None:
+        return {"summary": None}
+
+    segments = transcribe_video(video_path)
+    full_text = " ".join(s["text"] for s in segments)[:3000]
+
+    prompt = f"""Based on this lecture transcript, write exactly ONE concise sentence (max 20 words) summarizing what this video teaches.
+Start with "This video" and focus on what students will learn.
+
+Transcript:
+{full_text}
+
+Summary (one sentence only):"""
+
+    try:
+        summary = llm.generate_response(prompt).strip().strip('"\'')
+        if len(summary) > 200:
+            summary = summary[:200].rsplit(" ", 1)[0] + "."
+    except Exception as e:
+        logger.warning(f"[CLASSROOM] Failed to generate video meta: {e}")
+        return {"summary": None}
+
+    meta = {"summary": summary}
+    try:
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+        logger.info(f"📝 [CLASSROOM] Video meta cached: {meta_path.name}")
+    except Exception as e:
+        logger.warning(f"[CLASSROOM] Failed to cache meta: {e}")
+
+    return meta
+
+
 def list_available_videos(video_dir: str) -> List[Dict]:
     """
     Lists all video files in the given directory with rich metadata.
