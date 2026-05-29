@@ -451,8 +451,9 @@ async def chat_stream(request: ChatRequest):
                         classroom_video = _find_classroom_video(detected_topic)
                         if classroom_video:
                             suggestion_text = (
-                                f"\n\n---\n📹 **Watch in Classroom:** "
-                                f"*{classroom_video['title']}* covers this topic with visual examples."
+                                f"\n\n---\n"
+                                f"> 📹 **Watch in Classroom**\n"
+                                f"> *{classroom_video['title']}* covers this topic with visual examples."
                             )
                             full_bot_response += suggestion_text
                             final_data['answer'] = full_bot_response
