@@ -258,11 +258,12 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
 
             botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(data.data.answer);
             displaySources(data.data.sources);
-            
-            renderDiagrams(botDiv);         
-            Prism.highlightAllUnder(botDiv); 
-            injectCopyButtons(botDiv);       
-            
+
+
+            renderDiagrams(botDiv);
+            Prism.highlightAllUnder(botDiv);
+            injectCopyButtons(botDiv);
+
             displaySuggestions(data.data.suggestions, botDiv);
             addFeedbackButtons(botDiv, rawText);
             loadChatHistory();

@@ -72,6 +72,17 @@ logger = logging.getLogger(__name__)
 VIDEO_DIR = config.DB_DIR / "video"
 logger.info(f"VIDEO_DIR resolved to: {VIDEO_DIR} (exists: {VIDEO_DIR.exists()})")
 
+
+def _find_classroom_video(topic: str):
+    """Returns the first available classroom video whose topic matches, or None."""
+    if not VIDEO_DIR.exists():
+        return None
+    for v in list_available_videos(str(VIDEO_DIR)):
+        if v.get("topic") == topic:
+            return v
+    return None
+
+
 # --- Data Models ---
 class SignupRequest(BaseModel):
     username: str
@@ -435,8 +446,21 @@ async def chat_stream(request: ChatRequest):
                     except Exception as analytics_err:
                         logger.error(f"Analytics logging failed: {analytics_err}")
 
-                    
-                    event["data"]["session_id"] = session_id 
+                    # Classroom video suggestion for CONCEPT responses
+                    if final_data.get('intent') == 'CONCEPT' and detected_topic != 'General':
+                        classroom_video = _find_classroom_video(detected_topic)
+                        if classroom_video:
+                            suggestion_text = (
+                                f"\n\n---\n📹 **Watch in Classroom:** "
+                                f"*{classroom_video['title']}* covers this topic with visual examples."
+                            )
+                            full_bot_response += suggestion_text
+                            final_data['answer'] = full_bot_response
+                            final_data['classroom_video'] = classroom_video
+                            yield f"data: {json.dumps({'type': 'token', 'text': suggestion_text})}\n\n"
+                            logger.info(f"📹 [CLASSROOM] Suggested video: '{classroom_video['title']}' for topic '{detected_topic}'")
+
+                    event["data"]["session_id"] = session_id
 
                 yield f"data: {json.dumps(event)}\n\n"
 
