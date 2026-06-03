@@ -86,9 +86,14 @@ def _find_classroom_video(topic: str):
 
 def _clean_text_for_tts(raw: str) -> str:
     """Strip markdown/code syntax before sending to TTS so the voice doesn't read symbols aloud."""
-    text = re.sub(r'```[\s\S]*?```', 'code example', raw)       # fenced code blocks → label
+    text = re.sub(r'```[\s\S]*?```', 'code example.', raw)      # fenced code blocks → label
     text = re.sub(r'`([^`]+)`', r'\1', text)                    # inline code → plain text
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)  # headers
+    # Headers: keep the text but add a period so TTS pauses after the category name
+    text = re.sub(
+        r'^#{1,6}\s+(.*?)$',
+        lambda m: m.group(1).rstrip('.:') + '.',
+        text, flags=re.MULTILINE
+    )
     text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)         # bold / italic
     text = re.sub(r'_{1,3}(.*?)_{1,3}', r'\1', text)
     text = re.sub(r'^>\s?', '', text, flags=re.MULTILINE)       # blockquotes
@@ -96,6 +101,8 @@ def _clean_text_for_tts(raw: str) -> str:
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)        # links → display text
     text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', '', text)          # images removed
     text = re.sub(r'<[^>]+>', '', text)                         # HTML tags
+    # Emojis — remove so TTS doesn't read "book emoji" or "check mark emoji"
+    text = re.sub(r'[^\x00-\x7FÀ-ɏḀ-ỿ]', '', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
