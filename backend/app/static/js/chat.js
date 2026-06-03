@@ -3,6 +3,7 @@ let currentUser = null;
 let currentSessionId = null;
 let activeChallenge = null;
 let globalPendingChallenges = [];
+let currentTTSAudio = null;
 
 // --- 1. GLOBAL FUNCTIONS (So buttons can find them) ---
 window.startTopic = function (text) {
@@ -95,6 +96,81 @@ function addFeedbackButtons(container, originalQuery) {
     });
 
     container.appendChild(bar);
+}
+
+function addSpeakButton(container, rawText) {
+    let bar = container.querySelector('.feedback-bar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'cr-speak-bar';
+        container.appendChild(bar);
+    }
+
+    const btn = document.createElement('button');
+    btn.className = 'feedback-btn speak-btn';
+    btn.title = 'Listen to this response';
+    btn.setAttribute('aria-label', 'Read response aloud');
+    btn.innerHTML = '🔊 Listen';
+
+    btn.onclick = async () => {
+        if (btn.dataset.playing === 'true') {
+            if (currentTTSAudio) { currentTTSAudio.pause(); currentTTSAudio = null; }
+            btn.dataset.playing = 'false';
+            btn.innerHTML = '🔊 Listen';
+            btn.classList.remove('active');
+            return;
+        }
+        // Stop any other audio currently playing
+        if (currentTTSAudio) { currentTTSAudio.pause(); currentTTSAudio = null; }
+        document.querySelectorAll('.speak-btn[data-playing="true"]').forEach(b => {
+            b.dataset.playing = 'false'; b.innerHTML = '🔊 Listen'; b.classList.remove('active');
+        });
+
+        btn.innerHTML = '⏳ Loading...';
+        btn.disabled = true;
+        try {
+            const res = await fetch(`${API_URL}/api/v1/tts/speak`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: rawText, voice: 'nova' })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: 'TTS request failed' }));
+                throw new Error(err.detail || `HTTP ${res.status}`);
+            }
+            const audioBlob = await res.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            currentTTSAudio = audio;
+
+            btn.innerHTML = '⏹ Stop';
+            btn.disabled = false;
+            btn.dataset.playing = 'true';
+            btn.classList.add('active');
+            audio.play();
+
+            audio.onended = () => {
+                btn.innerHTML = '🔊 Listen';
+                btn.dataset.playing = 'false';
+                btn.classList.remove('active');
+                URL.revokeObjectURL(audioUrl);
+                if (currentTTSAudio === audio) currentTTSAudio = null;
+            };
+            audio.onerror = () => {
+                btn.innerHTML = '🔊 Listen';
+                btn.disabled = false;
+                btn.dataset.playing = 'false';
+                btn.classList.remove('active');
+                if (currentTTSAudio === audio) currentTTSAudio = null;
+            };
+        } catch (e) {
+            btn.innerHTML = '🔊 Listen';
+            btn.disabled = false;
+            btn.dataset.playing = 'false';
+            alert(`Could not load audio: ${e.message}`);
+        }
+    };
+    bar.appendChild(btn);
 }
 
 function addProfilerButton(container, relativeUrl) {
@@ -266,6 +342,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
 
             displaySuggestions(data.data.suggestions, botDiv);
             addFeedbackButtons(botDiv, rawText);
+            addSpeakButton(botDiv, data.data.answer);
             loadChatHistory();
 
             if (data.data.warmup_topic) {
@@ -1550,6 +1627,18 @@ function renderClassroomMessages() {
     
     el.innerHTML = html;
     el.scrollTop = el.scrollHeight;
+
+    // Attach speak buttons to completed (non-streaming) bot messages only.
+    // Guard prevents double-add; filter on !msg.streaming means buttons never appear mid-stream.
+    const botMsgEls = el.querySelectorAll('.cr-message.bot');
+    const completedBotMsgs = classroomChatMessages.filter(m => m.role === 'bot' && !m.streaming && m.content);
+    botMsgEls.forEach((msgEl, i) => {
+        const msg = completedBotMsgs[i];
+        if (!msg) return;
+        const contentDiv = msgEl.querySelector('.cr-message-content');
+        if (!contentDiv || contentDiv.querySelector('.speak-btn')) return;
+        addSpeakButton(contentDiv, msg.content);
+    });
 }
 
 function escapeHtmlCr(text) {

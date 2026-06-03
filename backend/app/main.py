@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import logging
+import re
 import time
 import json
 from fastapi.responses import StreamingResponse, FileResponse
@@ -81,6 +82,22 @@ def _find_classroom_video(topic: str):
         if v.get("topic") == topic:
             return v
     return None
+
+
+def _clean_text_for_tts(raw: str) -> str:
+    """Strip markdown/code syntax before sending to TTS so the voice doesn't read symbols aloud."""
+    text = re.sub(r'```[\s\S]*?```', 'code example', raw)       # fenced code blocks → label
+    text = re.sub(r'`([^`]+)`', r'\1', text)                    # inline code → plain text
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)  # headers
+    text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)         # bold / italic
+    text = re.sub(r'_{1,3}(.*?)_{1,3}', r'\1', text)
+    text = re.sub(r'^>\s?', '', text, flags=re.MULTILINE)       # blockquotes
+    text = re.sub(r'^-{3,}$', '', text, flags=re.MULTILINE)     # horizontal rules
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)        # links → display text
+    text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', '', text)          # images removed
+    text = re.sub(r'<[^>]+>', '', text)                         # HTML tags
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 # --- Data Models ---
@@ -169,6 +186,10 @@ class TutorPreferences(BaseModel):
 class PreferencesUpdateRequest(BaseModel):
     username: str
     preferences: TutorPreferences
+
+class TTSSpeakRequest(BaseModel):
+    text: str
+    voice: str = "nova"
 
 def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
     """
@@ -1579,6 +1600,42 @@ async def get_video_transcript(video_filename: str):
     except Exception as e:
         logger.error(f"Transcript fetch failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/tts/speak")
+async def tts_speak(req: TTSSpeakRequest):
+    """Converts text to speech using OpenAI TTS (nova voice). Strips markdown first."""
+    if not config.OPENAI_API_KEY:
+        raise HTTPException(status_code=503, detail="TTS unavailable: OPENAI_API_KEY not configured.")
+
+    cleaned = _clean_text_for_tts(req.text)
+    if len(cleaned) > 4096:
+        cleaned = cleaned[:4093] + "..."
+    if not cleaned.strip():
+        raise HTTPException(status_code=400, detail="No speakable text after cleaning.")
+
+    try:
+        import openai as _openai  # local import — avoids interfering with langchain-openai at module level
+        client = _openai.OpenAI(api_key=config.OPENAI_API_KEY)
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice=req.voice,
+            input=cleaned,
+            response_format="mp3",
+        )
+        from io import BytesIO
+        return StreamingResponse(
+            BytesIO(response.content),
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline; filename=speech.mp3"},
+        )
+    except _openai.AuthenticationError:
+        raise HTTPException(status_code=503, detail="TTS authentication failed.")
+    except _openai.RateLimitError:
+        raise HTTPException(status_code=429, detail="TTS rate limit. Try again shortly.")
+    except Exception as e:
+        logger.error(f"TTS error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
 
 
 if __name__ == "__main__":

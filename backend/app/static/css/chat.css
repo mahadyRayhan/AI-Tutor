@@ -2086,3 +2086,26 @@ body.hide-resources .resources-section * {
         padding: 10px 15px;
     }
 }
+
+/* ── TTS Speak Button ────────────────────────────────── */
+.speak-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+.speak-btn.active {
+    background: rgba(251, 191, 36, 0.15);
+    border-color: rgba(251, 191, 36, 0.4);
+    color: #fbbf24;
+}
+
+/* ── Classroom speak bar (below .cr-message-content) ── */
+.cr-speak-bar {
+    display: flex;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+.cr-speak-bar .speak-btn {
+    font-size: 0.75rem;
+    padding: 4px 10px;
+}
