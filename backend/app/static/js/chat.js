@@ -99,11 +99,21 @@ function addFeedbackButtons(container, originalQuery) {
 }
 
 function addSpeakButton(container, rawText) {
-    let bar = container.querySelector('.feedback-bar');
-    if (!bar) {
-        bar = document.createElement('div');
-        bar.className = 'cr-speak-bar';
-        container.appendChild(bar);
+    // Main chat: inject next to "Tutor" label; classroom: use feedback-bar / cr-speak-bar
+    const header = container.querySelector('.msg-header');
+    let targetBar;
+    if (header) {
+        if (header.querySelector('.speak-btn')) return;
+        targetBar = header;
+    } else {
+        let bar = container.querySelector('.feedback-bar');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.className = 'cr-speak-bar';
+            container.appendChild(bar);
+        }
+        if (bar.querySelector('.speak-btn')) return;
+        targetBar = bar;
     }
 
     const btn = document.createElement('button');
@@ -170,7 +180,7 @@ function addSpeakButton(container, rawText) {
             alert(`Could not load audio: ${e.message}`);
         }
     };
-    bar.appendChild(btn);
+    targetBar.appendChild(btn);
 }
 
 function addProfilerButton(container, relativeUrl) {
@@ -332,7 +342,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                 updatePendingChallengesUI(data.data.skipped_challenges);
             }
 
-            botDiv.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(data.data.answer);
+            botDiv.innerHTML = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>` + marked.parse(data.data.answer);
             displaySources(data.data.sources);
 
 

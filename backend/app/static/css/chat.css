@@ -2087,6 +2087,28 @@ body.hide-resources .resources-section * {
     }
 }
 
+/* ── Bot message header row (Tutor label + Listen button inline) ── */
+.msg-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+.msg-header .msg-sender {
+    margin-bottom: 0;
+}
+.msg-header .speak-btn {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    opacity: 0.55;
+    border-radius: 6px;
+    margin-left: auto;
+}
+.msg-header .speak-btn:hover,
+.msg-header .speak-btn.active {
+    opacity: 1;
+}
+
 /* ── TTS Speak Button ────────────────────────────────── */
 .speak-btn:disabled {
     opacity: 0.6;
