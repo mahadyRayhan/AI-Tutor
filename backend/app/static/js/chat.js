@@ -136,7 +136,7 @@ function addSpeakButton(container, rawText) {
             b.dataset.playing = 'false'; b.innerHTML = '🔊 Listen'; b.classList.remove('active');
         });
 
-        btn.innerHTML = '⏳ Loading...';
+        btn.innerHTML = '🔊 <span class="speak-loading">Generating audio<span class="speak-dots"><span>.</span><span>.</span><span>.</span></span></span>';
         btn.disabled = true;
         try {
             const res = await fetch(`${API_URL}/api/v1/tts/speak`, {

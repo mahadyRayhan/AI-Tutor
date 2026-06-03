@@ -2092,42 +2092,68 @@ body.hide-resources .resources-section * {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
 }
 .msg-header .msg-sender {
     margin-bottom: 0;
 }
 .msg-header .speak-btn {
-    font-size: 0.7rem;
-    padding: 2px 8px;
-    opacity: 0.55;
-    border-radius: 6px;
     margin-left: auto;
-}
-.msg-header .speak-btn:hover,
-.msg-header .speak-btn.active {
-    opacity: 1;
+    font-size: 0.75rem;
+    padding: 4px 12px;
 }
 
-/* ── TTS Speak Button ────────────────────────────────── */
+/* ── TTS Speak Button — teal pill, always visible ────── */
+.feedback-btn.speak-btn {
+    background: rgba(45, 212, 191, 0.1);
+    border: 1px solid rgba(45, 212, 191, 0.35);
+    color: #2dd4bf;
+    border-radius: 20px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    gap: 5px;
+}
+.feedback-btn.speak-btn:hover {
+    background: rgba(45, 212, 191, 0.2);
+    border-color: rgba(45, 212, 191, 0.6);
+    color: #5eead4;
+    box-shadow: 0 0 12px rgba(45, 212, 191, 0.2);
+}
 .speak-btn:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
+    box-shadow: none;
 }
 .speak-btn.active {
     background: rgba(251, 191, 36, 0.15);
-    border-color: rgba(251, 191, 36, 0.4);
+    border-color: rgba(251, 191, 36, 0.5);
     color: #fbbf24;
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.2);
+}
+
+/* Loading animation */
+.speak-loading {
+    font-style: italic;
+    opacity: 0.85;
+}
+.speak-dots span {
+    animation: speak-blink 1.4s infinite both;
+}
+.speak-dots span:nth-child(2) { animation-delay: 0.2s; }
+.speak-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes speak-blink {
+    0%, 80%, 100% { opacity: 0; }
+    40%           { opacity: 1; }
 }
 
 /* ── Classroom speak bar (below .cr-message-content) ── */
 .cr-speak-bar {
     display: flex;
-    margin-top: 8px;
-    padding-top: 6px;
-    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 .cr-speak-bar .speak-btn {
     font-size: 0.75rem;
-    padding: 4px 10px;
+    padding: 4px 12px;
 }
