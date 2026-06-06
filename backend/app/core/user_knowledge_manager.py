@@ -8,6 +8,12 @@ from app.db.sqlite_db import db
 
 logger = logging.getLogger(__name__)
 
+# Misconception EMA parameters (see SYSTEM_OVERVIEW §3.4.4)
+# M_c(t+1) = LAMBDA_M * M_c(t) + (1-LAMBDA_M) * 1[conf >= theta_conf AND incorrect]
+LAMBDA_M = 0.7    # persistence: high-confidence errors decay slowly
+THETA_M  = 0.25   # flag threshold: m_score >= THETA_M → active misconception
+
+
 class UserKnowledgeManager:
     # Self-learning blocklist: starts with known garbage, grows at runtime
     _garbage_concepts = {
@@ -185,27 +191,48 @@ class UserKnowledgeManager:
     # --- MISCONCEPTION TRACKING ---
 
     def store_misconception(self, username: str, concept: str, student_answer: str, correct_answer: str):
-        """Stores a misconception: high-confidence quiz attempt that was wrong."""
+        """Records a high-confidence error and updates the EMA misconception score.
+
+        M_c(t+1) = LAMBDA_M * M_c(t) + (1-LAMBDA_M) * 1  (incorrect observation)
+        Misconception is flagged when m_score >= THETA_M.
+        """
         row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
         profile = json.loads(row['learning_profile'] or '{}') if row and row['learning_profile'] else {}
 
         misconceptions = profile.get("misconceptions", [])
-        # Replace any existing entry for the same concept (most recent is most relevant)
-        misconceptions = [m for m in misconceptions if m.get("concept", "").lower() != concept.lower()]
-        misconceptions.append({
-            "concept": concept,
-            "student_answer": student_answer[:200],
-            "correct_answer": correct_answer[:200] if correct_answer else "",
-            "detected_at": datetime.now().isoformat(),
-            "resolved": False
-        })
+        existing = next((m for m in misconceptions if m.get("concept", "").lower() == concept.lower()), None)
+
+        if existing:
+            prev_score = existing.get("m_score", 0.0)
+            new_score = round(LAMBDA_M * prev_score + (1 - LAMBDA_M) * 1.0, 4)
+            existing["m_score"] = new_score
+            existing["resolved"] = new_score < THETA_M
+            existing["student_answer"] = student_answer[:200]
+            existing["correct_answer"] = correct_answer[:200] if correct_answer else ""
+            existing["detected_at"] = datetime.now().isoformat()
+        else:
+            new_score = round((1 - LAMBDA_M) * 1.0, 4)  # = 0.3 on first error
+            misconceptions.append({
+                "concept": concept,
+                "m_score": new_score,
+                "resolved": new_score < THETA_M,
+                "student_answer": student_answer[:200],
+                "correct_answer": correct_answer[:200] if correct_answer else "",
+                "detected_at": datetime.now().isoformat(),
+            })
+
         profile["misconceptions"] = misconceptions
         db.execute("UPDATE users SET learning_profile = ? WHERE username = ?",
                    (json.dumps(profile), username))
-        logger.info(f"🔴 [Misconception] Stored for '{concept}' — {username}")
+        logger.info(f"🔴 [Misconception] EMA updated for '{concept}' — {username} (m_score={new_score:.3f})")
 
     def resolve_misconception(self, username: str, concept: str):
-        """Marks a misconception resolved when the student later passes a quiz on the same concept."""
+        """Decays the EMA misconception score toward zero on a correct answer.
+
+        M_c(t+1) = LAMBDA_M * M_c(t)   (no +1 increment on correct response)
+        Misconception auto-resolves when m_score drops below THETA_M.
+        Requires approximately 2 consecutive correct answers to resolve from m_score=0.30.
+        """
         row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
         if not row:
             return
@@ -213,22 +240,29 @@ class UserKnowledgeManager:
         misconceptions = profile.get("misconceptions", [])
         updated = False
         for m in misconceptions:
-            if m.get("concept", "").lower() == concept.lower() and not m.get("resolved"):
-                m["resolved"] = True
+            if m.get("concept", "").lower() == concept.lower() and not m.get("resolved", True):
+                decayed = round(LAMBDA_M * m.get("m_score", 0.0), 4)
+                m["m_score"] = decayed
+                m["resolved"] = decayed < THETA_M
                 updated = True
+                if m["resolved"]:
+                    logger.info(f"✅ [Misconception] Resolved for '{concept}' — {username} (m_score={decayed:.3f})")
+                else:
+                    logger.info(f"🟡 [Misconception] Decaying for '{concept}' — {username} (m_score={decayed:.3f})")
         if updated:
             profile["misconceptions"] = misconceptions
             db.execute("UPDATE users SET learning_profile = ? WHERE username = ?",
                        (json.dumps(profile), username))
-            logger.info(f"✅ [Misconception] Resolved for '{concept}' — {username}")
 
     def get_misconceptions(self, username: str, unresolved_only: bool = True) -> List[Dict]:
-        """Returns stored misconceptions. Used by analytics dashboard."""
+        """Returns misconception entries. Unresolved means m_score >= THETA_M."""
         row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
         if not row:
             return []
         profile = json.loads(row['learning_profile'] or '{}') if row['learning_profile'] else {}
         all_m = profile.get("misconceptions", [])
-        return [m for m in all_m if not m.get("resolved", False)] if unresolved_only else all_m
+        if unresolved_only:
+            return [m for m in all_m if m.get("m_score", 0.0) >= THETA_M]
+        return all_m
 
 knowledge_manager = UserKnowledgeManager()

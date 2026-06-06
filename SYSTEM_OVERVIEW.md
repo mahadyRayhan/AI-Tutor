@@ -34,6 +34,36 @@ None of these properties are inherent to an LLM. They are architectural decision
 
 ---
 
+### 1.3 Formal System Objective
+
+The individual components of this system — the learner model, style selector, prerequisite gate, and affective profiler — are not independent modules. They act as local optimization mechanisms toward a shared global objective: maximizing student mastery gain while minimizing cognitive overload and affective friction. Formally, the system seeks to maximize the cumulative per-interaction reward:
+
+```
+J  =  Σ_t  [ w₁ · ΔK_t  +  w₂ · R_t  −  w₃ · F_t  −  w₄ · C_t ]
+```
+
+where:
+
+- `ΔK_t = Σ_{k=1}^{3} [P_t^(k) − P_{t−1}^(k)]`: composite BKT mastery gain at step `t`. Only the tier `k(e_t)` corresponding to the current evidence type is updated; the remaining two posteriors are unchanged, so `ΔK_t ∈ (−θ_max^(k), +θ_max^(k))`. For a correct observation `ΔK_t ≥ 0`; for an incorrect one `ΔK_t < 0` (the BKT posterior decreases when the student slips).
+- `R_t ∈ {0, 1}`: SM-2 retention signal. `R_t = 1` if the SM-2 quality score satisfies `q ≥ 3` — the algorithm's pass threshold above which the review interval extends; `R_t = 0` if `q < 3`, which resets the interval to day 1. The quality score `q ∈ [0, 5]` is derived from both correctness and student-reported confidence (Judgment of Learning), as described in Section 3.4.2.
+- `F_t ∈ [0, 1]`: frustration cost. The affective profiler outputs a categorical label in `{none, low, medium, high, rage}` (Section 3.4.5). For inclusion in `J`, these are mapped uniformly to `{0.00, 0.25, 0.50, 0.75, 1.00}`, treating the five labels as equally spaced steps on the frustration scale.
+- `C_t ∈ {1, 1.5, 2}`: instructional cost. A standard direct response costs `C_t = 1`; a scaffolded hint that partially reveals the solution costs `C_t = 1.5`; a full partial-code handout costs `C_t = 2`. The scaling reflects the transfer of cognitive labor from student to system — higher `C_t` indicates less productive struggle and therefore lower expected learning yield per unit of instructional effort.
+- `w₁, w₂, w₃, w₄ ≥ 0`: weighting hyperparameters. Initial reference values are `(w₁, w₂, w₃, w₄) = (1.0, 0.5, 0.5, 0.2)`, reflecting the following priority ordering: mastery gain is the primary objective (`w₁ = 1.0` anchors the scale); retention and frustration suppression are secondary and symmetric (`w₂ = w₃ = 0.5`); instructional cost is a weak regularizer discouraging unnecessary scaffolding (`w₄ = 0.2`). These weights are calibrated heuristically for the initial deployment and are intended for offline policy evaluation and refinement once sufficient interaction logs accumulate.
+
+Each system component can be interpreted as a local mechanism optimizing a specific term in `J`:
+
+| Component | Term optimized | Mechanism |
+| --- | --- | --- |
+| BKT mastery gate | `w₁ · ΔK_t` | Routes interactions that maximize mastery evidence |
+| SM-2 scheduler | `w₂ · R_t` | Schedules reviews at intervals that maximize retention |
+| Affective profiler | `−w₃ · F_t` | Triggers tone softening and pacing to suppress `F_t` |
+| Prerequisite gate | `−w₄ · C_t` | Prevents cognitively overloaded interactions that inflate cost |
+| UCB1 style selector | `w₁ · ΔK_t` (indirect) | Selects teaching style that empirically maximizes student engagement and mastery uptake |
+
+The weighting hyperparameters `w₁ … w₄` are not jointly optimized in the current deployment; they are treated as design choices that will be calibrated via offline policy evaluation once sufficient interaction data is available. The objective function is stated here to make explicit the learning-theoretic intent behind each component and to provide a target for future end-to-end optimization.
+
+---
+
 ## 2. System Architecture Overview
 
 The system is organized around two parallel tracks — **IRL** (Instructor-Regulated Learning) and **SRL** (Self-Regulated Learning) — that converge at a security gate before passing through a pedagogical engine. The full architecture is reproduced below for reference:
@@ -48,7 +78,7 @@ The system is organized around two parallel tracks — **IRL** (Instructor-Regul
                        └──────────────┬──────────────────────────────────┘
                                       ▼
                               [E] SECURITY MODEL
-                              σ = S_cog · S_goal · S_acad · S_spam
+                              σ = φ(S_cog · S_acad · S_spam) · α(G_t)
                                       ▼
                           [F] PEDAGOGICAL MODEL (SRL Engine)
                                       ▼
@@ -119,30 +149,75 @@ This is the most theoretically rich component. It maintains six state variables 
 
 ---
 
-#### 3.4.1 K_t — Mastery State (Tiered Bayesian Knowledge Tracing)
+#### 3.4.1 K_t — Mastery State (Factored Multi-Skill Bayesian Knowledge Tracing)
 
-**What it does:** Tracks the probability that a student has mastered a concept, separately for three evidence tiers:
+**Formal model.** For each concept `c`, three independent latent binary subskill states are maintained:
 
-| Tier | Evidence Type | Bloom's Level | Ceiling |
-|------|--------------|---------------|---------|
-| p_quiz | Quiz (declarative) | Remember / Understand | 0.60 |
-| p_micro | Micro-challenge (procedural) | Apply | 0.25 |
-| p_code | Code review (applied) | Analyze / Evaluate | 0.10 |
-
-Composite mastery: `P(L) = p_quiz + p_micro + p_code ≤ 0.95`
-
-The BKT update equations per tier:
 ```
-P(L|✓) = P(L)·(1−Ps) / [P(L)·(1−Ps) + (1−P(L))·Pg]
-P(L|✗) = P(L)·Ps   / [P(L)·Ps + (1−P(L))·(1−Pg)]
-P(L_next) = P(L|obs) + (1−P(L|obs))·Pt
+z_c = (z_c^(1), z_c^(2), z_c^(3)),   z_c^(k) ∈ {0, 1}
 ```
 
-**Why it exists:** Bayesian Knowledge Tracing (BKT) was introduced by Corbett & Anderson (1994) and remains one of the most validated models for tracking student knowledge in intelligent tutoring systems [7]. Standard BKT uses a single probability per concept. The tiered extension here is motivated by Bloom's Taxonomy (1956), which distinguishes remembering facts, applying procedures, and analyzing/evaluating — three qualitatively different cognitive levels that a single probability cannot capture [8].
+corresponding to hierarchically ordered cognitive levels derived from Bloom's Taxonomy [8]:
 
-The ceiling caps are the key novelty: a student who answers quiz questions correctly can approach 0.60 mastery but cannot cross 0.95 without also demonstrating procedural skill (micro-challenge) and applied reasoning (code review). This structurally prevents the system from declaring mastery based on one-dimensional evidence — a known weakness of standard BKT in practice.
+- `z_c^(1)`: declarative knowledge (Bloom: Remember / Understand)
+- `z_c^(2)`: procedural skill (Bloom: Apply)
+- `z_c^(3)`: applied reasoning (Bloom: Analyze / Evaluate)
 
-The ceiling caps (0.60, 0.25, 0.10) are hyperparameters whose sum (0.95) matches the standard BKT mastery threshold [7]. Their distribution reflects the relative epistemic weight of each evidence tier, consistent with Evidence-Centered Design (ECD) principles [28]: quiz evidence is weighted most heavily (0.60) because it is the most frequent form of assessment and maps to lower Bloom's levels (Remember/Understand); micro-challenge evidence is intermediate (0.25) as it requires procedural Application; code review contributes least (0.10) because it is the rarest and most subjective evidence type, targeting higher Bloom's levels (Analyze/Evaluate). The specific proportions are design hyperparameters; the constraint that they sum to 0.95 is theoretically grounded in the BKT mastery criterion.
+**Independence assumption.** The three subskills are modeled as conditionally independent given the latent state sequence — i.e., `P(z_c^(1), z_c^(2), z_c^(3)) = ∏_k P(z_c^(k))`. This should be interpreted as a tractability assumption rather than a claim that cognitive levels are psychologically uncorrelated. Declarative knowledge plausibly facilitates procedural performance, which in turn supports applied reasoning — dependencies that are well-documented in the cognitive science literature (Anderson, 1983; Bloom, 1956 [8]). Modeling these dependencies explicitly would require a hierarchical or coupled latent-state model and substantially larger datasets for reliable parameter estimation via Expectation-Maximization. The independent-factor formulation is a deliberate bias toward interpretability and data efficiency, following the same tractability rationale as classical BKT [7]. Relaxing this assumption using hierarchical Bayes or a dependency graph (e.g., a skill prerequisite prior over subskill states) is a planned direction for future work.
+
+Each subskill `k` is modeled as an independent standard BKT hidden Markov model (Corbett & Anderson, 1994 [7]) with tier-specific parameters `θ^(k) = (p_0^(k), p_T^(k), p_S^(k), p_G^(k))`:
+
+| Subskill `k` | Evidence type | Prior `p_0^(k)` | Learning `p_T^(k)` | Slip `p_S^(k)` | Guess `p_G^(k)` | Ceiling `θ_max^(k)` |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Quiz (declarative) | 0.30 | 0.09 | 0.10 | 0.20 | 0.60 |
+| 2 | Micro-challenge (procedural) | 0.00 | 0.09 | 0.15 | 0.10 | 0.25 |
+| 3 | Code review (applied) | 0.00 | 0.09 | 0.20 | 0.05 | 0.10 |
+
+The non-zero prior `p_0^(1) = 0.30` for the declarative subskill reflects the assumption that students entering a C programming course have some prior exposure to programming concepts; priors for procedural and applied subskills are zero, as these require deliberate practice to develop. The remaining parameters (`p_T^(k)`, `p_S^(k)`, `p_G^(k)`) are initialization defaults calibrated against prior BKT studies in introductory CS domains [7]. Once sufficient interaction logs have accumulated (approximately ≥200 interactions per concept per evidence type), all per-tier parameters are re-estimated via Expectation-Maximization — specifically, the Baum-Welch algorithm applied to each subskill HMM independently. The initialization values then function as priors for EM rather than fixed constants, and the reported model behavior reflects learned parameters rather than manually chosen ones. A sensitivity analysis showing ±20% perturbations of `p_T^(k)`, `p_S^(k)`, and `p_G^(k)` is included in the evaluation section to bound the influence of the initialization choices on mastery convergence speed.
+
+**Evidence-type routing.** Each student interaction produces a tuple `(x_t, e_t)` where `x_t ∈ {0, 1}` is the correctness signal and `e_t ∈ {quiz, micro, code}` is the evidence type. A binary selector function routes each observation to exactly one subskill tracker:
+
+```
+δ^(k)(e_t) = 𝟏[k corresponds to e_t]
+```
+
+Specifically: `δ^(1)(quiz) = 1`, `δ^(2)(micro) = 1`, `δ^(3)(code) = 1`, all others zero. When `δ^(k)(e_t) = 0`, tracker `k` is not updated: `P_{t+1}^(k) = P_t^(k)`. This enforces strict evidence-type specificity — declarative evidence updates only the declarative tracker, procedural evidence only the procedural tracker, and so on.
+
+**BKT posterior update.** Let `P_t^(k) = P(z_c^(k) = 1 | x_{1:t}, e_{1:t})` denote the marginal posterior for subskill `k` after `t` observations. When `δ^(k)(e_t) = 1`, the standard BKT update applies:
+
+```
+P(z_c^(k) = 1 | x_t = 1)  =  P_t^(k) · (1 − p_S^(k))  /  [P_t^(k) · (1 − p_S^(k)) + (1 − P_t^(k)) · p_G^(k)]
+
+P(z_c^(k) = 1 | x_t = 0)  =  P_t^(k) · p_S^(k)         /  [P_t^(k) · p_S^(k) + (1 − P_t^(k)) · (1 − p_G^(k))]
+
+P_{t+1}^(k)  =  min( P(z_c^(k) = 1 | x_t) + [1 − P(z_c^(k) = 1 | x_t)] · p_T^(k),   θ_max^(k) )
+```
+
+The ceiling `θ_max^(k)` is enforced at the update step, so `P_t^(k) ∈ [p_0^(k), θ_max^(k)]` at all times. Each tracker is a well-defined Bayesian posterior over a binary latent state.
+
+**Composite mastery score and decision rule.** Define the composite mastery score:
+
+```
+P_c  =  Σ_{k=1}^{3} P_t^(k)   ∈  [0,  Σ_k θ_max^(k)]  =  [0, 0.95]
+```
+
+`P_c` is not a probability — it is a composite scalar score in a bounded interval. The mastery decision uses a **conjunctive per-tier criterion** that decouples the evidence contribution cap (`θ_max^(k)`) from the evidence sufficiency threshold (`θ_mastery^(k)`):
+
+```
+m_c  =  𝟏[ ∀k : P_t^(k) ≥ θ_mastery^(k) ]
+```
+
+| Subskill `k` | Evidence ceiling `θ_max^(k)` | Mastery threshold `θ_mastery^(k)` | Ratio |
+| --- | --- | --- | --- |
+| 1 — Quiz | 0.60 | 0.57 | 95% |
+| 2 — Micro | 0.25 | 0.24 | 96% |
+| 3 — Code  | 0.10 | 0.09 | 90% |
+
+The ceiling `θ_max^(k)` is the asymptotic upper bound imposed by the BKT emission model — the maximum posterior achievable given infinite correct evidence of type `k`. The mastery threshold `θ_mastery^(k) < θ_max^(k)` is the minimum posterior required for progression. Setting `θ_mastery^(k)` strictly below the ceiling addresses a specific numerical concern: the BKT ceiling is enforced by hard clipping at the update step (`P_t^(k) ← min(P_t^(k), θ_max^(k))`), which means `P_t^(k)` can reach `θ_max^(k)` exactly after sufficient evidence. Setting `θ_mastery^(k) = θ_max^(k)` would couple the mastery decision to the ceiling cap — two conceptually distinct constructs (evidence contribution limit and evidence sufficiency criterion) would collapse to the same number. The 5% buffer decouples them: a student at `P_t^(k) = θ_mastery^(k)` has demonstrated sufficient posterior confidence for progression but has not necessarily exhausted all discriminative evidence of type `k`. The specific ratios (95%, 96%, 90%) are calibrated heuristics; any value in the range `(θ_max^(k) · 0.85, θ_max^(k))` preserves the behavioral semantics.
+
+A student who performs perfectly on quizzes accumulates `P_t^(1) → θ_max^(1) = 0.60` but cannot satisfy `m_c = 1`, because `P_t^(2)` and `P_t^(3)` remain at their priors (0.00) — far below `θ_mastery^(2) = 0.24` and `θ_mastery^(3) = 0.09`. This property follows directly from the evidence-routing function `δ^(k)(e_t)`: since quiz evidence sets `δ^(2)(quiz) = 0` and `δ^(3)(quiz) = 0`, the procedural and applied trackers receive no updates from quiz interactions, making quiz-only mastery structurally unreachable.
+
+**Why this formulation?** Standard BKT [7] uses a single latent state per concept and cannot distinguish between a student who recalls a definition and one who writes correct code — both produce the same posterior update. Deep Knowledge Tracing [X] and DKVMN [Y] model multi-skill dependencies via neural networks but sacrifice interpretability. The factored three-tracker formulation is a direct extension of standard BKT in which the latent state is a vector of independent subskills, one per Bloom's cognitive level. Each posterior `P_t^(k)` has a direct cognitive interpretation; the mastery criterion has a closed-form conjunctive expression; and the per-tier parameters are individually interpretable. The uniform learning rate `p_T^(k) = 0.09` across all tiers is a conservative initialization consistent with Baker et al.'s (2008) analysis of BKT parameters across thousands of skills in ASSISTments, which found learning rates in the range 0.05–0.15 for introductory CS domains, with the lower end of this range appropriate for skills requiring substantial deliberate practice [29]. The higher guess probability for quiz (`p_G^(1) = 0.20`) reflects susceptibility to correct guessing on declarative recall tasks (multiple-choice or short-answer format); the lower guess probability for code review (`p_G^(3) = 0.05`) reflects the low probability of accidentally producing correct reasoning about code without genuine understanding. The higher slip probability for code review (`p_S^(3) = 0.20`) reflects sensitivity to syntactic and execution errors on applied tasks even when the underlying knowledge is present. Ceiling proportions follow Evidence-Centered Design principles [28]: evidence types mapping to lower Bloom's levels and collected more frequently contribute proportionally larger ceilings to the composite score.
 
 **Literature:**
 - [7] Corbett, A. T., & Anderson, J. R. (1994). Knowledge tracing: Modeling the acquisition of procedural knowledge. *User Modeling and User-Adapted Interaction, 4*(4), 253–278.
@@ -173,15 +248,34 @@ In this system, the quality score `q` is derived from both correctness and self-
 
 #### 3.4.3 C_s — Teaching Style Selection (UCB1 Multi-Armed Bandit)
 
-**What it does:** Selects the teaching style (analogy, example, visual, Socratic, direct) that maximizes student engagement, based on thumbs-up/down feedback:
+**What it does:** Selects the teaching style `s* ∈ S = {analogy, example, visual, Socratic, direct}` that maximizes cumulative student engagement, updated from explicit thumbs-up/down feedback after each response.
+
+**Formal model.** Define the following quantities:
+
+- `r_t ∈ {0, 1}`: reward — 1 if the student gives thumbs-up on the response, 0 otherwise (thumbs-down or no response)
+- `w_s ∈ ℤ_≥0`: cumulative thumbs-up count for style `s`
+- `n_s ∈ ℤ_≥0`: total times style `s` has been presented (`w_s ≤ n_s`)
+- `N = Σ_{s ∈ S} n_s`: total interactions across all styles to date
+
+The UCB1 selection rule is:
 ```
-score_s = w_s / n_s  +  √(2 · ln(N) / n_s)
-style*  = argmax_s [score_s]
+score_s(t)  =  +∞                              if n_s = 0
+               w_s / n_s + √(2 · ln N / n_s)   otherwise
+
+style*  =  argmax_{s ∈ S}  score_s(t)
 ```
 
-**Why it exists:** Students differ in how they best receive new information — some respond to analogies, others to worked examples, others to direct definitions. Rather than choosing a style arbitrarily or using a static profile, this system treats style selection as an exploration-exploitation problem. The Upper Confidence Bound (UCB1) algorithm, introduced by Auer et al. (2002), provides a principled balance between exploiting known-good styles and exploring underused ones [13].
+The initialization convention `score_s(t) = +∞` when `n_s = 0` ensures that all `|S|` arms are explored at least once before any exploitation begins — this is required for the UCB1 regret bound to hold and is the standard cold-start convention of Auer et al. (2002) [13]. The win-rate term `w_s / n_s ∈ [0, 1]` is the empirical mean reward for style `s`; the exploration bonus `√(2 ln N / n_s)` is decreasing in `n_s`, shifting the policy from uniform exploration toward exploitation of high-reward styles as confidence accumulates.
 
-Clement et al. (2015) demonstrated that multi-armed bandit algorithms outperform fixed-curriculum approaches in intelligent tutoring systems by adapting to individual learner responses in real time [14]. The win-rate signal here comes directly from explicit student feedback (thumbs up/down), making it one of the few tutoring systems where the pedagogical style policy is updated by student-expressed preference rather than inferred from implicit signals alone.
+**Reward semantics and regret bound.** Since `r_t ∈ {0, 1}` is a Bernoulli random variable bounded in [0, 1], UCB1 applies directly. Let `μ_s = E[r_t | style = s]` be the true mean reward for style `s` and `s† = argmax_s μ_s` the optimal style. The expected cumulative regret satisfies:
+
+```
+E[R_N]  =  E[ Σ_{t=1}^{N} (μ_{s†} − μ_{s_t}) ]  =  O( √(|S| · N · ln N) )
+```
+
+This sublinear regret guarantee means that as the number of interactions grows, the fraction of time spent on suboptimal styles converges to zero. Unlike engagement-proxy signals (dwell time, response length), the binary thumbs-up/down reward is semantically unambiguous: `r_t = 1` means "the student explicitly indicated this response was helpful," making the empirical win rate `w_s / n_s` a directly interpretable estimate of `μ_s`.
+
+**Why it exists:** Students differ substantially in how they receive new information, and a static style assignment fails to adapt to individual preference. Treating style selection as a multi-armed bandit problem — with exploration to discover good styles and exploitation of identified preferences — is motivated by Auer et al. (2002) [13]. Clement et al. (2015) demonstrated that bandit algorithms outperform fixed-curriculum approaches in ITS by adapting to learner responses in real time [14]. The contribution here is the application of UCB1 to *how* content is delivered (teaching style), rather than *what* content is delivered (topic sequencing), and the use of explicit rather than inferred feedback as the reward signal.
 
 **Literature:**
 - [13] Auer, P., Cesa-Bianchi, N., & Fischer, P. (2002). Finite-time analysis of the multiarmed bandit problem. *Machine Learning, 47*(2-3), 235–256.
@@ -191,17 +285,36 @@ Clement et al. (2015) demonstrated that multi-armed bandit algorithms outperform
 
 #### 3.4.4 M_t — Misconception Tracking
 
-**What it does:** Flags and stores misconceptions when a student demonstrates high confidence but answers incorrectly:
+**What it does:** Maintains a continuous exponentially weighted misconception score per concept, updated by each quiz interaction:
+
 ```
-if conf ≥ 4 ∧ correct = False  →  store(M_t)
-if correct = True               →  resolve(M_t)
+M_c(t+1)  =  λ · M_c(t)  +  (1−λ) · 𝟏[ conf_t ≥ θ_conf  ∧  x_t = 0 ]
 ```
 
-The threshold `conf ≥ 4` (on a 0–5 scale) targets the top 40% of expressed confidence ratings. This operationalizes "high confidence" as defined in metacognitive monitoring research — Nelson & Narens (1990) distinguish between low-confidence errors (often noise or genuine uncertainty) and high-confidence errors (indicative of systematic, stable misconceptions) [12]. A threshold of ≤ 3 would generate excessive false positives, flagging ordinary uncertainty rather than confident-but-wrong beliefs; a threshold of 5 only would be too restrictive, as students rarely report maximum confidence. The value 4 is a design hyperparameter calibrated to capture the top two ratings on a six-point scale, consistent with Likert-scale "agree/strongly agree" conventions in educational measurement.
+with parameters `λ = 0.7` (persistence) and `θ_conf = 4` (on a 0–5 confidence scale, targeting the top 40% of reported ratings). A misconception is flagged when `M_c(t) ≥ θ_M = 0.25`. On a correct response, no increment is applied and the score decays:
 
-**Why it exists:** Confrey (1990) established that misconceptions are not random errors — they are systematic, stable beliefs that resist correction precisely because the student is confident in them [15]. Ohlsson (1994) formalized constraint-based student modeling around the detection of such incorrect but stable knowledge states [16]. A system that treats high-confidence wrong answers the same as low-confidence wrong answers cannot provide targeted remediation. By tagging misconceptions and surfacing them in subsequent interactions, the system can apply the specific intervention strategies recommended for misconception correction (contrast with correct examples, direct confrontation of the incorrect belief).
+```
+M_c(t+1)  =  λ · M_c(t)     (correct response; no increment)
+```
+
+A misconception auto-resolves when `M_c(t)` falls below `θ_M`. After a single high-confidence error, `M_c = (1−λ) · 1 = 0.30`, which exceeds `θ_M = 0.25` — flagging immediately. A single correct response decays `M_c` to `λ · 0.30 = 0.21`, still above threshold; a second correct response decays it to `λ · 0.21 = 0.147 < θ_M` — resolving. Strongly reinforced misconceptions (multiple consecutive high-confidence errors) accumulate higher scores and therefore require more correct evidence to resolve — correctly modeling the persistence of confident but incorrect beliefs as documented in constraint-based student modeling [16].
+
+**Parameter grounding: λ and θ_M.** The threshold `θ_M = 0.25` is not an arbitrary design choice — it is uniquely constrained by two behavioral requirements given `λ`:
+
+1. *Immediate detection*: a single high-confidence error must flag a misconception immediately. This requires `(1 − λ) · 1 > θ_M`, i.e., `θ_M < 1 − λ = 0.30`.
+2. *Two-answer recovery*: a single correct response must not resolve the misconception. After one decay step, `M_c = λ · (1 − λ) = 0.21`; this must still exceed `θ_M`, i.e., `θ_M > λ(1 − λ) = 0.21`.
+
+The two requirements jointly constrain `θ_M` to the interval `(0.21, 0.30)`. The value `θ_M = 0.25` is the approximate midpoint of this interval, providing equal margin from both boundary conditions. Any value in this range preserves the behavioral semantics; the midpoint minimizes sensitivity to small perturbations in `λ`.
+
+The persistence parameter `λ = 0.70` is selected so that the effective half-life of a misconception score under sustained correct responses is exactly 2 interactions: `λ^k < 0.5` first holds at `k = ⌈log(0.5) / log(0.7)⌉ = ⌈1.94⌉ = 2`. This means two consecutive correct responses halve any accumulated score — a conservative requirement consistent with the finding that programming misconceptions require multiple corrective encounters before they are suppressed (Chi et al., 1994 [30]). The half-life interpretation makes `λ` directly auditable: an instructor reviewing the system can verify that "this student's misconception should clear after 2 correct responses" without reading the EMA formula directly.
+
+**Confidence threshold justification.** The threshold `θ_conf = 4` targets the top 40% of expressed confidence on a six-point scale (0–5), consistent with Likert-scale "agree/strongly agree" conventions in educational measurement. Nelson & Narens (1990) distinguish between low-confidence errors (noise or genuine uncertainty) and high-confidence errors (indicative of stable misconceptions) [12]. A threshold of `≤ 3` would generate excessive false positives; a threshold of 5 would be too restrictive as students rarely express maximum confidence on novel material. The value 4 is a calibrated design hyperparameter.
+
+**Why it exists:** Confrey (1990) established that misconceptions are not random errors — they are systematic, stable beliefs that resist correction because the student is confident in them [15]. Ohlsson (1994) formalized constraint-based student modeling around the detection of such incorrect but stable knowledge states [16]. The EMA formulation converts the binary flag-or-not decision into a continuous state variable, enabling the system to distinguish between a student who made one overconfident mistake and one who has demonstrated a persistent pattern of high-confidence errors — and to calibrate intervention intensity accordingly.
 
 **Literature:**
+
+- [12] Nelson, T. O., & Narens, L. (1990). Metamemory: A theoretical framework and new findings. *Psychology of Learning and Motivation, 26*, 125–173.
 - [15] Confrey, J. (1990). A review of the research on student conceptions in mathematics, science, and programming. *Review of Research in Education, 16*, 3–56.
 - [16] Ohlsson, S. (1994). Constraint-based student modeling. In *Student Modeling: The Key to Individualized Knowledge-Based Instruction* (pp. 167–189). Springer.
 
@@ -221,23 +334,72 @@ The threshold `conf ≥ 4` (on a 0–5 scale) targets the top 40% of expressed c
 
 ### 3.5 [E] Security Model
 
-**What it does:** Acts as a product gate — every interaction must pass all four binary checks before reaching the pedagogical engine:
+**What it does:** Acts as a synchronous, two-stage binary gate — every interaction `x_t` must pass all structural constraints and a pedagogical alignment check before being routed to the pedagogical engine.
+
+**Formal decomposition.** The gate decomposes into two semantically distinct components, reflecting that the signals it aggregates are heterogeneous in both type and recovery behavior:
+
+**Stage 1 — Structural Feasibility Gate φ (hard binary):**
+
 ```
-σ = S_cog · S_goal · S_acad · S_spam,   each Sᵢ ∈ {0, 1}
-σ = 0 → BLOCK,   σ = 1 → PASS
+φ(x_t)  =  S_cog(x_t) · S_acad(x_t) · S_spam(x_t)   ∈ {0, 1}
 ```
 
-| Signal | Condition for 0 (BLOCK) | Literature basis |
-|--------|------------------------|-----------------|
-| S_cog | Topic not in enabled_topics | Sweller (1988): cognitive overload [19] |
-| S_goal | G_t < θ_goal | Pintrich (2000): goal alignment [2] |
-| S_acad | Academic integrity pattern match | Course policy |
-| S_spam | N_t ≥ N_max | Off-topic abuse prevention |
-| S_sem | LLM semantic judge (async, flags only) | Does not block σ |
+with explicit definitions:
 
-**Why it exists:** Cognitive Load Theory (Sweller, 1988) demonstrates that presenting material beyond a student's current capacity actively impairs learning [19]. The S_cog gate implements this structurally — content gating is not just an administrative choice but a pedagogical one. The product formulation (multiplication rather than OR/AND logic) ensures that any single failed check blocks the interaction regardless of the others, producing a conservative, fail-safe behavior.
+```
+S_cog(x_t)   =  𝟏[ c(x_t) ∈ T_enabled  ∧  ∀ r ∈ prereqs(c(x_t)): r ∈ K_t ]
+S_acad(x_t)  =  𝟏[ ¬∃ p ∈ Φ_blocked: match(x_t, p) ]
+S_spam(x_t)  =  𝟏[ N_t < N_max ]
+```
+
+where `c(x_t)` is the detected concept, `T_enabled ⊆ T` the instructor-enabled topic set, `K_t` the student's mastered concept set, `Φ_blocked` a finite set of academic integrity pattern predicates, `N_t` the current off-topic strike counter, and `N_max` the rate-limit threshold.
+
+**Stage 2 — Pedagogical Alignment Check α (soft threshold):**
+
+```
+G_t     =  cos_sim( h(x_t), h(g_0) )   ∈ [0, 1]
+α(x_t)  =  𝟏[ G_t ≥ θ_goal ]
+```
+
+where `h(·)` is a frozen sentence embedding and `g_0` is the student's stated learning goal. Cosine similarity is used because `h(·)` produces L2-normalized vectors, making cosine the natural inner-product metric for semantic proximity in that space — equivalent to the dot product and requiring no additional normalization. The threshold `θ_goal` is a calibrated hyperparameter selected to maximize the F1 score of human-labeled aligned versus misaligned interactions on a held-out validation set. Alternative embedding models may be substituted without changing the gate formulation, since `G_t` is used only for its ordinal properties (higher = more aligned) relative to `θ_goal`.
+
+**Composite gate:**
+
+```
+σ(x_t)  =  φ(x_t) · α(x_t)   ∈ {0, 1}
+```
+
+`σ(x_t) = 0` blocks the interaction with a targeted explanation; `σ(x_t) = 1` routes it to the pedagogical engine.
+
+**Asynchronous semantic monitor (non-blocking):**
+
+```
+f_sem : X → {flag, pass}     (async, latency-tolerant; output → audit log only)
+```
+
+`f_sem` runs a heavier LLM-based semantic analysis after the synchronous gate decision and writes its output to an instructor-visible audit log. It does not modify `σ` and introduces no latency to the student-facing response path. It is therefore modeled separately from the gate rather than as a constituent signal.
+
+| Signal | Type | Condition for block | Basis |
+| --- | --- | --- | --- |
+| `S_cog` | Hard (φ) | Topic not enabled or prerequisite unmet | Sweller (1988) [19]; Liang et al. (2018) [5] |
+| `S_acad` | Hard (φ) | Academic integrity pattern matched | Course policy; Φ_blocked |
+| `S_spam` | Hard (φ) | Off-topic strike count ≥ N_max | Abuse prevention |
+| `α` | Soft (threshold) | G_t < θ_goal | Pintrich (2000) [2]; Zimmermann (2000) [18] |
+| `f_sem` | Async monitor | — (non-blocking) | Audit and instructor review |
+
+**Why this decomposition?** The three signals in `φ` share the same semantic role: each is a hard binary predicate representing a necessary condition for a response to be structurally permissible. The product-of-indicators within `φ` is equivalent to their logical conjunction and is the appropriate formalism for a fail-safe gate: any single violated constraint is sufficient for rejection, regardless of the others. All three are binary by nature (not thresholded continuous signals), making the product semantics exact rather than approximate.
+
+`G_t` is semantically distinct — it is a continuous cosine similarity score derived from embeddings and thresholded at a calibrated `θ_goal`. Grouping it with the hard binary signals in `φ` would conflate two different mathematical objects (a policy predicate and a thresholded real-valued signal). Separating it as `α(x_t)` makes the distinction explicit: `φ = 0` represents "this response is structurally impermissible"; `α = 0` represents "this response is pedagogically misaligned with the student's goal." The two failure modes have different recovery implications — a `φ`-blocked interaction requires a policy-level fix (unlock the topic, address the integrity concern, reduce spam), while an `α`-blocked interaction requires a pedagogical redirect (help the student reconnect with their learning goal).
+
+Crucially, `φ(x_t) = 0` collapses `σ` to 0 regardless of `α`, preserving the fail-safe property of the hard gate: no alignment score can override a structural block.
+
+**Why this exists:** Cognitive Load Theory (Sweller, 1988) establishes that presenting material beyond a student's current competence actively impairs learning [19] — `S_cog` implements this as a structural prerequisite gate. Goal alignment (`α`) is grounded in Pintrich's (2000) finding that interactions misaligned with a student's stated learning goal disrupt self-regulated learning processes [2]. The security gate therefore encodes both a cognitive safety constraint (CLT) and a motivational coherence constraint (SRL theory) within a single, interpretable two-stage decision.
 
 **Literature:**
+
+- [2] Pintrich, P. R. (2000). The role of goal orientation in self-regulated learning. In *Handbook of Self-Regulation* (pp. 451–502). Academic Press.
+- [5] Liang, C., Wu, Z., Huang, W., & Giles, C. L. (2018). Recovering concept prerequisite relations from university course dependencies. *AAAI-18*.
+- [18] Zimmermann, B. J. (2000). Attaining self-regulation: A social cognitive perspective. In *Handbook of Self-Regulation* (pp. 13–39). Academic Press.
 - [19] Sweller, J. (1988). Cognitive load during problem solving: Effects on learning. *Cognitive Science, 12*(2), 257–285.
 
 ---
@@ -323,9 +485,11 @@ learning_profile (JSON):
 
 The following aspects of this system go beyond direct application of existing techniques:
 
-### 4.1 Tiered BKT with Bloom's Taxonomy Ceiling Caps *(primary contribution)*
+### 4.1 Factored Multi-Skill BKT with Conjunctive Mastery *(primary contribution)*
 
-Standard BKT uses a single probability per concept. Multi-skill BKT extensions (e.g., DKVMN, Deep Knowledge Tracing) use neural networks but lose interpretability. This system introduces **hard ceiling caps per Bloom's level** as a structural constraint: `p_quiz ≤ 0.60`, `p_micro ≤ 0.25`, `p_code ≤ 0.10`, composite `≤ 0.95`. A student who does only quizzes is provably bounded below mastery. This makes the mastery definition multi-dimensional and verifiable — a student cannot "quiz their way" to mastery without procedural and applied evidence.
+Standard BKT uses a single latent state per concept and cannot represent qualitatively different types of evidence. Deep Knowledge Tracing and DKVMN extend BKT to multiple skills via neural networks but sacrifice interpretability. This system introduces a **factored three-tracker BKT model** in which each tracker targets a distinct Bloom's cognitive level (declarative / procedural / applied) and is updated only by evidence of the matching type. The mastery decision is the conjunctive rule `m_c = 𝟏[∀k: P_t^(k) ≥ θ_mastery^(k)]` — mastery requires all three subskill posteriors to meet their individual sufficiency thresholds simultaneously (where `θ_mastery^(k) < θ_max^(k)` for all `k`; see Section 3.4.1).
+
+This provides two properties that standard BKT cannot: (1) **structural evidence specificity** — quiz evidence updates only the declarative tracker, preventing one-dimensional evidence from inflating the composite score; (2) **closed-form interpretability** — the mastery criterion has an exact algebraic expression in terms of individual posterior ceilings, with no neural approximation. A student who performs perfectly on quizzes is bounded below mastery because `P_t^(2)` and `P_t^(3)` remain at their priors until procedural and applied evidence is provided. This property follows directly from the evidence-routing function `δ^(k)(e_t)` and the conjunctive mastery criterion: since `δ^(2)(quiz) = δ^(3)(quiz) = 0`, quiz interactions leave the procedural and applied trackers unchanged, making `m_c = 1` structurally unreachable from quiz evidence alone.
 
 ### 4.2 UCB1 Pedagogical Style Selection with Live Student Feedback
 
@@ -343,9 +507,9 @@ Video-integrated chat tutoring typically answers based on watched content or def
 
 When a student receives a concept explanation in the chat interface and there is a relevant lecture video in the classroom, the system appends a contextual video suggestion. This bridges two interaction modes that are typically siloed, allowing the system to reinforce text-based explanations with video-based demonstrations — directly supporting Dual Coding Theory [26].
 
-### 4.6 Security as an Interpretable Product Gate
+### 4.6 Security as a Two-Stage Interpretable Gate
 
-Safety/appropriateness filtering in LLM systems is typically implemented as a single opaque classifier or a fixed list of blocked topics. Framing it as `σ = S_cog · S_goal · S_acad · S_spam` makes the gate **compositional and interpretable**: each signal has an explicit semantic meaning, the product structure means any single failure blocks the interaction, and the reason for blocking is always attributable to a specific signal.
+Safety filtering in LLM-based systems is typically implemented as a single opaque classifier or a fixed blocklist. This system instead decomposes the gate into two semantically distinct stages: a **structural feasibility gate** `φ = S_cog · S_acad · S_spam` (product of hard binary policy constraints, all of the same semantic type) and a **pedagogical alignment check** `α = 𝟏[G_t ≥ θ_goal]` (thresholded continuous similarity score). The composite gate `σ = φ · α` is both compositional and interpretable: each signal has an explicit semantic meaning, the reason for any block is attributable to a specific named signal, and the two stages have distinct recovery implications (structural fix vs. pedagogical redirect). The asynchronous semantic monitor `f_sem` runs out-of-band without blocking the student-facing response path, cleanly separating real-time safety from deeper post-hoc analysis.
 
 ---
 
@@ -429,3 +593,7 @@ Safety/appropriateness filtering in LLM systems is typically implemented as a si
 [27] Bloom, B. S. (1968). Learning for mastery. *Evaluation Comment, 1*(2), 1–12.
 
 [28] Mislevy, R. J., Steinberg, L. S., & Almond, R. G. (2003). On the structure of educational assessments. *Measurement: Interdisciplinary Research and Perspectives, 1*(1), 3–62.
+
+[29] Baker, R. S., Corbett, A. T., & Aleven, V. (2008). More accurate student modeling through contextual estimation of slip and guess probabilities in Bayesian knowledge tracing. In *Proceedings of the 9th International Conference on Intelligent Tutoring Systems (ITS 2008)*, pp. 406–415.
+
+[30] Chi, M. T. H., de Leeuw, N., Chiu, M. H., & LaVancher, C. (1994). Eliciting self-explanations improves understanding. *Cognitive Science, 18*(3), 439–477.

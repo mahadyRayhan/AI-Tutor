@@ -36,7 +36,17 @@ EVIDENCE_CONFIG = {
     },
 }
 
-MASTERY_THRESHOLD = 0.95  # = 0.60 + 0.25 + 0.10 (sum of all ceilings)
+MASTERY_THRESHOLD = 0.95  # = 0.60 + 0.25 + 0.10 — used for dashboard display only
+
+# Per-tier decision thresholds: set at ~95% of each ceiling so mastery uses
+# a strict ≥ check that doesn't require exact numerical ceiling equality.
+# θ_mastery^(k) < θ_max^(k) for all k — decouples evidence contribution cap
+# from evidence sufficiency criterion (see SYSTEM_OVERVIEW §3.4.1).
+MASTERY_THRESHOLDS = {
+    "quiz":  0.57,   # 95% of ceiling 0.60 — declarative sufficiency threshold
+    "micro": 0.24,   # 96% of ceiling 0.25 — procedural sufficiency threshold
+    "code":  0.09,   # 90% of ceiling 0.10 — applied sufficiency threshold
+}
 
 
 def _bkt_step(p_l: float, is_correct: bool, cfg: dict) -> float:
@@ -124,8 +134,22 @@ def get_mastery(username: str, concept: str) -> float:
 
 
 def is_mastered(username: str, concept: str) -> bool:
-    """True when composite P(L) >= 0.95 (all three tiers substantially complete)."""
-    return get_mastery(username, concept) >= MASTERY_THRESHOLD
+    """True when all three subskill posteriors meet their individual mastery thresholds.
+
+    Uses conjunctive check P_t^(k) >= theta_mastery^(k) for each tier rather than
+    composite >= 0.95, so mastery does not require exact numerical ceiling equality.
+    """
+    row = db.fetch_one(
+        "SELECT p_mastery_quiz, p_mastery_micro, p_mastery_code FROM user_knowledge WHERE username=? AND concept=?",
+        (username, concept)
+    )
+    if not row:
+        return False
+    return (
+        (row["p_mastery_quiz"]  or 0.0) >= MASTERY_THRESHOLDS["quiz"]  and
+        (row["p_mastery_micro"] or 0.0) >= MASTERY_THRESHOLDS["micro"] and
+        (row["p_mastery_code"]  or 0.0) >= MASTERY_THRESHOLDS["code"]
+    )
 
 
 bkt = type("BKTModel", (), {
