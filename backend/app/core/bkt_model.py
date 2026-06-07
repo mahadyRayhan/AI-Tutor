@@ -18,6 +18,7 @@
 import logging
 from datetime import datetime
 from app.db.sqlite_db import db
+from app.core.threshold_calibrator import calibrator, THRESHOLD_PRIORS
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,12 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
         f"📐 [BKT/{evidence_type.upper()}] '{concept}' {username}: "
         f"{p_current:.3f}→{p_new:.3f} {symbol} | composite={composite:.3f}"
     )
+
+    # Feed posterior into population-level calibration buffer.
+    # The calibrator will trigger GMM recalibration automatically every
+    # N_RECAL_STEP observations — no action needed here beyond recording.
+    calibrator.record_posterior(concept, evidence_type, p_new)
+
     return composite
 
 
@@ -136,8 +143,10 @@ def get_mastery(username: str, concept: str) -> float:
 def is_mastered(username: str, concept: str) -> bool:
     """True when all three subskill posteriors meet their individual mastery thresholds.
 
-    Uses conjunctive check P_t^(k) >= theta_mastery^(k) for each tier rather than
-    composite >= 0.95, so mastery does not require exact numerical ceiling equality.
+    Thresholds are concept-specific and dynamically calibrated by the
+    ThresholdCalibrator (Empirical Bayes GMM).  When no calibration has run
+    yet for a given concept/tier the calibrator returns the literature-backed
+    prior from THRESHOLD_PRIORS (identical to the former hard-coded values).
     """
     row = db.fetch_one(
         "SELECT p_mastery_quiz, p_mastery_micro, p_mastery_code FROM user_knowledge WHERE username=? AND concept=?",
@@ -146,9 +155,9 @@ def is_mastered(username: str, concept: str) -> bool:
     if not row:
         return False
     return (
-        (row["p_mastery_quiz"]  or 0.0) >= MASTERY_THRESHOLDS["quiz"]  and
-        (row["p_mastery_micro"] or 0.0) >= MASTERY_THRESHOLDS["micro"] and
-        (row["p_mastery_code"]  or 0.0) >= MASTERY_THRESHOLDS["code"]
+        (row["p_mastery_quiz"]  or 0.0) >= calibrator.get_threshold(concept, "quiz")  and
+        (row["p_mastery_micro"] or 0.0) >= calibrator.get_threshold(concept, "micro") and
+        (row["p_mastery_code"]  or 0.0) >= calibrator.get_threshold(concept, "code")
     )
 
 
