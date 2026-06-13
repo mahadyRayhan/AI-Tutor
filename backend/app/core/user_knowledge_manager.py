@@ -73,9 +73,14 @@ class UserKnowledgeManager:
             return
 
         db.execute("""
-            INSERT OR IGNORE INTO user_knowledge (username, concept, timestamp)
-            VALUES (?, ?, ?)
+            INSERT OR IGNORE INTO user_knowledge (username, concept, timestamp, ever_certified)
+            VALUES (?, ?, ?, 1)
         """, (username, concept_clean, datetime.now()))
+        # Also set ever_certified on existing rows (concept already in DB but not yet set)
+        db.execute(
+            "UPDATE user_knowledge SET ever_certified=1 WHERE username=? AND concept=?",
+            (username, concept_clean)
+        )
         logger.info(f"✅ [DB] Saved mastery: '{concept_clean}' for {username}")
 
     def _validate_against_graph(self, concept: str) -> bool:
@@ -108,15 +113,26 @@ class UserKnowledgeManager:
             return True  # Permissive on error — don't block valid concepts
 
     def has_mastered(self, username: str, concept: str) -> bool:
-        """Checks if a concept is known (Fuzzy match, garbage-aware)."""
-        known = self.get_known_concepts(username)  # Already filtered
+        """
+        Checks if a concept has ever been certified (fuzzy match, garbage-aware).
+
+        Fix #5: uses ever_certified=1 flag rather than row existence so that
+        forgetting-decay cannot re-lock earned prerequisites. A concept that was
+        once mastered stays 'known' to the prerequisite gate regardless of current
+        decayed P̃ values; only the review scheduler uses the live BKT posterior.
+        """
         concept_lower = concept.lower()
-        
-        # Skip garbage concepts even if they're somehow in the DB
         if concept_lower in self._garbage_concepts:
             return False
-        
-        return any(concept_lower in k.lower() or k.lower() in concept_lower for k in known)
+
+        rows = db.fetch_all(
+            "SELECT concept FROM user_knowledge WHERE username=? AND ever_certified=1",
+            (username,)
+        )
+        return any(
+            concept_lower in r['concept'].lower() or r['concept'].lower() in concept_lower
+            for r in rows
+        )
     
     def set_goal(self, username: str, goal: str):
         """Upsert user goal."""

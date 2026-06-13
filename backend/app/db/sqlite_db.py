@@ -131,6 +131,20 @@ class SQLiteDB:
             except sqlite3.OperationalError:
                 pass
 
+            # Reparameterization migration: rows seeded under the old zero-prior
+            # scheme have p_mastery_micro=0.0 or p_mastery_code=0.0 but no
+            # recorded interactions (any actual interaction would push them above 0.09).
+            # Update those rows to the new Cromwell-safe priors.
+            try:
+                self.conn.execute(
+                    "UPDATE user_knowledge SET p_mastery_micro=0.05 WHERE p_mastery_micro=0.0"
+                )
+                self.conn.execute(
+                    "UPDATE user_knowledge SET p_mastery_code=0.01 WHERE p_mastery_code=0.0"
+                )
+            except Exception:
+                pass
+
             # SM-2 spaced repetition + BKT columns on user_knowledge
             for col, definition in [
                 ("interval_days",   "INTEGER DEFAULT 1"),
@@ -139,8 +153,31 @@ class SQLiteDB:
                 ("review_count",    "INTEGER DEFAULT 0"),
                 ("p_mastery",       "REAL DEFAULT 0.3"),
                 ("p_mastery_quiz",  "REAL DEFAULT 0.3"),
-                ("p_mastery_micro", "REAL DEFAULT 0.0"),
-                ("p_mastery_code",  "REAL DEFAULT 0.0"),
+                ("p_mastery_micro", "REAL DEFAULT 0.05"),
+                ("p_mastery_code",  "REAL DEFAULT 0.01"),
+                # Hysteresis flag: 1 once all tiers cross THETA_CERTIFY (0.95),
+                # 0 if any tier later drops below THETA_DECERTIFY (0.75).
+                ("is_certified",    "INTEGER DEFAULT 0"),
+                # Per-tier last-interaction timestamps for forgetting-augmented BKT decay.
+                # NULL until the first interaction on that tier.
+                ("last_quiz_at",    "TIMESTAMP"),
+                ("last_micro_at",   "TIMESTAMP"),
+                ("last_code_at",    "TIMESTAMP"),
+                # Explicit evidence counts — certification requires n_evidence^(k) >= 3.
+                # Incremented only on correct answers (Fix #3: n_min explicit gate).
+                ("n_evidence_quiz",  "INTEGER DEFAULT 0"),
+                ("n_evidence_micro", "INTEGER DEFAULT 0"),
+                ("n_evidence_code",  "INTEGER DEFAULT 0"),
+                # ever_certified: 1 once all tiers have been jointly certified at any point.
+                # Never reset to 0. Prerequisite gate uses this (not current decayed P̃)
+                # so forgetting-decay cannot re-lock earned prerequisites (Fix #5).
+                ("ever_certified",   "INTEGER DEFAULT 0"),
+                # Per-tier adaptive decay rates λ (day^-1).
+                # Initialized from DECAY_RATES; each correct review divides by ease_factor
+                # to slow forgetting — SM-2/BKT coupling (Fix #6).
+                ("decay_quiz_lam",   "REAL DEFAULT 0.04951"),
+                ("decay_micro_lam",  "REAL DEFAULT 0.09902"),
+                ("decay_code_lam",   "REAL DEFAULT 0.13863"),
             ]:
                 try:
                     self.conn.execute(f"ALTER TABLE user_knowledge ADD COLUMN {col} {definition}")

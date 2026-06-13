@@ -33,16 +33,19 @@ N_RECAL_MIN    = 50    # minimum observations to attempt first calibration
 N_RECAL_STEP   = 50   # recalibrate every additional N_RECAL_STEP observations
 N_RECAL_WINDOW = 500  # sliding window: keep only the last N posteriors per tier/concept
 
-# ── Literature-backed initial thresholds (warm-start prior) ──────────────────
-# These are the values the system uses before enough data accumulates.
-# They are set at ~95% of each BKT ceiling (see SYSTEM_OVERVIEW §3.5).
+# ── Unified mastery threshold prior (Corbett & Anderson, 1995) ───────────────
+# All tiers default to 0.95 — the standard BKT mastery criterion applied to
+# P̃^(k) ∈ [0,1] (unconstrained proper posteriors, no ceiling clip).
+# The calibrator may adjust this per concept/tier once 50+ observations
+# accumulate; it falls back to 0.95 until then.
 THRESHOLD_PRIORS = {
-    "quiz":  0.57,   # 95% of ceiling 0.60
-    "micro": 0.24,   # 96% of ceiling 0.25
-    "code":  0.09,   # 90% of ceiling 0.10
+    "quiz":  0.95,
+    "micro": 0.95,
+    "code":  0.95,
 }
 
-# BKT tier ceilings — used to clamp calibrated thresholds to valid range
+# BKT tier ceilings — used for composite display score only (P^(k) = ceiling × P̃^(k))
+# NOT used for mastery decisions; mastery is decided purely on P̃^(k) ∈ [0,1].
 TIER_CEILINGS = {
     "quiz":  0.60,
     "micro": 0.25,
@@ -114,6 +117,14 @@ class ThresholdCalibrator:
 
         w = 1.0 - noise_level
         θ_new = round((1.0 - w) * θ_prior + w * θ_gmm, 4)
+
+        # Fix #4 — Calibrator guardrails: clamp so the calibrated threshold can never
+        # drift below the literature prior (0.95) or the decertify boundary (0.75).
+        # This preserves the n_min=3 guarantee and prevents silent guarantee-breaking.
+        # The two-correct posterior (quiz≈0.917, micro≈0.849, code≈0.832) is also < 0.95,
+        # so clamping at the prior is the binding constraint.
+        θ_floor = max(THRESHOLD_PRIORS[tier], 0.75)
+        θ_new = max(θ_new, θ_floor)
 
         self._save_threshold(
             concept, tier, θ_new, θ_prior,
@@ -209,9 +220,10 @@ class ThresholdCalibrator:
         # 10th percentile of mastered cluster: μ₁ − z₀.₁₀ · σ₁
         θ_gmm = float(μ1 - _Z_10 * σ1)
 
-        # Clamp: must be positive and strictly below ceiling
-        ceiling = TIER_CEILINGS[tier]
-        θ_gmm = float(np.clip(θ_gmm, 1e-4, ceiling * 0.99))
+        # Clamp to valid P̃ range: strictly positive, strictly below 1.
+        # Upper bound 0.99 (not ceiling) — posteriors are now unconstrained in [0,1]
+        # and the censoring-at-ceiling pathology is eliminated by the reparameterization.
+        θ_gmm = float(np.clip(θ_gmm, 1e-4, 0.99))
 
         return θ_gmm, noise_level, fisher_ratio
 

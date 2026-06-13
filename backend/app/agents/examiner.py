@@ -116,50 +116,8 @@ class ExaminerAgent(BaseAgent):
 
         yield {"type": "status", "message": "Fetching quiz...", "percent": 50}
 
-        # --- TWO-TIER QUIZ LOOKUP ---
-        # Tier 1: Exact match on the requested topic's OWN quiz data
-        # Tier 2: Fall back to CONTAINS match, then children
-        cypher = """
-            // Tier 1: Exact name match — the node itself has quiz data
-            OPTIONAL MATCH (exact)
-            WHERE toLower(exact.name) = toLower($topic)
-              AND exact.quiz_data IS NOT NULL
-            WITH collect(exact) as exact_matches
-
-            // Tier 2: CONTAINS match — the node itself has quiz data
-            OPTIONAL MATCH (partial)
-            WHERE toLower(partial.name) CONTAINS toLower($topic)
-              AND partial.quiz_data IS NOT NULL
-            WITH exact_matches, collect(partial) as partial_matches
-
-            // Tier 3: CONTAINS match — check children only as last resort
-            OPTIONAL MATCH (parent)-[:INCLUDES]->(child)
-            WHERE toLower(parent.name) CONTAINS toLower($topic)
-              AND child.quiz_data IS NOT NULL
-              AND toLower(child.name) CONTAINS toLower($topic)
-            WITH exact_matches, partial_matches, collect(child) as child_matches
-
-            // Priority: exact > partial (self) > children
-            WITH exact_matches + partial_matches + child_matches as all_candidates
-            UNWIND all_candidates as node
-            RETURN node.quiz_data as data
-            LIMIT 1
-        """
-        # --------------------------------
-        
-        results = self.graph_db.execute_query(cypher, {"topic": verify_topic})
-
-        qa_pair = None
-        if results and results[0]['data']:
-            try:
-                import random
-                pairs = json.loads(results[0]['data'])
-                # Avoid repeating questions already asked this session
-                asked = set(session_state.get("asked_quiz_questions", [])) if session_state else set()
-                unseen = [p for p in pairs if p['q'] not in asked]
-                pool = unseen if unseen else pairs  # fallback to all if all seen
-                qa_pair = random.choice(pool)
-            except: pass
+        asked_so_far = list(session_state.get("asked_quiz_questions", [])) if session_state else []
+        qa_pair = self._fetch_quiz_question(verify_topic, asked_so_far)
 
         if qa_pair:
             # =========================================================
@@ -170,12 +128,11 @@ class ExaminerAgent(BaseAgent):
                 "google": qa_pair['a_vector'],
                 "local": qa_pair.get('a_vector_local')
             }
-            
-            # Track this question so it won't repeat in the same session
-            asked_so_far = list(session_state.get("asked_quiz_questions", [])) if session_state else []
+
             if qa_pair['q'] not in asked_so_far:
                 asked_so_far.append(qa_pair['q'])
 
+            is_verify = "(verify)" in state.query.lower()
             # Save State: We are waiting for a CONFIDENCE RATING, not the actual answer yet.
             history_manager.update_session_state(state.user_id, state.session_id, {
                 "awaiting_confidence_rating": True,
@@ -183,7 +140,10 @@ class ExaminerAgent(BaseAgent):
                 "quiz_topic": verify_topic,
                 "quiz_vector": vector_data,
                 "quiz_correct_text": qa_pair['a'],
-                "asked_quiz_questions": asked_so_far
+                "asked_quiz_questions": asked_so_far,
+                # Knowledge credibility test (Fix #2): 3 separate real questions, 1 BKT update each.
+                "is_verification_quiz": is_verify,
+                "verification_q_num": 1,   # tracks which verification question we're on (1–3)
             })
 
             if state.profile.get('is_surprise_quiz'):
@@ -212,6 +172,36 @@ class ExaminerAgent(BaseAgent):
                 "entities": state.entities
             }}
 
+
+    def _fetch_quiz_question(self, topic: str, asked_so_far: list) -> dict | None:
+        """Fetch one quiz question for topic, excluding already-asked questions."""
+        cypher = """
+            OPTIONAL MATCH (exact)
+            WHERE toLower(exact.name) = toLower($topic) AND exact.quiz_data IS NOT NULL
+            WITH collect(exact) as exact_matches
+            OPTIONAL MATCH (partial)
+            WHERE toLower(partial.name) CONTAINS toLower($topic) AND partial.quiz_data IS NOT NULL
+            WITH exact_matches, collect(partial) as partial_matches
+            OPTIONAL MATCH (parent)-[:INCLUDES]->(child)
+            WHERE toLower(parent.name) CONTAINS toLower($topic)
+              AND child.quiz_data IS NOT NULL AND toLower(child.name) CONTAINS toLower($topic)
+            WITH exact_matches, partial_matches, collect(child) as child_matches
+            WITH exact_matches + partial_matches + child_matches as all_candidates
+            UNWIND all_candidates as node
+            RETURN node.quiz_data as data LIMIT 1
+        """
+        results = self.graph_db.execute_query(cypher, {"topic": topic})
+        if not (results and results[0]['data']):
+            return None
+        try:
+            import random
+            pairs = json.loads(results[0]['data'])
+            asked = set(asked_so_far)
+            unseen = [p for p in pairs if p['q'] not in asked]
+            pool = unseen if unseen else pairs
+            return random.choice(pool)
+        except Exception:
+            return None
 
     async def _grade_quiz(self, state: AgentState, session_state):
         """
@@ -253,9 +243,46 @@ class ExaminerAgent(BaseAgent):
             sm2_quality = 0 if confidence_score >= 4 else (1 if confidence_score <= 2 else 2)
         knowledge_manager.update_sm2(state.user_id, check_topic, sm2_quality)
 
-        # BKT update: single probabilistic step based on correctness
+        # BKT update: 1 update per question — always.
+        # Knowledge credibility test (Fix #2): instead of counting 1 answer as 3,
+        # the system asks 3 separate real questions. Each gets exactly 1 BKT update.
+        # verification_q_num tracks which question of 3 we are grading.
         from app.core.bkt_model import bkt
+        is_verification_quiz = session_state.get("is_verification_quiz", False)
+        verification_q_num   = session_state.get("verification_q_num", 1)
+
         p_mastery = bkt.update(state.user_id, check_topic, result['is_correct'], evidence_type="quiz")
+
+        # If this is an intermediate verification question (Q1 or Q2) and correct,
+        # ask the next question instead of showing the full grading response.
+        if is_verification_quiz and result['is_correct'] and verification_q_num < 3:
+            asked_so_far = session_state.get("asked_quiz_questions", [])
+            next_q = self._fetch_quiz_question(check_topic, asked_so_far)
+            if next_q:
+                updated_asked = list(asked_so_far)
+                if next_q['q'] not in updated_asked:
+                    updated_asked.append(next_q['q'])
+                history_manager.update_session_state(state.user_id, state.session_id, {
+                    "awaiting_quiz_answer": True,
+                    "pending_quiz_question": next_q['q'],
+                    "quiz_vector": {"google": next_q['a_vector'], "local": next_q.get('a_vector_local')},
+                    "quiz_correct_text": next_q['a'],
+                    "asked_quiz_questions": updated_asked,
+                    "is_verification_quiz": True,
+                    "verification_q_num": verification_q_num + 1,
+                })
+                msg = (f"✅ Correct! ({verification_q_num}/3 verified)\n\n"
+                       f"**Question {verification_q_num + 1} of 3:**\n\n{next_q['q']}\n\n"
+                       f"👉 *Type your answer below!*")
+                yield {"type": "complete", "data": {
+                    "answer": msg, "sources": [], "suggestions": ["I don't know (Skip)"],
+                    "intent": "QUIZ", "entities": state.entities
+                }}
+                return  # defer full grading response until Q3
+
+        # Full grading response path: either not a verification quiz, a wrong answer, or Q3
+        is_verified_credit = (is_verification_quiz and result['is_correct']
+                              and verification_q_num == 3 and confidence_score >= 4)
 
         if result['is_correct']:
             knowledge_manager.resolve_misconception(state.user_id, check_topic)
@@ -277,6 +304,8 @@ class ExaminerAgent(BaseAgent):
                 # High Confidence + PASS = Validation
                 msg = f"✅ **{result['feedback']}**\n\n"
                 msg += f"Your confidence ({confidence_score}/5) was perfectly placed. Great job backing it up with a solid answer.\n\n"
+                if is_verified_credit:
+                    msg += "📊 *Knowledge credibility verified — 3 evidence points credited to your mastery record.*\n\n"
             else:
                 msg = f"✅ **{result['feedback']}**\n\n"
                 
