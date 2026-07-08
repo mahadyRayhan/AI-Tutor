@@ -142,17 +142,74 @@ def _read_row(username: str, concept: str):
     )
 
 
+def _get_user_params(username: str, concept: str, tier: str) -> dict:
+    """Return BKT parameters for this user+concept+tier.
+    Uses adapted P_G from SRL calibration if it exists, otherwise global defaults."""
+    cfg = dict(EVIDENCE_CONFIG[tier])
+    row = db.fetch_one(
+        "SELECT adapted_P_G FROM user_bkt_calibration "
+        "WHERE username=? AND concept=? AND tier=?",
+        (username, concept, tier),
+    )
+    if row and row["adapted_P_G"] is not None:
+        cfg["P_G"] = row["adapted_P_G"]
+    return cfg
+
+
+def get_effective_mastery(username: str, concept: str) -> dict:
+    """Return blended mastery combining BKT posterior with student self-assessment.
+    P_eff = α·P_BKT + (1−α)·P_self. Used for display and response adaptation ONLY,
+    never for certification."""
+    from app.core.srl_calibration import ALPHA
+
+    row = _read_row(username, concept)
+    if not row:
+        return {
+            "quiz": 0.0, "micro": 0.0, "code": 0.0,
+            "composite": 0.0, "source": "no_data",
+        }
+
+    result = {}
+    for tier in ("quiz", "micro", "code"):
+        p_raw = row[EVIDENCE_CONFIG[tier]["col"]] or EVIDENCE_CONFIG[tier]["P_L0"]
+        p_bkt = _apply_decay(
+            p_raw, tier, _parse_ts(row[_TS_COL[tier]]), lam=row[_LAM_COL[tier]]
+        )
+        cal = db.fetch_one(
+            "SELECT self_assessment FROM user_bkt_calibration "
+            "WHERE username=? AND concept=? AND tier=?",
+            (username, concept, tier),
+        )
+        if cal and cal["self_assessment"] is not None:
+            p_self = cal["self_assessment"]
+            p_eff = ALPHA * p_bkt + (1 - ALPHA) * p_self
+        else:
+            p_eff = p_bkt
+
+        result[tier] = round(p_eff, 6)
+
+    result["composite"] = round(
+        result["quiz"] * EVIDENCE_CONFIG["quiz"]["ceiling"]
+        + result["micro"] * EVIDENCE_CONFIG["micro"]["ceiling"]
+        + result["code"] * EVIDENCE_CONFIG["code"]["ceiling"],
+        4,
+    )
+    result["source"] = "blended"
+    return result
+
+
 def update(username: str, concept: str, is_correct: bool, evidence_type: str = "quiz") -> float:
     """
     Updates one evidence tier and returns the new composite display score.
     Applies forgetting decay before the BKT step (Fix #6).
     On correct answers: increments n_evidence counter (Fix #3), adapts λ (Fix #6).
+    Uses per-user adapted P_G from SRL calibration when available.
     """
     if evidence_type not in EVIDENCE_CONFIG:
         logger.warning(f"[BKT] Unknown evidence_type '{evidence_type}', defaulting to quiz")
         evidence_type = "quiz"
 
-    cfg    = EVIDENCE_CONFIG[evidence_type]
+    cfg    = _get_user_params(username, concept, evidence_type)
     col    = cfg["col"]
     ts_col = _TS_COL[evidence_type]
     n_col  = _N_COL[evidence_type]
@@ -177,6 +234,22 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
     stored_lam = row[lam_col] if row[lam_col] else DECAY_RATES[evidence_type]
     p_raw     = row[col] if row[col] is not None else cfg["P_L0"]
     p_current = _apply_decay(p_raw, evidence_type, _parse_ts(row[ts_col]), lam=stored_lam)
+
+    # --- Telemetry: prediction BEFORE outcome (p_current is the pre-update prediction) ---
+    # p_eff_pred blends the pre-update posterior with any student self-assessment.
+    try:
+        from app.core.srl_calibration import ALPHA as _ALPHA
+        _cal = db.fetch_one(
+            "SELECT self_assessment FROM user_bkt_calibration "
+            "WHERE username=? AND concept=? AND tier=?",
+            (username, concept, evidence_type),
+        )
+        if _cal and _cal["self_assessment"] is not None:
+            _p_eff_pred = _ALPHA * p_current + (1 - _ALPHA) * _cal["self_assessment"]
+        else:
+            _p_eff_pred = p_current
+    except Exception:
+        _p_eff_pred = p_current
 
     # --- BKT step (Fix #1: P_T only on correct) ---
     p_new = _bkt_step(p_current, is_correct, cfg)
@@ -219,6 +292,22 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
     )
 
     calibrator.record_posterior(concept, evidence_type, p_new)
+
+    # --- Telemetry: evidence + prediction + trajectory snapshot ---
+    try:
+        from app.core import telemetry
+        new_n = (row[n_col] or 0) + (1 if is_correct else 0)
+        telemetry.log_evidence(username, concept, evidence_type, is_correct)
+        telemetry.log_prediction(username, concept, evidence_type,
+                                 round(p_current, 6), round(_p_eff_pred, 6), is_correct)
+        telemetry.log_bkt_snapshot(
+            username, concept, evidence_type, p_new, new_n,
+            int(row["is_certified"] or 0), int(row["ever_certified"] or 0),
+            trigger=f"evidence_{evidence_type}",
+        )
+    except Exception as e:
+        logger.warning(f"[BKT] telemetry hook failed: {e}")
+
     return composite
 
 
@@ -272,6 +361,12 @@ def is_mastered(username: str, concept: str) -> bool:
                 "UPDATE user_knowledge SET is_certified=0 WHERE username=? AND concept=?",
                 (username, concept)
             )
+            try:
+                from app.core import telemetry
+                telemetry.log_event(username, "decertification",
+                                    {"concept": concept, "q": q, "m": m, "c": c})
+            except Exception:
+                pass
         return still_mastered
 
     # --- Not yet certified: check both P̃ threshold AND evidence count ---
@@ -291,11 +386,20 @@ def is_mastered(username: str, concept: str) -> bool:
             "UPDATE user_knowledge SET is_certified=1, ever_certified=1 WHERE username=? AND concept=?",
             (username, concept)
         )
+        try:
+            from app.core import telemetry
+            telemetry.log_event(username, "certification", {
+                "concept": concept, "q": q, "m": m, "c": c,
+                "n_quiz": n_q, "n_micro": n_m, "n_code": n_c,
+            })
+        except Exception:
+            pass
     return newly_mastered
 
 
 bkt = type("BKTModel", (), {
-    "update":      staticmethod(update),
-    "get_mastery": staticmethod(get_mastery),
-    "is_mastered": staticmethod(is_mastered),
+    "update":                staticmethod(update),
+    "get_mastery":           staticmethod(get_mastery),
+    "get_effective_mastery": staticmethod(get_effective_mastery),
+    "is_mastered":           staticmethod(is_mastered),
 })()

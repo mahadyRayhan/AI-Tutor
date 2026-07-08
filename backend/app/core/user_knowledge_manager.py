@@ -241,6 +241,12 @@ class UserKnowledgeManager:
         db.execute("UPDATE users SET learning_profile = ? WHERE username = ?",
                    (json.dumps(profile), username))
         logger.info(f"🔴 [Misconception] EMA updated for '{concept}' — {username} (m_score={new_score:.3f})")
+        try:
+            from app.core import telemetry
+            telemetry.log_misconception(username, concept, "stored",
+                                        detail=student_answer[:200], ema_value=new_score)
+        except Exception:
+            pass
 
     def resolve_misconception(self, username: str, concept: str):
         """Decays the EMA misconception score toward zero on a correct answer.
@@ -265,6 +271,14 @@ class UserKnowledgeManager:
                     logger.info(f"✅ [Misconception] Resolved for '{concept}' — {username} (m_score={decayed:.3f})")
                 else:
                     logger.info(f"🟡 [Misconception] Decaying for '{concept}' — {username} (m_score={decayed:.3f})")
+                try:
+                    from app.core import telemetry
+                    telemetry.log_misconception(
+                        username, concept,
+                        "resolved" if m["resolved"] else "decaying",
+                        ema_value=decayed)
+                except Exception:
+                    pass
         if updated:
             profile["misconceptions"] = misconceptions
             db.execute("UPDATE users SET learning_profile = ? WHERE username = ?",

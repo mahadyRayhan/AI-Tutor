@@ -25,7 +25,7 @@
         window.mermaid = mermaid;
     </script>
 
-    <link rel="stylesheet" href="/static/css/chat.css?v=6">
+    <link rel="stylesheet" href="/static/css/chat.css?v=7">
 </head>
 
 <body>
@@ -394,7 +394,49 @@
             </div>
         </div>
     </div>
-    <script src="/static/js/chat.js?v=6" defer></script>
+    <!-- ═══ CLASSROOM CHECKPOINT MCQ MODAL (non-skippable) ═══ -->
+    <div class="cp-modal-overlay" id="crCheckpointModal">
+        <div class="cp-modal">
+            <h2 class="cp-title">🧠 Quick Comprehension Check</h2>
+            <div id="crCheckpointBody"></div>
+        </div>
+    </div>
+
+    <!-- ═══ CLASSROOM PRE-VIDEO INTENTION MODAL (SRL) ═══ -->
+    <div class="cp-modal-overlay" id="crIntentionModal">
+        <div class="cp-modal">
+            <h2 class="cp-title">🎯 Before you watch</h2>
+            <p class="cp-instruction">Set a quick learning goal — it improves focus and recall.</p>
+            <div class="cp-question">What do you want to learn or understand from this video?</div>
+            <textarea id="crIntentionInput" class="cp-textarea" rows="3" placeholder="e.g., I want to understand how variables store data..."></textarea>
+            <div class="cp-modal-actions">
+                <button class="cp-skip" onclick="crSkipIntention()">Skip</button>
+                <button class="cp-submit-inline" onclick="crSubmitIntention()">Start Watching ▶</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ CLASSROOM POST-VIDEO REFLECTION MODAL (SRL) ═══ -->
+    <div class="cp-modal-overlay" id="crReflectionModal">
+        <div class="cp-modal">
+            <h2 class="cp-title">✨ Nice work — reflect for a moment</h2>
+            <div class="cp-question">What was your single most important takeaway from this lecture?</div>
+            <textarea id="crReflectionInput" class="cp-textarea" rows="3" placeholder="e.g., The key idea was..."></textarea>
+            <div class="cp-modal-actions">
+                <button class="cp-submit-inline" onclick="crSubmitReflection()">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ CLASSROOM END-OF-VIDEO COMPLEX PROBLEM (PRELAB) ═══ -->
+    <div class="cp-modal-overlay" id="crPrelabModal">
+        <div class="cp-modal">
+            <h2 class="cp-title">🧩 Apply What You Learned</h2>
+            <div id="crPrelabBody"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/chat.js?v=7" defer></script>
 </body>
 
 </html>

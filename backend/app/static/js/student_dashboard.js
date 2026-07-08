@@ -142,22 +142,149 @@ function renderSkillBars(mastery) {
 
     TOPICS.forEach((t) => {
         const score = mastery[t] || 0;
-        // Gradient fills for game-style bars
-        let gradient = 'linear-gradient(90deg, #f87171, #fb923c)'; // Red-orange
-        if (score > 30) gradient = 'linear-gradient(90deg, #fbbf24, #facc15)'; // Amber-yellow
-        if (score > 70) gradient = 'linear-gradient(90deg, #34d399, #2dd4bf)'; // Teal-green
+        let gradient = 'linear-gradient(90deg, #f87171, #fb923c)';
+        if (score > 30) gradient = 'linear-gradient(90deg, #fbbf24, #facc15)';
+        if (score > 70) gradient = 'linear-gradient(90deg, #34d399, #2dd4bf)';
 
+        const safeId = t.replace(/\s+/g, '_');
         skillDiv.innerHTML += `
-        <div class="skill-item">
+        <div class="skill-item skill-item-clickable" onclick="toggleMasteryPanel('${safeId}', '${t}')">
             <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-weight:500; font-size:0.85rem;">
                 <span>${t}</span>
-                <span style="color:#94a3b8;">${score}/100 XP</span>
+                <span style="color:#94a3b8;">${score}/100 XP <span class="mastery-expand-hint">▼</span></span>
             </div>
             <div class="progress-bar">
                 <div class="fill" style="width:${score}%; background:${gradient};"></div>
             </div>
+            <div class="mastery-panel" id="panel-${safeId}" style="display:none;">
+                <div class="mastery-panel-loading">Loading mastery data...</div>
+            </div>
         </div>`;
     });
+}
+
+// --- SRL-BKT CALIBRATION: MASTERY SLIDER PANEL ---
+async function toggleMasteryPanel(safeId, concept) {
+    const panel = document.getElementById(`panel-${safeId}`);
+    if (!panel) return;
+
+    if (panel.style.display === 'block') {
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = 'block';
+    panel.innerHTML = '<div class="mastery-panel-loading">Loading mastery data...</div>';
+
+    try {
+        const res = await fetch(`${API_URL}/api/v1/mastery/${currentUser.username}/${encodeURIComponent(concept)}`);
+        const data = await res.json();
+        renderMasterySliders(panel, safeId, concept, data);
+    } catch (e) {
+        panel.innerHTML = '<div class="mastery-panel-loading" style="color:#f87171;">Failed to load mastery data</div>';
+        console.error("Mastery panel load failed", e);
+    }
+}
+
+function renderMasterySliders(panel, safeId, concept, data) {
+    const tiers = ['quiz', 'micro', 'code'];
+    const tierLabels = { quiz: 'Quiz (Declarative)', micro: 'Micro-Challenge (Procedural)', code: 'Code Review (Applied)' };
+
+    let html = '<div class="mastery-sliders" onclick="event.stopPropagation()">';
+    html += '<div class="mastery-panel-title">Self-Assessment — Adjust if BKT overestimates your knowledge</div>';
+
+    tiers.forEach(tier => {
+        const t = data.tiers[tier];
+        const pBkt = t.p_bkt;
+        const pSelf = t.self_assessment !== null ? t.self_assessment : pBkt;
+        const pEff = t.p_effective;
+        const adapted = t.adapted_P_G !== null;
+        const maxVal = pBkt;
+
+        html += `
+        <div class="mastery-tier-row">
+            <div class="mastery-tier-label">
+                <span>${tierLabels[tier]}</span>
+                <span class="mastery-tier-values">
+                    BKT: <strong>${(pBkt * 100).toFixed(0)}%</strong>
+                    ${t.self_assessment !== null ? ` | Self: <strong>${(pSelf * 100).toFixed(0)}%</strong>` : ''}
+                    | Eff: <strong id="eff-${safeId}-${tier}">${(pEff * 100).toFixed(0)}%</strong>
+                    ${adapted ? ' <span class="mastery-adapted-badge">P_G adapted</span>' : ''}
+                </span>
+            </div>
+            <div class="mastery-slider-row">
+                <input type="range" class="mastery-slider" id="slider-${safeId}-${tier}"
+                    min="0" max="${(maxVal * 100).toFixed(0)}" step="1"
+                    value="${(pSelf * 100).toFixed(0)}"
+                    oninput="onSliderMove('${safeId}', '${tier}', this.value, ${pBkt})">
+                <span class="mastery-slider-value" id="val-${safeId}-${tier}">${(pSelf * 100).toFixed(0)}%</span>
+            </div>
+            <div class="mastery-tier-evidence">n_evidence: ${t.n_evidence}</div>
+        </div>`;
+    });
+
+    html += `
+        <div class="mastery-panel-actions">
+            <button class="mastery-save-btn" onclick="saveSelfAssessment('${safeId}', '${concept}')">Save Assessment</button>
+            <span class="mastery-save-status" id="status-${safeId}"></span>
+        </div>
+        <div class="mastery-panel-note">Slider can only go <strong>down</strong> — "I know less than shown." To raise mastery, ask to be quizzed.</div>
+    </div>`;
+
+    panel.innerHTML = html;
+}
+
+function onSliderMove(safeId, tier, value, pBkt) {
+    const pSelf = value / 100;
+    const pEff = 0.6 * pBkt + 0.4 * pSelf;
+    document.getElementById(`val-${safeId}-${tier}`).textContent = `${value}%`;
+    document.getElementById(`eff-${safeId}-${tier}`).textContent = `${(pEff * 100).toFixed(0)}%`;
+}
+
+async function saveSelfAssessment(safeId, concept) {
+    const tiers = ['quiz', 'micro', 'code'];
+    const statusEl = document.getElementById(`status-${safeId}`);
+    statusEl.textContent = 'Saving...';
+    statusEl.style.color = 'var(--accent-color)';
+
+    let anyError = false;
+    for (const tier of tiers) {
+        const slider = document.getElementById(`slider-${safeId}-${tier}`);
+        if (!slider) continue;
+        const pSelf = parseInt(slider.value) / 100;
+        const pBktMax = parseFloat(slider.max) / 100;
+
+        if (pSelf >= pBktMax) continue;
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/mastery/self-assess`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: currentUser.username,
+                    concept: concept,
+                    tier: tier,
+                    self_assessment: pSelf
+                })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                console.warn(`Self-assess ${tier} failed:`, err.detail);
+            }
+        } catch (e) {
+            console.error(`Self-assess ${tier} error:`, e);
+            anyError = true;
+        }
+    }
+
+    if (anyError) {
+        statusEl.textContent = 'Some tiers failed to save';
+        statusEl.style.color = '#f87171';
+    } else {
+        statusEl.textContent = 'Saved!';
+        statusEl.style.color = 'var(--success-color)';
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+    }
 }
 
 // --- GOAL LOGIC ---

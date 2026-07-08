@@ -833,6 +833,107 @@ class ChainOfThoughtRAGAgent:
             }
         return None
 
+    # =========================================================
+    # Mastery Classification (for response adaptation)
+    # =========================================================
+    def _classify_mastery_level(self, username: str, entities: list) -> tuple:
+        """
+        Resolve entities to a knowledge-graph concept, read BKT state,
+        and classify the student's mastery level for this topic.
+
+        Returns (mastery_level, mastery_detail, resolved_concept_or_None).
+        """
+        from app.core.bkt_model import _read_row, _apply_decay, _parse_ts, EVIDENCE_CONFIG, get_effective_mastery
+
+        # Step 1: Get canonical concept names from knowledge graph
+        try:
+            cypher = "MATCH (n) RETURN n.name AS name"
+            graph_concepts = [r["name"] for r in self.graph_db.execute_query(cypher, {}) if r.get("name")]
+        except Exception:
+            graph_concepts = []
+
+        if not graph_concepts:
+            return ("novice", "No knowledge graph available", None)
+
+        # Step 2: Entity-to-concept resolution
+        resolved = None
+        for entity in entities:
+            e_lower = entity.lower().strip()
+
+            # Pass 1: Exact case-insensitive match
+            for gc in graph_concepts:
+                if e_lower == gc.lower():
+                    resolved = gc
+                    break
+            if resolved:
+                break
+
+            # Pass 2: Word-boundary fuzzy match (min entity length 3)
+            if len(e_lower) < 3:
+                continue
+            for gc in graph_concepts:
+                gc_words = gc.lower().split()
+                if any(
+                    (w.startswith(e_lower) or e_lower.startswith(w))
+                    for w in gc_words if len(w) >= 3
+                ):
+                    resolved = gc
+                    self.logger.info(f"🎯 [MCRA] Fuzzy matched '{entity}' → '{gc}'")
+                    break
+            if resolved:
+                break
+
+        if not resolved:
+            return ("novice", f"No matching concept for entities: {entities}", None)
+
+        # Step 3: Read BKT row (try resolved node, then its parent concept)
+        row = _read_row(username, resolved)
+        if not row:
+            # Entity may match a graph sub-node (e.g., "printf") while BKT is
+            # stored under the parent concept ("Input Output"). Resolve one level up.
+            try:
+                parent_q = (
+                    "MATCH (parent)-[:INCLUDES]->(n) "
+                    "WHERE toLower(n.name) = toLower($name) "
+                    "RETURN parent.name AS name LIMIT 1"
+                )
+                parents = self.graph_db.execute_query(parent_q, {"name": resolved})
+                if parents and parents[0].get("name"):
+                    parent_name = parents[0]["name"]
+                    row = _read_row(username, parent_name)
+                    if row:
+                        self.logger.info(f"🎯 [MCRA] Resolved via parent: '{resolved}' → '{parent_name}'")
+                        resolved = parent_name
+            except Exception:
+                pass
+        if not row:
+            return ("novice", f"No prior interactions with '{resolved}'", resolved)
+
+        # Step 4: ever_certified takes priority → reviewing
+        if row["ever_certified"]:
+            return ("reviewing", f"Previously certified on '{resolved}'", resolved)
+
+        # Step 5: Compute effective mastery (blends BKT + self-assessment for display/adaptation)
+        eff = get_effective_mastery(username, resolved)
+        p_q, p_m, p_c = eff["quiz"], eff["micro"], eff["code"]
+
+        n_q = row["n_evidence_quiz"] or 0
+        n_m = row["n_evidence_micro"] or 0
+        n_c = row["n_evidence_code"] or 0
+        avg_p = (p_q + p_m + p_c) / 3.0
+
+        detail = (
+            f"'{resolved}': avg_P_eff={avg_p:.2f} "
+            f"[quiz={p_q:.2f}(n={n_q}), micro={p_m:.2f}(n={n_m}), code={p_c:.2f}(n={n_c})]"
+        )
+
+        # Step 6: Classification (uses effective mastery, NOT raw BKT)
+        if avg_p >= 0.75 and n_q >= 2 and n_m >= 2 and n_c >= 2:
+            return ("proficient", detail, resolved)
+        if avg_p >= 0.35 or n_q >= 2 or n_m >= 2 or n_c >= 2:
+            return ("developing", detail, resolved)
+        return ("novice", detail, resolved)
+
     async def _execute_standard_rag(self, query, intent, entities, user_role, username, user_goal, session_id):
         yield {"type": "status", "message": "Searching knowledge base...", "percent": 60}
         
@@ -1193,6 +1294,14 @@ class ChainOfThoughtRAGAgent:
 
         self.logger.info(f"📊 [PHASE 1] C_code: {c_code_val} | M_state: {m_state_val} | s_goal: {s_goal_val:.2f} | N_strike: {n_strike_val}")
 
+        # --- Telemetry: affect trajectory (per-turn frustration snapshot) ---
+        try:
+            from app.core import telemetry
+            telemetry.log_affect(username, session_id, current_frustration_delta,
+                                 str(current_frustration), False)
+        except Exception as e:
+            self.logger.warning(f"[Affect] telemetry failed: {e}")
+
         state = AgentState(
             query=search_query,
             original_query=query, 
@@ -1510,13 +1619,43 @@ class ChainOfThoughtRAGAgent:
         # FINAL FALLBACK: CONCEPT TUTORING
         # ---------------------------------------------------------
 
-        # 7. GATEKEEPER CHECK
-        gatekeeper_result = self._check_gatekeeping(
-            state.query, state.intent, state.entities, state.user_id, state.session_id, force_gatekeeper_bypass
-        )
-        if gatekeeper_result:
-            yield {"type": "complete", "data": gatekeeper_result}
-            return
+        # =========================================================
+        # Mastery Classification for response adaptation (must run BEFORE gatekeeper)
+        # =========================================================
+        if state.intent in ["CONCEPT", "PROBLEM"] and state.entities and username:
+            try:
+                level, detail, _ = self._classify_mastery_level(username, state.entities)
+                state.mastery_level = level
+                state.mastery_detail = detail
+                self.logger.info(f"🎯 [MCRA] {username}: {level.upper()} | {detail}")
+            except Exception as e:
+                self.logger.warning(f"[MCRA] Classification failed: {e}")
+
+        # --- Telemetry: response adaptation (mastery level applied to this turn) ---
+        if username and state.intent in ["CONCEPT", "PROBLEM"]:
+            try:
+                from app.core import telemetry
+                concept = state.entities[0] if state.entities else ""
+                telemetry.log_response(username, session_id, concept,
+                                       state.intent, state.mastery_level)
+            except Exception as e:
+                self.logger.warning(f"[MCRA] response telemetry failed: {e}")
+
+        # 7. GATEKEEPER CHECK (reviewing students bypass — they proved mastery)
+        if state.mastery_level != "reviewing":
+            gatekeeper_result = self._check_gatekeeping(
+                state.query, state.intent, state.entities, state.user_id, state.session_id, force_gatekeeper_bypass
+            )
+            if gatekeeper_result:
+                try:
+                    from app.core import telemetry
+                    telemetry.log_event(username, "gatekeeper_block", {
+                        "entities": state.entities, "intent": state.intent,
+                    }, session_id=session_id)
+                except Exception:
+                    pass
+                yield {"type": "complete", "data": gatekeeper_result}
+                return
 
         # =========================================================
         # --- FEATURE 4: SOCRATIC WITHHOLDING ---
@@ -1547,16 +1686,23 @@ class ChainOfThoughtRAGAgent:
             has_bypassed = current_state.get("bypassed_withholding", False)
             is_asking_for_reminder = any(w in state.original_query.lower() for w in ["remind", "forgot", "explain", "don't remember", "help", "how"])
             
-            if is_known and not has_bypassed and not is_asking_for_reminder:
+            if is_known and not has_bypassed and not is_asking_for_reminder and state.mastery_level != "reviewing":
                 msg = f"Wait a minute... my records show you already mastered **{matched_concept}**! 😉\n\n"
                 msg += "Before I just give you the answer, look back at your code or notes. Based on what we learned before, how do *you* think we should approach this?"
                 
                 history_manager.update_session_state(username, session_id, {"bypassed_withholding": True})
-                
+
+                try:
+                    from app.core import telemetry
+                    telemetry.log_event(username, "withholding_fired",
+                                        {"concept": matched_concept}, session_id=session_id)
+                except Exception:
+                    pass
+
                 yield {"type": "complete", "data": {
-                    "answer": msg, 
-                    "sources": [], 
-                    "intent": "GUIDANCE", 
+                    "answer": msg,
+                    "sources": [],
+                    "intent": "GUIDANCE",
                     "suggestions": [f"I completely forgot {matched_concept}, please remind me.", "Oh right, let me try!"]
                 }}
                 return
@@ -1567,8 +1713,14 @@ class ChainOfThoughtRAGAgent:
         # 8. SOCRATIC TUTOR (Standard RAG)
         async for event in self.socratic.process(state):
             if event["type"] == "complete":
-                event["data"]["entities"] = state.entities 
+                event["data"]["entities"] = state.entities
                 event["data"]["intent"] = state.intent
+                # Telemetry: carry the full sensory/state vector to the turn logger
+                event["data"]["_state"] = {
+                    "s_goal": state.s_goal, "c_code": state.c_code,
+                    "m_state": state.m_state, "delta_f": state.delta_f,
+                    "n_strike": state.n_strike, "mastery_level": state.mastery_level,
+                }
                 
                 topic_name = state.entities[0] if state.entities else "the last topic"
                 
@@ -1582,7 +1734,7 @@ class ChainOfThoughtRAGAgent:
                 full_text = event["data"].get("answer", "")
                 import re
                 # Extract challenge question after the "Your Turn!" header
-                match = re.search(r"## Your Turn!.*?\n(.*)", full_text, re.IGNORECASE | re.DOTALL)
+                match = re.search(r"##\s*(?:Your Turn!|Challenge|Quick Check).*?\n(.*)", full_text, re.IGNORECASE | re.DOTALL)
                 extracted_question = match.group(1).strip() if match else ""
                 # Fallback covers both: no match AND match with empty capture (LLM stopped early)
                 if not extracted_question:

@@ -17,7 +17,11 @@ class AgentState(BaseModel):
     delta_f: float = 0.0         # Frustration Trajectory
     n_strike: int = 0            # Off-topic strikes
     # --------------------------------------
-    
+
+    # Mastery-Conditioned Response Adaptation
+    mastery_level: str = "novice"    # novice | developing | proficient | reviewing
+    mastery_detail: str = ""         # BKT summary injected into LLM prompt
+
     # Internal State (Passed between agents)
     intent: Optional[str] = None
     entities: List[str] = []

@@ -89,7 +89,11 @@ class SocraticTutorAgent(BaseAgent):
             style_used = None
         else:
             # Default to Concept Explanation
-            prompt, style_used = self._build_concept_prompt(state.query, context_text, state.user_goal, state.profile, state.original_query, state.entities)
+            prompt, style_used = self._build_concept_prompt(
+                state.query, context_text, state.user_goal, state.profile,
+                state.original_query, state.entities,
+                mastery_level=state.mastery_level, mastery_detail=state.mastery_detail
+            )
 
         # 5. Stream Answer
         yield {"type": "status", "message": "Generating...", "percent": 100}
@@ -212,7 +216,7 @@ class SocraticTutorAgent(BaseAgent):
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())
         except: return ["Tell me more", "Example code", "Challenge: Write it"]
  
-    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = []) -> str:
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "") -> str:
         
         # =========================================================
         # C_style: Few-Shot Personalization Vector
@@ -305,28 +309,126 @@ class SocraticTutorAgent(BaseAgent):
                 style_instruction = "TONE: Spatial and structural. Heavily emphasize the visual layout of memory and execution flow."
             else:
                 style_instruction = "TONE: Standard academic tone, encouraging. Heavily rely on relatable real-world analogies."
-                
-            format_builder = ["**STRICT RESPONSE FORMAT:**\nYou MUST use ONLY the exact Markdown headers (##) requested below."]
-            
-            if prefs.get("show_explanation", True):
-                if is_literal or best_style == "technical":
-                    format_builder.append("## Explanation\n[Clear, literal, technical definition. Min 3 sentences. NO ANALOGIES.]")
-                else:
-                    format_builder.append("## Explanation\n[Clear text explanation. Min 3 sentences. Use relatable real-world analogies.]")
-                
-            if prefs.get("show_use_cases", True):
-                format_builder.append("## Use Cases\n[Explain WHEN and WHY this concept is used in real programming.]")
-                
-            if user_goal:
-                format_builder.append(goal_section)
-                
-            if prefs.get("show_visual_model", True):
-                format_builder.append("## Visual Model\n[Generate a Mermaid.js flowchart explaining the concept.]\n```mermaid\ngraph TD\n   ...\n```")
-                
-            if prefs.get("show_example_code", True):
-                format_builder.append("## Example from Class\n[Reference specific code from text]")
 
-            format_builder.append("## Your Turn! (Micro-Challenge)\n[Write one short, specific challenge question asking the student to write a single line of C code related to this topic. Example format: 'Try it: declare an integer variable called `score`.' Your response must end after this question. Do not add any explanation or answer after it.]")
+            # =========================================================
+            # Mastery-Conditioned Response Adaptation
+            # =========================================================
+            _MASTERY_INSTRUCTIONS = {
+                "novice": (
+                    "MASTERY ADAPTATION (NOVICE — maximum scaffolding): "
+                    "Provide maximum scaffolding. Use simple real-world analogies. "
+                    "Break complex ideas into small steps. Define every technical term before using it. "
+                    "Assume NO prior programming knowledge. Use encouraging, patient language."
+                ),
+                "developing": (
+                    "MASTERY ADAPTATION (DEVELOPING — moderate scaffolding): "
+                    "Do NOT start from absolute zero — the student has some experience. "
+                    "Build on what they already know. Fill knowledge gaps with moderate scaffolding. "
+                    "Use more technical language but still explain non-obvious terms. "
+                    "Reference concepts they have practiced before."
+                ),
+                "proficient": (
+                    "MASTERY ADAPTATION (PROFICIENT — light scaffolding): "
+                    "Do NOT over-explain basics the student already knows. "
+                    "Focus on nuances, edge cases, and advanced patterns. "
+                    "Use precise technical language. Keep explanations focused and efficient. "
+                    "Challenge them with deeper reasoning."
+                ),
+                "reviewing": (
+                    "MASTERY ADAPTATION (REVIEWING — concise refresher): "
+                    "This student previously mastered this concept and is refreshing. "
+                    "Do NOT re-teach from scratch. Provide a concise refresher of key points. "
+                    "Focus on common gotchas and subtle edge cases. "
+                    "Frame as 'remember that...' not 'let me explain...'. "
+                    "Keep it brief — they need recall triggers, not full instruction."
+                ),
+            }
+            style_instruction += "\n\n" + _MASTERY_INSTRUCTIONS.get(mastery_level, _MASTERY_INSTRUCTIONS["novice"])
+
+            # Explicit mastery label for LLM context
+            if mastery_detail:
+                style_instruction += f"\n\nStudent's Mastery Level: {mastery_level.upper()} — {mastery_detail}"
+            else:
+                style_instruction += f"\n\nStudent's Mastery Level: {mastery_level.upper()}"
+            # =========================================================
+
+            format_builder = ["**STRICT RESPONSE FORMAT:**\nYou MUST use ONLY the exact Markdown headers (##) requested below."]
+
+            if mastery_level == "reviewing":
+                # Reviewing: compact 2-section format — refresher + quick check
+                format_builder.append(
+                    "## Refresher\n"
+                    "[Concise refresher of this concept's key points, common gotchas, "
+                    "and subtle edge cases. Use 'remember that...' framing. "
+                    "Include a short code snippet ONLY if it highlights a tricky detail. "
+                    "3-6 sentences max.]"
+                )
+            elif mastery_level == "proficient":
+                # Proficient: focused 3-section format — explanation + example + challenge
+                format_builder.append(
+                    "## Explanation\n"
+                    "[Focus on nuances, edge cases, and advanced patterns. "
+                    "Skip basic definitions — go straight to what's interesting. "
+                    "3-5 sentences.]"
+                )
+                if prefs.get("show_example_code", True):
+                    format_builder.append(
+                        "## Example\n"
+                        "[Show an intermediate-to-advanced code example that demonstrates "
+                        "edge cases or non-obvious behavior. Include brief inline comments.]"
+                    )
+            else:
+                # Novice / Developing: full section format
+                if prefs.get("show_explanation", True):
+                    if is_literal or best_style == "technical":
+                        format_builder.append("## Explanation\n[Clear, literal, technical definition. Min 3 sentences. NO ANALOGIES.]")
+                    else:
+                        format_builder.append("## Explanation\n[Clear text explanation. Min 3 sentences. Use relatable real-world analogies.]")
+
+                if prefs.get("show_use_cases", True):
+                    format_builder.append("## Use Cases\n[Explain WHEN and WHY this concept is used in real programming.]")
+
+                if user_goal:
+                    format_builder.append(goal_section)
+
+                if prefs.get("show_visual_model", True):
+                    format_builder.append("## Visual Model\n[Generate a Mermaid.js flowchart explaining the concept.]\n```mermaid\ngraph TD\n   ...\n```")
+
+                if prefs.get("show_example_code", True):
+                    format_builder.append("## Example from Class\n[Reference specific code from text]")
+
+            # Mastery-adapted challenge section
+            _MASTERY_CHALLENGES = {
+                "novice": (
+                    "## Your Turn! (Micro-Challenge)\n"
+                    "[Write one short, simple challenge question asking the student to write "
+                    "a single line of C code related to this topic. Keep it very guided — "
+                    "tell them exactly what to declare or print. "
+                    "Example format: 'Try it: declare an integer variable called `score`.' "
+                    "Your response must end after this question. Do not add any explanation or answer after it.]"
+                ),
+                "developing": (
+                    "## Challenge\n"
+                    "[Write a moderate challenge question. The student has some experience — "
+                    "ask them to combine 2 concepts or write a small snippet (2-4 lines). "
+                    "Do not give the answer. Your response must end after this question.]"
+                ),
+                "proficient": (
+                    "## Challenge\n"
+                    "[Write an advanced challenge involving edge cases, subtle bugs, or "
+                    "tricky behavior. Assume the student is comfortable with syntax. "
+                    "Ask them to predict output, find a bug, or handle a corner case. "
+                    "Do not give the answer. Your response must end after this question.]"
+                ),
+                "reviewing": (
+                    "## Quick Check\n"
+                    "[Write a quick retention-check question. Since the student previously "
+                    "mastered this, ask them to recall a key rule, predict behavior, or "
+                    "spot a common mistake. Keep it brief. "
+                    "Do not give the answer. Your response must end after this question.]"
+                ),
+            }
+            format_builder.append(_MASTERY_CHALLENGES.get(mastery_level, _MASTERY_CHALLENGES["novice"]))
             
             format_rules = "\n\n".join(format_builder)
 

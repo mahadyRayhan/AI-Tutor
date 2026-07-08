@@ -5,6 +5,41 @@ let activeChallenge = null;
 let globalPendingChallenges = [];
 let currentTTSAudio = null;
 
+// --- TELEMETRY (Productive Struggle — Contribution 2) ---
+let lastAiResponseAt = null;     // timestamp when AI finished responding
+let dwellLoggedForTurn = false;  // ensure one dwell sample per AI turn
+
+function logBehavior(event, value) {
+    if (!currentUser) return;
+    try {
+        fetch(`${API_URL}/api/v1/telemetry/behavior`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: currentUser.username,
+                session_id: currentSessionId,
+                event: event,
+                value: value != null ? String(value) : null
+            }),
+            keepalive: true
+        }).catch(() => {});
+    } catch (e) { /* telemetry must never break the UI */ }
+}
+
+// Dwell time = seconds from AI finishing its message to the student's first keystroke.
+function markAiResponded() {
+    lastAiResponseAt = Date.now();
+    dwellLoggedForTurn = false;
+}
+
+function captureDwellOnFirstKeystroke() {
+    if (lastAiResponseAt && !dwellLoggedForTurn) {
+        const dwellSec = (Date.now() - lastAiResponseAt) / 1000;
+        logBehavior('dwell', dwellSec.toFixed(2));
+        dwellLoggedForTurn = true;
+    }
+}
+
 // --- 1. GLOBAL FUNCTIONS (So buttons can find them) ---
 window.startTopic = function (text) {
     document.getElementById('userInput').value = text;
@@ -54,6 +89,9 @@ function addFeedbackButtons(container, originalQuery) {
 
             // If it's a THUMBS DOWN, show the text box
             if (act.id === 'down') {
+                // Telemetry: capture the dissatisfaction click IMMEDIATELY,
+                // even if the student never submits a written reason.
+                logBehavior('thumbs_down_click', originalQuery);
                 // Prevent duplicate boxes if clicked multiple times
                 if (container.querySelector('.feedback-text-box')) return;
 
@@ -354,6 +392,9 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             addFeedbackButtons(botDiv, rawText);
             addSpeakButton(botDiv, data.data.answer);
             loadChatHistory();
+
+            // Telemetry: AI finished — start the dwell-time clock for the next reply
+            markAiResponded();
 
             if (data.data.warmup_topic) {
                 const topicSpan = document.getElementById('warmupTopicName');
@@ -680,7 +721,20 @@ function initializeApp() {
         if (initialSug) initialSug.style.display = 'none';
         document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
 
-        if (initialMsg.startsWith('[START_TOPIC]')) {
+        if (initialMsg.startsWith('[SOLVE_PRELAB]')) {
+            // Handoff from the classroom: solve a prelab problem in guided mode.
+            const problem = initialMsg.replace('[SOLVE_PRELAB]', '').trim();
+
+            // Show the problem as the user's message
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.innerHTML = `<div class="msg-sender">You</div>` + problem;
+            document.getElementById('messages').appendChild(userDiv);
+            scrollToBottom();
+
+            // Send the clean problem text → classifies as PROBLEM → guided complex-problem mode
+            setTimeout(() => window.sendMessage(problem, true), 50);
+        } else if (initialMsg.startsWith('[START_TOPIC]')) {
             // Extract concept and goal
             const match = initialMsg.match(/\[START_TOPIC\]\s+(.*?)\s+\[GOAL\]\s+(.*)/);
             if (match) {
@@ -860,6 +914,8 @@ function injectCopyButtons(container) {
 
         // 4. Click Event to Copy Text
         copyBtn.onclick = () => {
+            // Telemetry: log copy-code click (productive struggle metric)
+            logBehavior('copy_code', codeBlock.innerText.length);
             // Copy to clipboard
             navigator.clipboard.writeText(codeBlock.innerText).then(() => {
                 // Success UI Update
@@ -1121,6 +1177,73 @@ let classroomVideoData = []; // Cached video list for reference
 let classroomChatMessages = [];
 let classroomSessionId = null; // Persists across Q&A for the same video
 
+// ── Classroom engagement / checkpoint / prelab state ──
+let crCheckpoints = [];
+let crAnswered = new Set();
+let crActiveCheckpoint = null;
+let crDuration = 0;
+let crWatchedSec = 0;
+let crLastTimeUpdate = null;
+let crHiddenSec = 0;
+let crTabHiddenAt = null;
+let crMcqShownAt = null;
+let crMcqAttempts = 0;
+let crIntentionGiven = false;
+let crPrelabProblems = [];
+let crEndSequenceShown = false;
+let crCoverageTimer = null;
+let crCpSelected = null;
+let crCpConfidence = 3;
+let crPrelabChosen = null;
+
+function crUser() { return currentUser ? currentUser.username : 'anonymous'; }
+
+function crLogEngagement(event, position, detail) {
+    if (!currentUser || !classroomVideoFilename) return;
+    fetch('/api/v1/video/engagement', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+        body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename,
+            event: event, position_sec: position, detail: detail || null })
+    }).catch(() => {});
+}
+
+function crPostCoverage() {
+    if (!currentUser || !classroomVideoFilename || !crDuration) return;
+    fetch('/api/v1/video/coverage', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+        body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename,
+            duration_sec: crDuration, watched_sec: crWatchedSec, hidden_sec: crHiddenSec })
+    }).catch(() => {});
+}
+
+async function crLoadCheckpoints(filename) {
+    try {
+        const r = await fetch(`/api/v1/video/checkpoints/${encodeURIComponent(filename)}`);
+        const d = await r.json();
+        crCheckpoints = d.checkpoints || [];
+        console.log(`[classroom] loaded ${crCheckpoints.length} checkpoints`);
+    } catch (e) { console.error('checkpoint load failed', e); crCheckpoints = []; }
+    try {
+        const r2 = await fetch(`/api/v1/video/prelab/${encodeURIComponent(filename)}`);
+        const d2 = await r2.json();
+        crPrelabProblems = d2.problems || [];
+    } catch (e) { crPrelabProblems = []; }
+}
+
+function crPendingCheckpointAt(time) {
+    for (const cp of crCheckpoints) {
+        if (cp.checkpoint_time <= time && !crAnswered.has(cp.checkpoint_time)) return cp;
+    }
+    return null;
+}
+
+function crEnforceCheckpoints() {
+    if (crActiveCheckpoint) return;
+    const videoEl = document.getElementById('classroomVideo');
+    const cp = crPendingCheckpointAt(videoEl.currentTime);
+    if (cp) { videoEl.pause(); crShowCheckpointModal(cp); }
+}
+
 // Topic → emoji mapping for cards
 const TOPIC_ICONS = {
     'Variables': '📦',
@@ -1220,26 +1343,49 @@ function onClassroomVideoSelect(filename, title) {
     classroomIsPaused = false;
     classroomChatMessages = [];
     classroomSessionId = null; // New video = new session
-    
+
+    // Reset engagement / checkpoint state
+    crCheckpoints = [];
+    crAnswered = new Set();
+    crActiveCheckpoint = null;
+    crWatchedSec = 0;
+    crHiddenSec = 0;
+    crLastTimeUpdate = null;
+    crIntentionGiven = false;
+    crPrelabProblems = [];
+    crEndSequenceShown = false;
+    crDuration = 0;
+
     // Show player, hide picker
     document.getElementById('classroomPicker').style.display = 'none';
     document.getElementById('classroomPlayer').style.display = 'flex';
-    
+
     // Set active title
     const displayTitle = title || filename.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
     document.getElementById('classroomActiveTitle').textContent = displayTitle;
-    
+
     const welcome = document.getElementById('classroomWelcome');
     if (welcome) welcome.style.display = 'flex';
     renderClassroomMessages();
     updateClassroomTimeBadge(0);
     updateClassroomTranscriptStatus('ready');
-    
+
     // Bind video events
     videoEl.onpause = onClassroomPause;
     videoEl.onplay = onClassroomPlay;
     videoEl.ontimeupdate = onClassroomTimeUpdate;
-    
+    videoEl.onseeking = onClassroomSeeking;
+    videoEl.onended = onClassroomEnded;
+    videoEl.onvolumechange = onClassroomVolumeChange;
+    videoEl.onloadeddata = () => { crDuration = videoEl.duration || 0; };
+
+    // Attention + coverage flush
+    if (!crCoverageTimer) crCoverageTimer = setInterval(crPostCoverage, 30000);
+    document.addEventListener('visibilitychange', onClassroomVisibility);
+
+    // Load checkpoints + prelab problems for this video
+    crLoadCheckpoints(filename);
+
     // Load synced transcript panel
     loadTranscriptPanel(filename);
 }
@@ -1262,26 +1408,94 @@ function onClassroomPause() {
     const videoEl = document.getElementById('classroomVideo');
     classroomTimestamp = videoEl.currentTime;
     updateClassroomTimeBadge(classroomTimestamp);
-    
+
     const hint = document.getElementById('classroomPausedHint');
     if (hint) hint.classList.add('visible');
-    
+
+    if (!crActiveCheckpoint) crLogEngagement('pause', classroomTimestamp);
+    crPostCoverage();
+
     setTimeout(() => document.getElementById('classroomChatInput').focus(), 100);
 }
 
 function onClassroomPlay() {
+    const videoEl = document.getElementById('classroomVideo');
+    // SRL gate: capture a learning intention before the first play
+    if (!crIntentionGiven) {
+        videoEl.pause();
+        crShowIntentionModal();
+        return;
+    }
+    // Block resuming while a checkpoint is pending
+    if (crActiveCheckpoint) { videoEl.pause(); return; }
+
     classroomIsPaused = false;
+    crLastTimeUpdate = videoEl.currentTime;
     const hint = document.getElementById('classroomPausedHint');
     if (hint) hint.classList.remove('visible');
+    crLogEngagement('play', videoEl.currentTime);
 }
 
 function onClassroomTimeUpdate() {
-    const currentTime = document.getElementById('classroomVideo').currentTime;
+    const videoEl = document.getElementById('classroomVideo');
+    const currentTime = videoEl.currentTime;
     if (!classroomIsPaused) {
         classroomTimestamp = currentTime;
     }
+    // Accumulate genuine watch time (ignore seek jumps)
+    if (!videoEl.paused && crLastTimeUpdate !== null) {
+        const dt = currentTime - crLastTimeUpdate;
+        if (dt > 0 && dt < 1.5) crWatchedSec += dt;
+    }
+    crLastTimeUpdate = currentTime;
+
+    // Enforce pending checkpoints reached by normal playback
+    crEnforceCheckpoints();
+
+    // Robust end-of-video trigger at ~97% (even if scrubbed)
+    if (crDuration && currentTime >= crDuration * 0.97) crTriggerEndSequence();
+
     // Sync transcript highlight
     syncTranscriptHighlight(currentTime);
+}
+
+function onClassroomSeeking() {
+    const videoEl = document.getElementById('classroomVideo');
+    crLogEngagement('seek', videoEl.currentTime);
+    crEnforceCheckpoints();  // force any un-answered checkpoint before the seek target
+}
+
+function onClassroomEnded() {
+    const videoEl = document.getElementById('classroomVideo');
+    crLogEngagement('ended', videoEl.currentTime);
+    crPostCoverage();
+    crTriggerEndSequence();
+}
+
+function onClassroomVolumeChange() {
+    const videoEl = document.getElementById('classroomVideo');
+    crLogEngagement(videoEl.muted || videoEl.volume === 0 ? 'mute' : 'unmute', videoEl.currentTime);
+}
+
+function onClassroomVisibility() {
+    if (currentView !== 'classroom') return;
+    const videoEl = document.getElementById('classroomVideo');
+    if (document.hidden) {
+        crTabHiddenAt = Date.now();
+        if (videoEl && !videoEl.paused) crLogEngagement('tab_hidden', videoEl.currentTime, 'playing');
+    } else {
+        if (crTabHiddenAt) { crHiddenSec += (Date.now() - crTabHiddenAt) / 1000; crTabHiddenAt = null; }
+        if (videoEl) crLogEngagement('tab_visible', videoEl.currentTime);
+    }
+}
+
+function crTriggerEndSequence() {
+    if (crEndSequenceShown || crActiveCheckpoint) return;
+    const videoEl = document.getElementById('classroomVideo');
+    const pending = crPendingCheckpointAt(crDuration || videoEl.duration || 1e9);
+    if (pending) { videoEl.pause(); crShowCheckpointModal(pending); return; }
+    crEndSequenceShown = true;
+    crShowReflectionModal();
 }
 
 function updateClassroomTimeBadge(seconds) {
@@ -1290,6 +1504,183 @@ function updateClassroomTimeBadge(seconds) {
     const str = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     const badge = document.getElementById('classroomTimeBadge');
     if (badge) badge.textContent = `0:00 – ${str}`;
+}
+
+// ═══ CLASSROOM CHECKPOINT MCQ (non-skippable) ═══
+function crShowCheckpointModal(cp) {
+    crActiveCheckpoint = cp;
+    crMcqShownAt = Date.now();
+    crMcqAttempts = 0;
+    crCpSelected = null;
+    crCpConfidence = 3;
+
+    const body = document.getElementById('crCheckpointBody');
+    const mins = Math.floor(cp.checkpoint_time / 60);
+    const optsHtml = cp.options.map((opt, i) =>
+        `<button class="cp-option" data-index="${i}" onclick="crSelectOption(${i})">
+            <span class="cp-letter">${String.fromCharCode(65 + i)}</span> ${escapeHtmlCr(opt)}
+         </button>`).join('');
+
+    body.innerHTML = `
+        <div class="cp-badge">⏸️ Checkpoint · ${mins} min</div>
+        <p class="cp-instruction">Answer to continue — you can't skip this.</p>
+        <div class="cp-confidence"><span>How confident are you?</span>
+            <div class="cp-conf-btns">
+                ${[1,2,3,4,5].map(n => `<button class="cp-conf" data-c="${n}" onclick="crSetConfidence(${n})">${n}</button>`).join('')}
+            </div></div>
+        <div class="cp-question">${escapeHtmlCr(cp.question)}</div>
+        <div class="cp-options">${optsHtml}</div>
+        <div class="cp-feedback" id="crCpFeedback"></div>
+        <button class="cp-submit" id="crCpSubmit" onclick="crSubmitCheckpoint()" disabled>Submit Answer</button>`;
+    document.getElementById('crCheckpointModal').classList.add('visible');
+}
+
+function crSelectOption(i) {
+    crCpSelected = i;
+    document.querySelectorAll('#crCheckpointModal .cp-option').forEach(b =>
+        b.classList.toggle('selected', parseInt(b.dataset.index) === i));
+    document.getElementById('crCpSubmit').disabled = false;
+}
+
+function crSetConfidence(n) {
+    crCpConfidence = n;
+    document.querySelectorAll('#crCheckpointModal .cp-conf').forEach(b =>
+        b.classList.toggle('selected', parseInt(b.dataset.c) === n));
+}
+
+async function crSubmitCheckpoint() {
+    if (crCpSelected === null || !crActiveCheckpoint) return;
+    crMcqAttempts += 1;
+    const submitBtn = document.getElementById('crCpSubmit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Checking...';
+    const tta = crMcqShownAt ? (Date.now() - crMcqShownAt) / 1000 : null;
+    try {
+        const resp = await fetch('/api/v1/video/checkpoint/answer', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: crUser(), video_filename: classroomVideoFilename,
+                checkpoint_time: crActiveCheckpoint.checkpoint_time, selected_index: crCpSelected,
+                confidence: crCpConfidence, time_to_answer_sec: tta, attempts: crMcqAttempts })
+        });
+        const data = await resp.json();
+        const fb = document.getElementById('crCpFeedback');
+        if (data.is_correct) {
+            fb.innerHTML = `<div class="cp-correct">✅ Correct! ${escapeHtmlCr(data.explanation || '')}</div>`;
+            crAnswered.add(crActiveCheckpoint.checkpoint_time);
+            submitBtn.textContent = 'Continue ▶';
+            submitBtn.disabled = false;
+            submitBtn.onclick = crCloseCheckpointAndResume;
+        } else {
+            fb.innerHTML = `<div class="cp-wrong">❌ Not quite — review and try again.</div>`;
+            submitBtn.textContent = 'Submit Answer';
+            submitBtn.disabled = true;
+            crCpSelected = null;
+            document.querySelectorAll('#crCheckpointModal .cp-option').forEach(b => b.classList.remove('selected'));
+        }
+    } catch (e) {
+        console.error('checkpoint submit failed', e);
+        submitBtn.textContent = 'Submit Answer'; submitBtn.disabled = false;
+    }
+}
+
+function crCloseCheckpointAndResume() {
+    document.getElementById('crCheckpointModal').classList.remove('visible');
+    crActiveCheckpoint = null;
+    const videoEl = document.getElementById('classroomVideo');
+    crLastTimeUpdate = videoEl.currentTime;
+    const nearEnd = crDuration && videoEl.currentTime >= crDuration * 0.97;
+    document.getElementById('crCpSubmit') && (document.getElementById('crCpSubmit').onclick = crSubmitCheckpoint);
+    if (videoEl.ended || nearEnd) {
+        crEndSequenceShown = true;
+        crShowReflectionModal();
+    } else {
+        videoEl.play().catch(() => {});
+    }
+}
+
+// ═══ CLASSROOM SRL: intention (pre) + reflection (post) ═══
+function crShowIntentionModal() {
+    const modal = document.getElementById('crIntentionModal');
+    if (!modal) { crIntentionGiven = true; return; }
+    modal.classList.add('visible');
+    setTimeout(() => { const i = document.getElementById('crIntentionInput'); if (i) i.focus(); }, 100);
+}
+
+function crSubmitIntention() {
+    const val = (document.getElementById('crIntentionInput').value || '').trim();
+    if (currentUser && val) {
+        fetch('/api/v1/video/reflection', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename,
+                phase: 'intention', prompt: 'What do you want to learn from this video?', response: val }) }).catch(() => {});
+    }
+    crIntentionGiven = true;
+    document.getElementById('crIntentionModal').classList.remove('visible');
+    document.getElementById('classroomVideo').play().catch(() => {});
+}
+
+function crSkipIntention() {
+    crIntentionGiven = true;
+    document.getElementById('crIntentionModal').classList.remove('visible');
+    document.getElementById('classroomVideo').play().catch(() => {});
+}
+
+function crShowReflectionModal() {
+    const modal = document.getElementById('crReflectionModal');
+    if (!modal) { crShowPrelabModal(); return; }
+    modal.classList.add('visible');
+    setTimeout(() => { const i = document.getElementById('crReflectionInput'); if (i) i.focus(); }, 100);
+}
+
+function crSubmitReflection() {
+    const val = (document.getElementById('crReflectionInput').value || '').trim();
+    if (currentUser && val) {
+        fetch('/api/v1/video/reflection', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename,
+                phase: 'reflection', prompt: 'What was your key takeaway?', response: val }) }).catch(() => {});
+    }
+    document.getElementById('crReflectionModal').classList.remove('visible');
+    crShowPrelabModal();
+}
+
+// ═══ CLASSROOM END-OF-VIDEO COMPLEX PROBLEM (PRELAB) ═══
+function crShowPrelabModal() {
+    if (!crPrelabProblems || crPrelabProblems.length === 0) return;
+    const modal = document.getElementById('crPrelabModal');
+    const body = document.getElementById('crPrelabBody');
+    if (!modal || !body) return;
+    const idx = Math.floor(Math.random() * crPrelabProblems.length);
+    crPrelabChosen = crPrelabProblems[idx];
+    body.innerHTML = `
+        <p class="cp-instruction">You've finished the lecture — ready to apply it? Try this challenge.</p>
+        <div class="cp-question">${escapeHtmlCr(crPrelabChosen)}</div>
+        <div class="prelab-actions">
+            <button class="cp-skip" onclick="crDismissPrelab()">Maybe later</button>
+            <button class="cp-submit-inline" onclick="crSolveInSage()">🚀 Solve in SAGE</button>
+        </div>
+        ${crPrelabProblems.length > 1 ? `<button class="prelab-shuffle" onclick="crShowPrelabModal()">↻ Show a different problem</button>` : ''}`;
+    modal.classList.add('visible');
+}
+
+function crDismissPrelab() {
+    document.getElementById('crPrelabModal').classList.remove('visible');
+}
+
+function crSolveInSage() {
+    const problem = crPrelabChosen;
+    if (!problem) return;
+    if (currentUser) {
+        fetch('/api/v1/video/prelab-start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+            body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename, problem: problem }) }).catch(() => {});
+    }
+    // Switch to the chat view and send the problem as a guided complex problem
+    document.getElementById('crPrelabModal').classList.remove('visible');
+    switchToChat();
+    const userDiv = document.createElement('div');
+    userDiv.className = 'message user';
+    userDiv.innerHTML = `<div class="msg-sender">You</div>` + problem;
+    document.getElementById('messages').appendChild(userDiv);
+    scrollToBottom();
+    setTimeout(() => window.sendMessage(problem, true), 50);
 }
 
 // ═══ SYNCED TRANSCRIPT PANEL ═══
@@ -1431,9 +1822,15 @@ function toggleTranscriptPanel() {
 (function() {
     let scrollTimeout;
     document.addEventListener('DOMContentLoaded', () => {
+        // Telemetry: capture dwell time on the student's first keystroke after an AI reply
+        const userInputEl = document.getElementById('userInput');
+        if (userInputEl) {
+            userInputEl.addEventListener('input', captureDwellOnFirstKeystroke);
+        }
+
         const segContainer = document.getElementById('transcriptSegments');
         if (!segContainer) return;
-        
+
         segContainer.addEventListener('scroll', () => {
             // User is manually scrolling — pause auto-scroll
             transcriptAutoScroll = false;

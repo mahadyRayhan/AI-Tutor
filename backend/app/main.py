@@ -1,5 +1,6 @@
 # backend/app/main.py
 import os
+import asyncio
 import shutil
 import subprocess
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form 
@@ -35,7 +36,7 @@ from app.core.history_manager import history_manager
 from app.core.user_knowledge_manager import knowledge_manager
 from app.core.assignment_manager import assignment_manager
 from app.db.sqlite_db import db
-from app.services.video_service import transcribe_video, get_transcript_until, list_available_videos, get_or_generate_video_meta, find_timestamp_hints
+from app.services.video_service import transcribe_video, get_transcript_until, list_available_videos, get_or_generate_video_meta, find_timestamp_hints, generate_checkpoints, get_video_duration_from_transcript
 
 app = FastAPI(title="C Programming Tutor API", version="2.0.0")
 
@@ -381,7 +382,8 @@ async def chat_stream(request: ChatRequest):
         full_bot_response = ""
         final_sources = []
         style_used_for_session = None
-        
+        _turn_start = time.time()
+
         try:
             if not cot_rag_agent:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
@@ -470,6 +472,48 @@ async def chat_stream(request: ChatRequest):
                                     logger.info(f"🏆 [BKT] Mastery confirmed: '{detected_topic}'")
                     except Exception as analytics_err:
                         logger.error(f"Analytics logging failed: {analytics_err}")
+
+                    # --- Telemetry: full turn record + session + path deviation ---
+                    try:
+                        from app.core import telemetry
+                        _state = final_data.get("_state") or {}
+                        _was_blocked = "_state" not in final_data
+                        telemetry.touch_session(request.username, session_id)
+                        telemetry.log_turn(
+                            username=request.username,
+                            session_id=session_id,
+                            turn_index=(db.fetch_one(
+                                "SELECT turn_count c FROM session_log WHERE session_id=?",
+                                (session_id,)) or {"c": 0})["c"],
+                            query_text=request.message,
+                            response_text=full_bot_response,
+                            intent=final_data.get("intent", ""),
+                            entities=raw_entities,
+                            topic=detected_topic,
+                            mastery_level=_state.get("mastery_level", ""),
+                            s_goal=_state.get("s_goal"),
+                            c_code=_state.get("c_code"),
+                            m_state=_state.get("m_state"),
+                            delta_f=_state.get("delta_f"),
+                            n_strike=_state.get("n_strike"),
+                            n_sources=len(final_sources),
+                            latency_ms=int((time.time() - _turn_start) * 1000),
+                            was_blocked=_was_blocked,
+                            block_reason=(final_data.get("intent") if _was_blocked else None),
+                        )
+                        # Path deviation (Forethought / SRL) using cached learning path
+                        if detected_topic and detected_topic != "General":
+                            _goal = knowledge_manager.get_goal(request.username)
+                            _cache_key = f"{request.username}_{_goal}"
+                            _cached = LEARNING_PATH_CACHE.get(_cache_key) or {}
+                            _path = _cached.get("path") if isinstance(_cached, dict) else None
+                            _dev, _expected = telemetry.classify_path_deviation(_path or [], detected_topic)
+                            telemetry.log_path_event(request.username, detected_topic,
+                                                     _expected, _dev, _goal)
+                        # Strip internal telemetry key before sending to client
+                        final_data.pop("_state", None)
+                    except Exception as tele_err:
+                        logger.warning(f"Turn telemetry failed: {tele_err}")
 
                     # Classroom video suggestion for CONCEPT responses
                     if final_data.get('intent') == 'CONCEPT' and detected_topic != 'General':
@@ -1112,6 +1156,99 @@ async def get_teacher_detailed_analytics(page: int = 1, page_size: int = 10):
         "pages": (total_records + page_size - 1) // page_size if page_size > 0 else 1
     }
 
+@app.get("/api/v1/analytics/teacher/risk_matrix")
+async def get_risk_matrix(days: int = 14):
+    """
+    Risk Matrix (Action 5): flags students by HIGH FRUSTRATION + LOW MASTERY using
+    the affect_log (frustration trajectory) and BKT mastery telemetry.
+    Returns students sorted most-at-risk first so the instructor can intervene.
+    """
+    from datetime import timedelta
+    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+    students = [r["username"] for r in
+                db.fetch_all("SELECT username FROM users WHERE role = 'student'")]
+
+    matrix = []
+    for idx, student in enumerate(sorted(students)):
+        # --- Frustration signal (affect_log, recent window) ---
+        aff = db.fetch_one(
+            "SELECT AVG(delta_f) avg_df, MAX(delta_f) max_df, COUNT(*) n, "
+            "SUM(CASE WHEN LOWER(frustration_level) LIKE '%rage%' THEN 1 ELSE 0 END) rage, "
+            "SUM(CASE WHEN intervention_fired=1 THEN 1 ELSE 0 END) interventions "
+            "FROM affect_log WHERE username=? AND ts_utc >= ?",
+            (student, since),
+        )
+        avg_df = (aff["avg_df"] or 0.0) if aff else 0.0
+        max_df = (aff["max_df"] or 0.0) if aff else 0.0
+        n_turns = (aff["n"] or 0) if aff else 0
+        rage_events = (aff["rage"] or 0) if aff else 0
+        interventions = (aff["interventions"] or 0) if aff else 0
+
+        # --- Mastery signal (user_knowledge composite) ---
+        mk = db.fetch_one(
+            "SELECT AVG(p_mastery) avg_m, COUNT(*) n_concepts, "
+            "SUM(CASE WHEN ever_certified=1 THEN 1 ELSE 0 END) n_cert "
+            "FROM user_knowledge WHERE username=?",
+            (student,),
+        )
+        avg_mastery = (mk["avg_m"] or 0.0) if mk else 0.0
+        n_concepts = (mk["n_concepts"] or 0) if mk else 0
+        n_cert = (mk["n_cert"] or 0) if mk else 0
+        # Normalize composite (ceiling ≈ 0.95) to 0–1
+        mastery_norm = min(avg_mastery / 0.95, 1.0) if avg_mastery else 0.0
+
+        # --- Risk scoring (0–100, higher = more at risk) ---
+        frustration_component = min(50.0, rage_events * 15 + max(0.0, avg_df) * 120 + max(0.0, max_df) * 30)
+        low_mastery_component = (1.0 - mastery_norm) * 50.0 if n_concepts > 0 else 0.0
+        risk_score = round(frustration_component + low_mastery_component, 1)
+
+        high_frustration = rage_events > 0 or avg_df > 0.1
+        low_mastery = n_concepts > 0 and mastery_norm < 0.35
+
+        # --- Tier + human-readable reason ---
+        if n_turns == 0 and n_concepts == 0:
+            tier, reason = "No Data", "No activity yet"
+        elif high_frustration and low_mastery:
+            tier = "Critical"
+            reason = f"High frustration ({rage_events} rage) + low mastery ({mastery_norm*100:.0f}%)"
+        elif risk_score >= 50:
+            tier = "High"
+            reason = ("Frustration elevated" if high_frustration
+                      else f"Low mastery ({mastery_norm*100:.0f}%)")
+        elif risk_score >= 30:
+            tier = "Watch"
+            reason = "Mild frustration or slow progress"
+        else:
+            tier = "OK"
+            reason = "Engaged, progressing"
+
+        matrix.append({
+            "display_id": f"Student_{idx+1:02d}",
+            "hidden_username": student,
+            "risk_tier": tier,
+            "risk_score": risk_score,
+            "risk_reason": reason,
+            "avg_frustration": round(avg_df, 3),
+            "rage_events": rage_events,
+            "interventions": interventions,
+            "avg_mastery_pct": round(mastery_norm * 100, 1),
+            "concepts_touched": n_concepts,
+            "concepts_certified": n_cert,
+            "turns": n_turns,
+        })
+
+    # Most-at-risk first
+    matrix.sort(key=lambda x: x["risk_score"], reverse=True)
+    summary = {
+        "critical": sum(1 for m in matrix if m["risk_tier"] == "Critical"),
+        "high": sum(1 for m in matrix if m["risk_tier"] == "High"),
+        "watch": sum(1 for m in matrix if m["risk_tier"] == "Watch"),
+        "window_days": days,
+    }
+    return {"items": matrix, "summary": summary}
+
+
 @app.get("/api/v1/analytics/student_detail/{username}")
 async def get_student_detail_view(username: str):
     """
@@ -1181,8 +1318,21 @@ async def set_user_goal(req: GoalRequest):
         )
         
     from app.core.user_knowledge_manager import knowledge_manager
+    # Capture the prior goal so we can tell "first set" from "revision" (Forethought signal)
+    prior_goal = knowledge_manager.get_goal(req.username)
     knowledge_manager.set_goal(req.username, req.goal)
-    
+
+    # --- Telemetry: goal-set / goal-revision event (SRL Forethought) ---
+    try:
+        from app.core import telemetry
+        telemetry.log_event(req.username, "goal_set", {
+            "goal": req.goal,
+            "prior_goal": prior_goal,
+            "is_revision": bool(prior_goal and prior_goal != req.goal),
+        })
+    except Exception as e:
+        logger.warning(f"Goal telemetry failed: {e}")
+
     # Invalidate cache when the goal updates
     LEARNING_PATH_CACHE.pop(req.username, None)
     return {"status": "success", "goal": req.goal}
@@ -1197,6 +1347,105 @@ async def reset_user_knowledge(req: ResetKnowledgeRequest):
     knowledge_manager.clear_concepts(req.username)
     return {"status": "success", "message": f"Cleared all mastery for {req.username}"}
 
+
+# ── SRL-BKT Calibration Loop Endpoints ──────────────────────────────────────
+
+class SelfAssessmentRequest(BaseModel):
+    username: str
+    concept: str
+    tier: str
+    self_assessment: float
+
+@app.get("/api/v1/mastery/{username}/{concept}")
+async def get_mastery_detail(username: str, concept: str):
+    """Return per-tier mastery breakdown with BKT, self-assessment, and effective scores."""
+    from app.core.bkt_model import bkt, EVIDENCE_CONFIG, _read_row, _apply_decay, _parse_ts, _TS_COL, _LAM_COL
+    from app.core.srl_calibration import get_self_assessment
+
+    row = _read_row(username, concept)
+    if not row:
+        return {
+            "concept": concept,
+            "tiers": {t: {"p_bkt": 0.0, "p_self": None, "p_effective": 0.0,
+                          "n_evidence": 0, "adapted_P_G": None}
+                      for t in ("quiz", "micro", "code")},
+            "composite_effective": 0.0,
+            "is_certified": False,
+            "ever_certified": False,
+        }
+
+    effective = bkt.get_effective_mastery(username, concept)
+    tiers = {}
+    for tier in ("quiz", "micro", "code"):
+        p_raw = row[EVIDENCE_CONFIG[tier]["col"]] or EVIDENCE_CONFIG[tier]["P_L0"]
+        p_bkt = _apply_decay(p_raw, tier, _parse_ts(row[_TS_COL[tier]]), lam=row[_LAM_COL[tier]])
+        cal = get_self_assessment(username, concept, tier)
+        tiers[tier] = {
+            "p_bkt": round(p_bkt, 4),
+            "p_self": cal["self_assessment"] if cal else None,
+            "p_effective": effective[tier],
+            "n_evidence": row[f"n_evidence_{tier}"] or 0,
+            "adapted_P_G": cal["adapted_P_G"] if cal else None,
+        }
+
+    return {
+        "concept": concept,
+        "tiers": tiers,
+        "composite_effective": effective["composite"],
+        "is_certified": bool(row["is_certified"]),
+        "ever_certified": bool(row["ever_certified"]),
+    }
+
+
+@app.post("/api/v1/mastery/self-assess")
+async def submit_self_assessment(req: SelfAssessmentRequest):
+    """Student adjusts mastery for a specific tier (downward-only)."""
+    from app.core.bkt_model import EVIDENCE_CONFIG, _read_row, _apply_decay, _parse_ts, _TS_COL, _LAM_COL
+    from app.core.srl_calibration import record_self_assessment
+
+    if req.tier not in ("quiz", "micro", "code"):
+        raise HTTPException(status_code=400, detail=f"Invalid tier: {req.tier}")
+
+    row = _read_row(req.username, req.concept)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"No mastery data for {req.username}/{req.concept}")
+
+    p_raw = row[EVIDENCE_CONFIG[req.tier]["col"]] or EVIDENCE_CONFIG[req.tier]["P_L0"]
+    p_bkt = _apply_decay(
+        p_raw, req.tier, _parse_ts(row[_TS_COL[req.tier]]), lam=row[_LAM_COL[req.tier]]
+    )
+
+    try:
+        result = record_self_assessment(
+            username=req.username,
+            concept=req.concept,
+            tier=req.tier,
+            p_self=req.self_assessment,
+            p_bkt_current=p_bkt,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return result
+
+
+# ── Behavioral Telemetry (Productive Struggle — Contribution 2) ──────────────
+
+class BehaviorEventRequest(BaseModel):
+    username: str
+    session_id: Optional[str] = None
+    event: str                       # copy_code | dwell | hint_request | skip_challenge
+    value: Optional[str] = None      # dwell seconds, code length, etc.
+    message_id: Optional[str] = None
+
+@app.post("/api/v1/telemetry/behavior")
+async def log_behavior_event(req: BehaviorEventRequest):
+    """Frontend-driven behavioral telemetry: copy-code clicks, dwell time, etc."""
+    from app.core import telemetry
+    telemetry.log_behavior(req.username, req.session_id, req.event,
+                           req.value, req.message_id)
+    return {"status": "ok"}
+
 @app.post("/api/v1/chat/feedback")
 async def handle_feedback(req: FeedbackRequest):
     """
@@ -1209,6 +1458,17 @@ async def handle_feedback(req: FeedbackRequest):
         feedback_type=req.feedback_type,
         feedback_text=req.feedback_text
     )
+
+    # --- Telemetry: mirror feedback into the study_id-linked stream ---
+    try:
+        from app.core import telemetry
+        telemetry.log_event(req.username, "feedback", {
+            "feedback_type": req.feedback_type,
+            "feedback_text": req.feedback_text,
+            "original_query": req.original_query,
+        }, session_id=req.session_id)
+    except Exception as e:
+        logger.warning(f"Feedback telemetry failed: {e}")
 
     # Update UCB1 style win rates based on thumbs up/down
     if req.feedback_type in ["up", "down"]:
@@ -1597,6 +1857,182 @@ async def get_video_transcript(video_filename: str):
     except Exception as e:
         logger.error(f"Transcript fetch failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Classroom Video: checkpoints, engagement, MCQ, reflection ───────────────
+
+# Dynamic checkpoint placement: the video is divided into equal segments whose
+# count scales with length (target ~8.5 min apart), with one at the end.
+CHECKPOINT_SPACING_SEC = 510.0
+CHECKPOINT_MIN = 1
+CHECKPOINT_MAX = 8
+
+class VideoEngagementRequest(BaseModel):
+    username: str
+    video_filename: str
+    event: str                       # play|pause|seek|ended|tab_hidden|tab_visible|mute|unmute
+    position_sec: Optional[float] = None
+    detail: Optional[str] = None
+
+class VideoCoverageRequest(BaseModel):
+    username: str
+    video_filename: str
+    duration_sec: float
+    watched_sec: float
+    hidden_sec: float = 0.0
+
+class VideoMCQAnswerRequest(BaseModel):
+    username: str
+    video_filename: str
+    checkpoint_time: float
+    selected_index: int
+    confidence: Optional[int] = 3
+    time_to_answer_sec: Optional[float] = None
+    attempts: Optional[int] = 1
+
+class VideoReflectionRequest(BaseModel):
+    username: str
+    video_filename: str
+    phase: str                       # intention | reflection
+    prompt: Optional[str] = ""
+    response: str
+
+
+@app.get("/api/v1/video/checkpoints/{video_filename}")
+async def get_video_checkpoints(video_filename: str):
+    """Return checkpoint MCQs for a video (WITHOUT the correct answer).
+    Generates + caches them from the transcript on first request."""
+    video_path = VIDEO_DIR / video_filename
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {video_filename}")
+
+    rows = db.fetch_all(
+        "SELECT checkpoint_time, question, options, concept FROM video_checkpoint "
+        "WHERE video_filename=? ORDER BY checkpoint_time", (video_filename,))
+
+    if not rows:
+        # Generate + cache
+        if not llm_fast:
+            raise HTTPException(status_code=503, detail="LLM not initialized")
+        generated = await asyncio.to_thread(
+            generate_checkpoints, str(video_path), llm_fast,
+            CHECKPOINT_SPACING_SEC, CHECKPOINT_MIN, CHECKPOINT_MAX)
+        for cp in generated:
+            db.execute(
+                "INSERT OR IGNORE INTO video_checkpoint "
+                "(video_filename, checkpoint_time, question, options, correct_index, "
+                " concept, explanation, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (video_filename, cp["checkpoint_time"], cp["question"],
+                 json.dumps(cp["options"]), cp["correct_index"], cp["concept"],
+                 cp["explanation"], datetime.utcnow().isoformat()))
+        rows = db.fetch_all(
+            "SELECT checkpoint_time, question, options, concept FROM video_checkpoint "
+            "WHERE video_filename=? ORDER BY checkpoint_time", (video_filename,))
+
+    checkpoints = [{
+        "checkpoint_time": r["checkpoint_time"],
+        "question": r["question"],
+        "options": json.loads(r["options"]),
+        "concept": r["concept"],
+    } for r in rows]
+    return {"checkpoints": checkpoints}
+
+
+@app.post("/api/v1/video/checkpoint/answer")
+async def answer_video_checkpoint(req: VideoMCQAnswerRequest):
+    """Grade a checkpoint MCQ, feed BKT (quiz tier), and log telemetry."""
+    from app.core import telemetry
+    from app.core.bkt_model import bkt
+
+    row = db.fetch_one(
+        "SELECT correct_index, concept, explanation FROM video_checkpoint "
+        "WHERE video_filename=? AND checkpoint_time=?",
+        (req.video_filename, req.checkpoint_time))
+    if not row:
+        raise HTTPException(status_code=404, detail="Checkpoint not found")
+
+    is_correct = (req.selected_index == row["correct_index"])
+    concept = row["concept"] or "General"
+
+    # Feed BKT quiz tier (video learning contributes to mastery)
+    if concept and concept != "General":
+        try:
+            bkt.update(req.username, concept, is_correct, evidence_type="quiz")
+        except Exception as e:
+            logger.warning(f"[video-mcq] BKT update failed: {e}")
+
+    telemetry.log_video_mcq(
+        req.username, req.video_filename, req.checkpoint_time, concept,
+        req.selected_index, is_correct, req.confidence or 3,
+        req.time_to_answer_sec, req.attempts or 1)
+    telemetry.log_event(req.username, "video_checkpoint_answer", {
+        "video": req.video_filename, "checkpoint": req.checkpoint_time,
+        "concept": concept, "correct": is_correct, "attempts": req.attempts})
+
+    return {
+        "is_correct": is_correct,
+        "correct_index": row["correct_index"],
+        "explanation": row["explanation"],
+    }
+
+
+@app.post("/api/v1/video/engagement")
+async def log_video_engagement_event(req: VideoEngagementRequest):
+    from app.core import telemetry
+    telemetry.log_video_engagement(req.username, req.video_filename, req.event,
+                                   req.position_sec, req.detail)
+    return {"status": "ok"}
+
+
+@app.post("/api/v1/video/coverage")
+async def update_video_coverage_summary(req: VideoCoverageRequest):
+    from app.core import telemetry
+    telemetry.update_video_coverage(req.username, req.video_filename,
+                                    req.duration_sec, req.watched_sec, req.hidden_sec)
+    return {"status": "ok"}
+
+
+@app.post("/api/v1/video/reflection")
+async def submit_video_reflection(req: VideoReflectionRequest):
+    from app.core import telemetry
+    telemetry.log_video_reflection(req.username, req.video_filename, req.phase,
+                                   req.prompt or "", req.response)
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/video/prelab/{video_filename}")
+async def get_video_prelab(video_filename: str):
+    """Return the list of prelab complex problems for a video (from prelab.json)."""
+    prelab_path = VIDEO_DIR / "prelab.json"
+    if not prelab_path.exists():
+        return {"problems": []}
+    try:
+        with open(prelab_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        raw = data.get(video_filename, [])
+        # Support both the simple list form and an object with a "problems" key
+        problems = raw if isinstance(raw, list) else raw.get("problems", [])
+        # Normalize each entry to a string prompt
+        norm = [p if isinstance(p, str) else p.get("prompt", "") for p in problems]
+        norm = [p for p in norm if p and p.strip()]
+        return {"problems": norm}
+    except Exception as e:
+        logger.warning(f"Prelab load failed for {video_filename}: {e}")
+        return {"problems": []}
+
+
+class PrelabStartRequest(BaseModel):
+    username: str
+    video_filename: str
+    problem: str
+
+@app.post("/api/v1/video/prelab-start")
+async def log_prelab_start(req: PrelabStartRequest):
+    """Log that a student chose to solve a prelab problem in SAGE (SRL transfer signal)."""
+    from app.core import telemetry
+    telemetry.log_event(req.username, "prelab_started", {
+        "video": req.video_filename, "problem": req.problem[:300]})
+    return {"status": "ok"}
 
 
 @app.post("/api/v1/tts/speak")

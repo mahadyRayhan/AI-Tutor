@@ -78,22 +78,35 @@ class FastClassifier:
         if "{" in query and "}" in query and ";" in query:
             return "REVIEW"
         
-        # 3. Deterministic Keyword Rules (Bypass Model for unambiguous patterns)
-        concept_starters = ("explain", "what is", "what are", "what's", "define", 
+        # 3. Off-topic detection (before keyword rules — catches non-C queries)
+        query_words = set(re.findall(r'[a-z_]+', q_lower))
+        has_c_terms = bool(query_words & self.C_CONCEPT_TERMS)
+
+        if not has_c_terms:
+            off_topic_signals = (
+                "weather", "joke", "poem", "song", "recipe", "cook", "bake",
+                "movie", "music", "sport", "football", "soccer", "basketball",
+                "world cup", "president", "capital of", "history of",
+                "tell me a", "sing", "dance", "love", "pasta", "pizza",
+            )
+            if any(s in q_lower for s in off_topic_signals):
+                return "OFF_TOPIC"
+
+        # 4. Deterministic Keyword Rules
+        concept_starters = ("explain", "what is", "what are", "what's", "define",
                            "tell me about", "describe", "how does", "how do")
         if any(q_lower.startswith(p) for p in concept_starters):
             return "CONCEPT"
-        
-        # "how do I" is asking for guidance, not problem-solving
+
         guidance_starters = ("how do i", "how can i", "how to")
         if any(q_lower.startswith(p) for p in guidance_starters):
             return "CONCEPT"
-        
-        problem_starters = ("write a c program", "write a program", "create a program", 
+
+        problem_starters = ("write a c program", "write a program", "create a program",
                            "build a", "implement", "code a", "solve")
         if any(q_lower.startswith(p) for p in problem_starters):
             return "PROBLEM"
-        
+
         quiz_keywords = ("quiz me", "test me on", "test my knowledge", "give me a quiz",
                          "ask me a question", "challenge me on", "another question", "try another")
         if any(kw in q_lower for kw in quiz_keywords):
@@ -113,8 +126,9 @@ class FastClassifier:
         second_score = sorted_scores[1][1]
         
         if best_score - second_score < 0.05:
-            logger.info(f"🎯 Low-confidence classification ({best_intent}={best_score:.3f} vs {sorted_scores[1][0]}={second_score:.3f}), defaulting to CONCEPT")
-            return "CONCEPT"
+            fallback = "CONCEPT" if has_c_terms else "OFF_TOPIC"
+            logger.info(f"🎯 Low-confidence classification ({best_intent}={best_score:.3f} vs {sorted_scores[1][0]}={second_score:.3f}), defaulting to {fallback}")
+            return fallback
         
         return best_intent
 
