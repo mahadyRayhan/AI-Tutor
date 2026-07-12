@@ -1429,6 +1429,33 @@ async def submit_self_assessment(req: SelfAssessmentRequest):
     return result
 
 
+# ── Unified Learner Model + Motivational Self-Report ─────────────────────────
+
+@app.get("/api/v1/learner-model/{username}")
+async def get_learner_model(username: str):
+    """Full multidimensional learner profile (cognitive/metacognitive/affective/motivational)."""
+    from app.core.learner_model import get_learner_profile
+    return get_learner_profile(username)
+
+class SelfReportItem(BaseModel):
+    dimension: str      # self_efficacy | interest | goal_orientation
+    item_id: str
+    score: float
+
+class SelfReportRequest(BaseModel):
+    username: str
+    items: List[SelfReportItem]
+
+@app.post("/api/v1/self-report")
+async def submit_self_report(req: SelfReportRequest):
+    """Store a motivational self-report survey (Tier 2)."""
+    from app.core import telemetry
+    for it in req.items:
+        telemetry.log_self_report(req.username, it.dimension, it.item_id, it.score)
+    telemetry.log_event(req.username, "self_report", {"n_items": len(req.items)})
+    return {"status": "ok", "recorded": len(req.items)}
+
+
 # ── Behavioral Telemetry (Productive Struggle — Contribution 2) ──────────────
 
 class BehaviorEventRequest(BaseModel):

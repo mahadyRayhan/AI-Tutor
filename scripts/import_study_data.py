@@ -13,10 +13,26 @@ Assessment CSV (cols):  study_id, instrument, item_id, bloom_tier, concept, scor
     instrument ∈ {pretest, posttest, mai_pre, mai_post}
     bloom_tier ∈ {declarative, procedural, applied, ''}   ('' for MAI items)
 
+Self-report CSV (cols):  username, dimension, item_id, score
+    dimension ∈ {self_efficacy, interest, goal_orientation}
+
 Usage
 -----
-  python scripts/import_study_data.py roster      path/to/roster.csv
-  python scripts/import_study_data.py assessment  path/to/assessment.csv
+  python scripts/import_study_data.py roster       path/to/roster.csv
+  python scripts/import_study_data.py assessment   path/to/assessment.csv
+  python scripts/import_study_data.py self_report  path/to/self_report.csv
+
+Survey items (Tier 2 motivational sub-model) — Likert 1–5:
+  self_efficacy:
+    se1  "I am confident I can solve C programming problems on my own."
+    se2  "Even when a C problem is hard, I believe I can figure it out."
+    se3  "I can debug my own C code when it doesn't work."
+  interest:
+    in1  "I find C programming interesting."
+    in2  "Learning to program feels useful/valuable to me."
+  goal_orientation:  (higher = mastery-oriented, lower = performance-oriented)
+    go1  "I redo problems to understand them, not just to pass."
+    go2  "I care more about learning the concept than about the grade."
 """
 
 import csv
@@ -72,6 +88,22 @@ def import_assessment(csv_path: str):
     print(f"✅ Imported {n} assessment items.")
 
 
+def import_self_report(csv_path: str):
+    n = 0
+    valid = {"self_efficacy", "interest", "goal_orientation"}
+    with open(csv_path, newline='') as f:
+        for row in csv.DictReader(f):
+            dim = row["dimension"].strip()
+            if dim not in valid:
+                print(f"⚠️  Skipping unknown dimension: {dim}")
+                continue
+            telemetry.log_self_report(row["username"].strip(), dim,
+                                      row["item_id"].strip(), float(row["score"]))
+            n += 1
+    telemetry._STUDY_ID_CACHE.clear()
+    print(f"✅ Imported {n} self-report items.")
+
+
 def main():
     if len(sys.argv) != 3:
         print(__doc__)
@@ -84,6 +116,8 @@ def main():
         import_roster(path)
     elif mode == "assessment":
         import_assessment(path)
+    elif mode == "self_report":
+        import_self_report(path)
     else:
         print(f"❌ Unknown mode: {mode}")
         print(__doc__)

@@ -214,15 +214,17 @@ def log_behavior(username: str, session_id: str, event: str, value=None,
 # ── SRL: affect ────────────────────────────────────────────────────────────────
 
 def log_affect(username: str, session_id: str, delta_f: float,
-               frustration_level: str, intervention_fired: bool) -> None:
+               frustration_level: str, intervention_fired: bool,
+               academic_emotion: str = None) -> None:
     try:
         sid = get_study_id(username)
         db.execute(
             "INSERT INTO affect_log "
-            "(study_id, username, session_id, delta_f, frustration_level, intervention_fired, ts_utc) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(study_id, username, session_id, delta_f, frustration_level, intervention_fired, "
+            " academic_emotion, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (sid, username, session_id, delta_f, frustration_level,
-             1 if intervention_fired else 0, _now()),
+             1 if intervention_fired else 0, academic_emotion, _now()),
         )
     except Exception as e:
         logger.warning(f"[telemetry] log_affect failed: {e}")
@@ -431,6 +433,21 @@ def log_video_reflection(username: str, video_filename: str, phase: str,
         )
     except Exception as e:
         logger.warning(f"[telemetry] log_video_reflection failed: {e}")
+
+
+# ── Motivational self-report (Tier 2) ──────────────────────────────────────────
+
+def log_self_report(username: str, dimension: str, item_id: str, score: float) -> None:
+    """dimension ∈ {self_efficacy, interest, goal_orientation}. score is a Likert value."""
+    try:
+        sid = get_study_id(username)
+        db.execute(
+            "INSERT INTO self_report (study_id, username, dimension, item_id, score, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (sid, username, dimension, item_id, score, _now()),
+        )
+    except Exception as e:
+        logger.warning(f"[telemetry] log_self_report failed: {e}")
 
 
 # ── Ground truth: assessment import ────────────────────────────────────────────

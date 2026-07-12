@@ -463,6 +463,19 @@ class SQLiteDB:
                 )
             """)
 
+            # Motivational self-report (Tier 2: self-efficacy, interest, goal orientation)
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS self_report (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    study_id   TEXT,
+                    username   TEXT,
+                    dimension  TEXT,
+                    item_id    TEXT,
+                    score      REAL,
+                    ts_utc     TIMESTAMP
+                )
+            """)
+
             # Safe catch to add the column to existing databases without breaking
             import sqlite3
             try:
@@ -477,6 +490,12 @@ class SQLiteDB:
 
             try:
                 self.conn.execute("ALTER TABLE messages ADD COLUMN style_used TEXT")
+            except sqlite3.OperationalError:
+                pass
+
+            # Tier 3: academic emotion label on the affect time-series
+            try:
+                self.conn.execute("ALTER TABLE affect_log ADD COLUMN academic_emotion TEXT")
             except sqlite3.OperationalError:
                 pass
 

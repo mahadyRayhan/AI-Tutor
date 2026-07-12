@@ -1297,8 +1297,9 @@ class ChainOfThoughtRAGAgent:
         # --- Telemetry: affect trajectory (per-turn frustration snapshot) ---
         try:
             from app.core import telemetry
+            academic_emotion = getattr(self.profiler, "_last_academic_emotion", None)
             telemetry.log_affect(username, session_id, current_frustration_delta,
-                                 str(current_frustration), False)
+                                 str(current_frustration), False, academic_emotion)
         except Exception as e:
             self.logger.warning(f"[Affect] telemetry failed: {e}")
 
