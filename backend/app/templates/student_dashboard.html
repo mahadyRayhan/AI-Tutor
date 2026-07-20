@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- LINK TO YOUR NEW CSS FILE -->
-    <link rel="stylesheet" href="/static/css/student_dashboard.css">
+    <link rel="stylesheet" href="/static/css/student_dashboard.css?v=net1">
 </head>
 
 <body>
@@ -99,20 +99,26 @@
                 <div style="height:250px"><canvas id="radarChart"></canvas></div>
             </div>
 
-            <!-- 4. Mastery Bars -->
+            <!-- 4. Skill Network -->
             <div class="card full-width">
                 <h2>
-                    🌲 Skill Progress (XP)
+                    🕸️ Skill Progress (XP)
                     <div class="info-icon">ⓘ
                         <span class="tooltip-text">
-                            <strong>How to earn XP:</strong><br>
-                            • Reading Explanations: +5 pts<br>
-                            • Asking for Plans: +10 pts<br>
-                            • Submitting Code for Review: +15 pts (Best way to learn!)
+                            <strong>Your knowledge graph.</strong><br>
+                            Each node is a topic; arrows point from a topic to the ones that build on it.
+                            The ring shows mastery. <span style="color:#34d399;">Green</span> = certified,
+                            <span style="color:#fbbf24;">amber</span> = head start from a mastered prerequisite.<br><br>
+                            <strong>Click any node</strong> to self-assess — lower a tier if the tutor
+                            overestimates what you know.
                         </span>
                     </div>
                 </h2>
-                <div class="skill-list" id="skillList"></div>
+                <div class="skill-network-wrap">
+                    <div class="skill-network" id="skillNetwork"></div>
+                    <div class="skill-network-legend" id="skillLegend"></div>
+                    <div class="skill-node-panel" id="nodePanel"></div>
+                </div>
             </div>
 
             <!-- 5. AI Insights -->
@@ -142,7 +148,7 @@
         </div>
     </div>
 
-    <script src="/static/js/student_dashboard.js" defer></script>
+    <script src="/static/js/student_dashboard.js?v=net1" defer></script>
 </body>
 
 </html>

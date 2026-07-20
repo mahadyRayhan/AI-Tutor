@@ -363,6 +363,29 @@ def log_misconception(username: str, concept: str, action: str,
         logger.warning(f"[telemetry] log_misconception failed: {e}")
 
 
+# ── Prerequisite-coupled priors ("head start") ─────────────────────────────────
+
+def log_headstart(username: str, concept: str, action: str,
+                  hs: dict, seeds: dict, sources: list) -> None:
+    """action ∈ {seed, clawback}. Records every head-start seed/clawback so analysis
+    can prove a head start never certified a topic (it carries zero evidence)."""
+    try:
+        import json as _json
+        sid = get_study_id(username)
+        db.execute(
+            "INSERT INTO headstart_log "
+            "(study_id, username, concept, action, hs_quiz, hs_micro, hs_code, "
+            " seed_quiz, seed_micro, seed_code, sources, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (sid, username, concept, action,
+             hs.get("quiz"), hs.get("micro"), hs.get("code"),
+             seeds.get("quiz"), seeds.get("micro"), seeds.get("code"),
+             _json.dumps(sources), _now()),
+        )
+    except Exception as e:
+        logger.warning(f"[telemetry] log_headstart failed: {e}")
+
+
 # ── Classroom video: engagement, coverage, MCQ, reflection ─────────────────────
 
 def log_video_engagement(username: str, video_filename: str, event: str,

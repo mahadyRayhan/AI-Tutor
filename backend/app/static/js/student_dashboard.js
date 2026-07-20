@@ -28,8 +28,8 @@ async function loadStats() {
         // Visuals
         renderCharts(data);
 
-        // FIX: Pass empty dict if null to prevent skill bar crash
-        renderSkillBars(data.mastery || {});
+        // Render the prerequisite skill network (nodes = topics, edges = prereqs)
+        renderSkillNetwork(data.mastery || {});
     } catch (e) {
         console.error("Stats load failed", e);
     }
@@ -135,47 +135,144 @@ function renderCharts(data) {
     });
 }
 
-// --- SKILL BAR RENDERER ---
-function renderSkillBars(mastery) {
-    const skillDiv = document.getElementById('skillList');
-    skillDiv.innerHTML = '';
+// --- SKILL NETWORK RENDERER ---
+// Fixed layered layout for the C-curriculum topics (prereqs flow left → right).
+const NET_POS = {
+    "Variables":    { x: 80,  y: 190 },
+    "Control Flow": { x: 240, y: 190 },
+    "Functions":    { x: 400, y: 100 },
+    "Arrays":       { x: 400, y: 280 },
+    "Pointers":     { x: 580, y: 90  },
+    "Strings":      { x: 580, y: 200 },
+    "Structures":   { x: 580, y: 310 },
+};
+const NET_R = 30;                       // node radius
+const NET_CIRC = 2 * Math.PI * NET_R;   // ring circumference
 
-    TOPICS.forEach((t) => {
-        const score = mastery[t] || 0;
-        let gradient = 'linear-gradient(90deg, #f87171, #fb923c)';
-        if (score > 30) gradient = 'linear-gradient(90deg, #fbbf24, #facc15)';
-        if (score > 70) gradient = 'linear-gradient(90deg, #34d399, #2dd4bf)';
+function scoreColor(score) {
+    if (score > 70) return '#34d399';
+    if (score > 30) return '#fbbf24';
+    return '#f87171';
+}
 
-        const safeId = t.replace(/\s+/g, '_');
-        skillDiv.innerHTML += `
-        <div class="skill-item skill-item-clickable" onclick="toggleMasteryPanel('${safeId}', '${t}')">
-            <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-weight:500; font-size:0.85rem;">
-                <span>${t}</span>
-                <span style="color:#94a3b8;">${score}/100 XP <span class="mastery-expand-hint">▼</span></span>
-            </div>
-            <div class="progress-bar">
-                <div class="fill" style="width:${score}%; background:${gradient};"></div>
-            </div>
-            <div class="mastery-panel" id="panel-${safeId}" style="display:none;">
-                <div class="mastery-panel-loading">Loading mastery data...</div>
-            </div>
-        </div>`;
+async function renderSkillNetwork(mastery) {
+    window._skillMastery = mastery;
+    let net;
+    try {
+        const res = await fetch(`${API_URL}/api/v1/skill-network/${currentUser.username}`);
+        net = await res.json();
+    } catch (e) {
+        console.error("Skill network load failed", e);
+        net = { nodes: TOPICS.map(c => ({ concept: c })), edges: [] };
+    }
+    window._skillNet = net;
+    drawNetwork(mastery, net);
+    drawLegend();
+}
+
+function drawNetwork(mastery, net) {
+    const host = document.getElementById('skillNetwork');
+    if (!host) return;
+    const byConcept = {};
+    (net.nodes || []).forEach(n => { byConcept[n.concept] = n; });
+
+    // --- edges (prereq → dependent) ---
+    let edgesSvg = '';
+    (net.edges || []).forEach(([from, to]) => {
+        const a = NET_POS[from], b = NET_POS[to];
+        if (!a || !b) return;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len;
+        const x1 = a.x + ux * NET_R, y1 = a.y + uy * NET_R;
+        const x2 = b.x - ux * (NET_R + 8), y2 = b.y - uy * (NET_R + 8);
+        // amber "flow" when a certified prereq is head-starting a zero-evidence dependent
+        const flowing = byConcept[from]?.ever_certified && byConcept[to]?.has_head_start;
+        edgesSvg += `<line class="sedge ${flowing ? 'flow' : ''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+                       marker-end="url(#${flowing ? 'net-arrow-flow' : 'net-arrow'})"/>`;
+    });
+
+    // --- nodes ---
+    let nodesSvg = '';
+    TOPICS.forEach(concept => {
+        const p = NET_POS[concept];
+        if (!p) return;
+        const info = byConcept[concept] || {};
+        const score = Math.round(mastery[concept] || 0);
+        const certified = info.ever_certified;
+        const headStart = info.has_head_start;
+        let ring = scoreColor(score);
+        if (certified) ring = '#34d399';
+        else if (headStart) ring = '#fbbf24';
+        const dash = (score / 100) * NET_CIRC;
+        const badge = certified
+            ? `<text class="snode-badge" y="-${NET_R + 8}" fill="#34d399">✓ certified</text>`
+            : (headStart ? `<text class="snode-badge" y="-${NET_R + 8}" fill="#fbbf24">+ head start</text>` : '');
+        nodesSvg += `
+        <g class="snode ${certified ? 'certified' : ''}" data-concept="${concept}" transform="translate(${p.x},${p.y})"
+           role="button" tabindex="0" aria-label="${concept}, ${score} percent mastery">
+            ${badge}
+            <circle class="snode-bg" r="${NET_R}"></circle>
+            <circle class="snode-ring" r="${NET_R}" transform="rotate(-90)"
+                    stroke="${ring}" stroke-dasharray="${dash} ${NET_CIRC}"></circle>
+            <circle class="snode-core" r="${NET_R - 6}"></circle>
+            <text class="snode-pct" y="5">${score}</text>
+            <text class="snode-lbl" y="${NET_R + 20}">${concept}</text>
+        </g>`;
+    });
+
+    host.innerHTML = `
+    <svg viewBox="0 0 680 380" role="img" aria-label="Skill prerequisite network">
+        <defs>
+            <marker id="net-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="rgba(255,255,255,0.22)"></path>
+            </marker>
+            <marker id="net-arrow-flow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"></path>
+            </marker>
+        </defs>
+        <g class="sedges">${edgesSvg}</g>
+        <g class="snodes">${nodesSvg}</g>
+    </svg>`;
+
+    // wire clicks / keyboard
+    host.querySelectorAll('.snode').forEach(g => {
+        const concept = g.getAttribute('data-concept');
+        g.addEventListener('click', () => openNodePanel(concept));
+        g.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNodePanel(concept); }
+        });
     });
 }
 
-// --- SRL-BKT CALIBRATION: MASTERY SLIDER PANEL ---
-async function toggleMasteryPanel(safeId, concept) {
-    const panel = document.getElementById(`panel-${safeId}`);
-    if (!panel) return;
+function drawLegend() {
+    const el = document.getElementById('skillLegend');
+    if (!el) return;
+    el.innerHTML = `
+        <span class="leg"><i class="dot" style="background:#34d399"></i>certified</span>
+        <span class="leg"><i class="dot" style="background:#fbbf24"></i>head start</span>
+        <span class="leg"><i class="dot" style="background:#60a5fa"></i>mastery ring</span>
+        <span class="leg"><i class="arrowhint"></i>requires →</span>`;
+}
 
-    if (panel.style.display === 'block') {
-        panel.style.display = 'none';
+// --- SRL-BKT CALIBRATION: MASTERY SLIDER PANEL (opened from a node) ---
+let _activeNode = null;
+async function openNodePanel(concept) {
+    const panel = document.getElementById('nodePanel');
+    if (!panel) return;
+    const safeId = concept.replace(/\s+/g, '_');
+
+    // clicking the already-open node closes the panel
+    if (_activeNode === concept) {
+        panel.innerHTML = '';
+        _activeNode = null;
+        highlightNode(null);
         return;
     }
+    _activeNode = concept;
+    highlightNode(concept);
 
-    panel.style.display = 'block';
-    panel.innerHTML = '<div class="mastery-panel-loading">Loading mastery data...</div>';
-
+    panel.innerHTML = '<div class="mastery-panel-loading">Loading mastery data…</div>';
     try {
         const res = await fetch(`${API_URL}/api/v1/mastery/${currentUser.username}/${encodeURIComponent(concept)}`);
         const data = await res.json();
@@ -186,12 +283,29 @@ async function toggleMasteryPanel(safeId, concept) {
     }
 }
 
+function highlightNode(concept) {
+    document.querySelectorAll('.snode').forEach(g => {
+        g.classList.toggle('selected', g.getAttribute('data-concept') === concept);
+    });
+}
+
 function renderMasterySliders(panel, safeId, concept, data) {
     const tiers = ['quiz', 'micro', 'code'];
     const tierLabels = { quiz: 'Quiz (Declarative)', micro: 'Micro-Challenge (Procedural)', code: 'Code Review (Applied)' };
 
     let html = '<div class="mastery-sliders" onclick="event.stopPropagation()">';
-    html += '<div class="mastery-panel-title">Self-Assessment — Adjust if BKT overestimates your knowledge</div>';
+    html += `
+        <div class="mastery-panel-header">
+            <span class="mastery-panel-heading">${concept} — self-assessment</span>
+            <div class="info-icon">ⓘ
+                <span class="tooltip-text">
+                    Drag a tier <strong>down</strong> if the tutor overestimates what you know
+                    ("I know less than shown"). The slider only goes down — to raise mastery, ask to be quizzed.
+                    Your input changes how the model weighs future evidence, but never certifies you.
+                </span>
+            </div>
+            <button class="mastery-close-btn" onclick="openNodePanel('${concept.replace(/'/g, "\\'")}')" aria-label="Close">✕</button>
+        </div>`;
 
     tiers.forEach(tier => {
         const t = data.tiers[tier];
@@ -228,7 +342,6 @@ function renderMasterySliders(panel, safeId, concept, data) {
             <button class="mastery-save-btn" onclick="saveSelfAssessment('${safeId}', '${concept}')">Save Assessment</button>
             <span class="mastery-save-status" id="status-${safeId}"></span>
         </div>
-        <div class="mastery-panel-note">Slider can only go <strong>down</strong> — "I know less than shown." To raise mastery, ask to be quizzed.</div>
     </div>`;
 
     panel.innerHTML = html;
@@ -284,6 +397,9 @@ async function saveSelfAssessment(safeId, concept) {
         statusEl.textContent = 'Saved!';
         statusEl.style.color = 'var(--success-color)';
         setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        // Doubt flows downhill: a saved downgrade may claw back head starts on
+        // dependent nodes, so refresh the network to reflect the new state.
+        if (window._skillMastery) { renderSkillNetwork(window._skillMastery); }
     }
 }
 

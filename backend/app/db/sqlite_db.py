@@ -463,6 +463,26 @@ class SQLiteDB:
                 )
             """)
 
+            # Prerequisite-coupled priors ("head start"): every seed + clawback event.
+            # Lets us prove in analysis that a head start never certified a topic.
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS headstart_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    study_id    TEXT,
+                    username    TEXT,
+                    concept     TEXT,
+                    action      TEXT,
+                    hs_quiz     REAL,
+                    hs_micro    REAL,
+                    hs_code     REAL,
+                    seed_quiz   REAL,
+                    seed_micro  REAL,
+                    seed_code   REAL,
+                    sources     TEXT,
+                    ts_utc      TIMESTAMP
+                )
+            """)
+
             # Motivational self-report (Tier 2: self-efficacy, interest, goal orientation)
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS self_report (
@@ -546,6 +566,14 @@ class SQLiteDB:
                 ("decay_quiz_lam",   "REAL DEFAULT 0.04951"),
                 ("decay_micro_lam",  "REAL DEFAULT 0.09902"),
                 ("decay_code_lam",   "REAL DEFAULT 0.13863"),
+                # Prerequisite-coupled priors ("head start"). The unearned portion
+                # of each tier's seeded prior, carried from certified prerequisites.
+                # Stored separately so it is identifiable (it never counts as evidence,
+                # so it can never certify) and clawback-able while n_evidence is still 0.
+                ("hs_quiz",          "REAL DEFAULT 0"),
+                ("hs_micro",         "REAL DEFAULT 0"),
+                ("hs_code",          "REAL DEFAULT 0"),
+                ("head_start_at",    "TIMESTAMP"),
             ]:
                 try:
                     self.conn.execute(f"ALTER TABLE user_knowledge ADD COLUMN {col} {definition}")

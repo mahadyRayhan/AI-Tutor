@@ -136,7 +136,8 @@ def _read_row(username: str, concept: str):
         "last_quiz_at, last_micro_at, last_code_at, "
         "n_evidence_quiz, n_evidence_micro, n_evidence_code, "
         "decay_quiz_lam, decay_micro_lam, decay_code_lam, "
-        "ease_factor, is_certified, ever_certified "
+        "ease_factor, is_certified, ever_certified, "
+        "hs_quiz, hs_micro, hs_code "
         "FROM user_knowledge WHERE username=? AND concept=?",
         (username, concept)
     )
@@ -217,16 +218,37 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
 
     row = _read_row(username, concept)
     if row is None:
+        # First genuine BKT touch of this topic: seed the starting priors, giving a
+        # small capped head start if any prerequisite is already certified (rule 3).
+        # The head start moves the STARTING line only; certification remains gated on
+        # n_evidence real answers, so a seed can never certify or unlock anything.
+        seed_q = EVIDENCE_CONFIG["quiz"]["P_L0"]
+        seed_m = EVIDENCE_CONFIG["micro"]["P_L0"]
+        seed_c = EVIDENCE_CONFIG["code"]["P_L0"]
+        hs_q = hs_m = hs_c = 0.0
+        hs_at = None
+        try:
+            from app.core import prereq_headstart
+            hs = prereq_headstart.seeds_for_new_row(username, concept)
+            if hs:
+                seed_q, seed_m, seed_c = hs["seeds"]["quiz"], hs["seeds"]["micro"], hs["seeds"]["code"]
+                hs_q, hs_m, hs_c = hs["hs"]["quiz"], hs["hs"]["micro"], hs["hs"]["code"]
+                hs_at = datetime.now()
+        except Exception as e:
+            logger.warning(f"[BKT] head-start seeding skipped for '{concept}': {e}")
+
         db.execute(
             """INSERT OR IGNORE INTO user_knowledge
                (username, concept, timestamp,
-                p_mastery_quiz, p_mastery_micro, p_mastery_code, p_mastery)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                p_mastery_quiz, p_mastery_micro, p_mastery_code, p_mastery,
+                hs_quiz, hs_micro, hs_code, head_start_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (username, concept, datetime.now(),
-             EVIDENCE_CONFIG["quiz"]["P_L0"],
-             EVIDENCE_CONFIG["micro"]["P_L0"],
-             EVIDENCE_CONFIG["code"]["P_L0"],
-             EVIDENCE_CONFIG["quiz"]["P_L0"] * EVIDENCE_CONFIG["quiz"]["ceiling"])
+             seed_q, seed_m, seed_c,
+             round(seed_q * EVIDENCE_CONFIG["quiz"]["ceiling"]
+                   + seed_m * EVIDENCE_CONFIG["micro"]["ceiling"]
+                   + seed_c * EVIDENCE_CONFIG["code"]["ceiling"], 6),
+             hs_q, hs_m, hs_c, hs_at)
         )
         row = _read_row(username, concept)
 

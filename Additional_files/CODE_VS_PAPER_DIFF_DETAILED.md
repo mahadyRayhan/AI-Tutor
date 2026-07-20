@@ -144,6 +144,13 @@ Bounds and defaults (per tier):
    p_G,default = (0.20, 0.10, 0.05),   p_G,max = (0.40, 0.25, 0.15).                     (B8)
 ```
 
+The `min(·, p_G,max)` in (B7) makes adaptation **monotone non-decreasing up to a hard cap**;
+a saturation guard halts adaptation once `p_G^(k)` reaches `p_G,max^(k)`, so repeated triggers
+can never drive `p_G → 1`. The caps are chosen strictly below the BKT non-degeneracy boundary
+`p_S^(k) + p_G,max^(k) < 1` for every tier (quiz 0.50, micro 0.40, code 0.35), so a correct
+answer always remains diagnostic — even fully saturated, a correct quiz answer is ≈60%
+informative.
+
 `N_trig = 3` matches the system's `n_min = 3` evidence rule — three observations is the
 minimum to separate a pattern from noise. Each qualifying adjustment raises the guess
 parameter by `β|e| ≈ 0.10` (since `|e| → 1`), saturating at `p_G,max`.
@@ -165,13 +172,18 @@ this is the distinction from prior work.
 
 ### B.6 Safety: the loop cannot manufacture mastery
 
-**Proposition B.1 (No self-certification).** For any admitted self-assessment sequence,
-(i) `P̃_eff^(k) < P̃^(k)` (B2 under B1); (ii) the certification predicate
-`m_c = 1 ⇔ ∀k: P̃^(k) ≥ θ_certify ∧ n^(k) ≥ n_min` reads the raw posterior `P̃^(k)`, on which
-`P_self` has no influence; (iii) Layer 2 is monotone **non-decreasing** in `p_G^(k)`, and by
-(B9) the certification posterior is monotone **non-increasing** in `p_G^(k)`. Hence no
-student action can raise `m_c`; student input can only *delay* certification. The Evidence
-Diversity Guarantee (paper Thm 2) is preserved verbatim. ∎
+**Proposition B.1 (No self-certification; bounded, non-degenerate adaptation).** For any
+admitted self-assessment sequence,
+(i) `P̃_eff^(k) < P̃^(k)` (B2 under B1);
+(ii) the certification predicate `m_c = 1 ⇔ ∀k: P̃^(k) ≥ θ_certify ∧ n^(k) ≥ n_min` reads the
+raw posterior `P̃^(k)`, on which `P_self` has no influence;
+(iii) Layer 2 is **monotone non-decreasing in `p_G^(k)` up to the hard cap `p_G,max^(k)`**
+(B7–B8), and by (B9) the certification posterior is monotone non-increasing in `p_G^(k)`;
+(iv) the cap satisfies `p_S^(k) + p_G,max^(k) < 1`, so the emission model is **never
+degenerate** and a correct response remains strictly informative.
+Hence no student action can raise `m_c`; student input can only *delay* certification by a
+**bounded** amount (the effect saturates at `p_G,max`). The Evidence Diversity Guarantee
+(paper Thm 2) is preserved verbatim. ∎
 
 This is why the slider is downward-only: it dissolves the theorem-safety problem by
 construction rather than by parameter tuning.

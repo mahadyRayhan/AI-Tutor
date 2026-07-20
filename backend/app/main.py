@@ -277,7 +277,15 @@ async def startup_event():
             logger=logger
         )
         graph_db = Neo4jGraphDB(logger=logger)
-        
+
+        # Register the shared graph handle for prerequisite-coupled priors (head start)
+        try:
+            from app.core import prereq_headstart
+            prereq_headstart.set_graph_db(graph_db)
+            logger.info("✅ Head-start (prerequisite-coupled priors) wired to graph DB.")
+        except Exception as e:
+            logger.warning(f"Head-start graph wiring failed: {e}")
+
         # 4. Initialize Orchestrator
         cot_rag_agent = ChainOfThoughtRAGAgent(
             llm_fast=llm_fast,
@@ -1427,6 +1435,74 @@ async def submit_self_assessment(req: SelfAssessmentRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
     return result
+
+
+# ── Prerequisite-coupled priors ("head start") ───────────────────────────────
+
+@app.get("/api/v1/head-start/{username}/{concept}")
+async def get_head_start(username: str, concept: str):
+    """Explain the head start for one topic: prerequisites, which are certified,
+    the resulting seeded priors, and the certification wall a head start can't cross."""
+    from app.core import prereq_headstart
+    return prereq_headstart.explain(username, concept)
+
+
+# Canonical C-curriculum prerequisite edges among the dashboard skill topics.
+# Used as a reliable fallback when the graph DB is empty or names don't line up.
+SKILL_TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings", "Pointers", "Structures"]
+CANONICAL_PREREQ_EDGES = [
+    ("Variables", "Control Flow"),
+    ("Control Flow", "Functions"),
+    ("Control Flow", "Arrays"),
+    ("Functions", "Pointers"),
+    ("Arrays", "Strings"),
+    ("Arrays", "Structures"),
+]
+
+
+@app.get("/api/v1/skill-network/{username}")
+async def get_skill_network(username: str):
+    """Prerequisite network for the skill-progress dashboard: one node per topic
+    (with mastery state, certification, and head-start flags) plus prerequisite edges.
+    This is the visual face of the same graph the head-start mechanism runs on."""
+    from app.core import bkt_model, prereq_headstart
+
+    nodes = []
+    for c in SKILL_TOPICS:
+        row = bkt_model._read_row(username, c)
+        if row:
+            n_ev = (row["n_evidence_quiz"] or 0) + (row["n_evidence_micro"] or 0) + (row["n_evidence_code"] or 0)
+            hs = (row["hs_quiz"] or 0) + (row["hs_micro"] or 0) + (row["hs_code"] or 0)
+            nodes.append({
+                "concept": c,
+                "ever_certified": bool(row["ever_certified"]),
+                "is_certified": bool(row["is_certified"]),
+                "has_head_start": hs > 1e-9 and n_ev == 0,
+                "n_evidence": n_ev,
+            })
+        else:
+            nodes.append({
+                "concept": c, "ever_certified": False, "is_certified": False,
+                "has_head_start": False, "n_evidence": 0,
+            })
+
+    # Prefer the live graph; fall back to the canonical curriculum map.
+    edges = []
+    try:
+        by_lower = {t.lower(): t for t in SKILL_TOPICS}
+        for dep in SKILL_TOPICS:
+            for pre in prereq_headstart._prerequisites_of(dep):
+                key = pre.lower()
+                if key in by_lower and by_lower[key] != dep:
+                    pair = [by_lower[key], dep]
+                    if pair not in edges:
+                        edges.append(pair)
+    except Exception:
+        edges = []
+    if not edges:
+        edges = [[a, b] for a, b in CANONICAL_PREREQ_EDGES]
+
+    return {"nodes": nodes, "edges": edges}
 
 
 # ── Unified Learner Model + Motivational Self-Report ─────────────────────────

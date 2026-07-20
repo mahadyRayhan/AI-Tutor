@@ -119,6 +119,14 @@ def record_self_assessment(
     except Exception as e:
         logger.warning(f"[SRL-CAL] telemetry hook failed: {e}")
 
+    # --- Rule 6: doubt flows downhill. Lowering a prerequisite's effective mastery
+    # reduces the head start it passes to zero-evidence dependents (never raises it). ---
+    try:
+        from app.core import prereq_headstart
+        prereq_headstart.reduce_on_prereq_doubt(username, concept)
+    except Exception as e:
+        logger.warning(f"[SRL-CAL] head-start clawback skipped: {e}")
+
     return {
         "tier": tier,
         "p_bkt": round(p_bkt_current, 4),
