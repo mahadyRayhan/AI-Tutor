@@ -734,6 +734,19 @@ function initializeApp() {
 
             // Send the clean problem text → classifies as PROBLEM → guided complex-problem mode
             setTimeout(() => window.sendMessage(problem, true), 50);
+        } else if (initialMsg.startsWith('[VERIFY_MASTERY]')) {
+            // Handoff from the dashboard: earn mastery by taking the verify quiz.
+            const concept = initialMsg.replace('[VERIFY_MASTERY]', '').trim();
+
+            // Friendly user-facing message
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.innerHTML = `<div class="msg-sender">You</div>Verify my mastery of ${concept}`;
+            document.getElementById('messages').appendChild(userDiv);
+            scrollToBottom();
+
+            // Send the internal "(verify)" trigger silently → examiner runs the verify quiz
+            setTimeout(() => window.sendMessage(`I know ${concept} (verify)`, true), 50);
         } else if (initialMsg.startsWith('[START_TOPIC]')) {
             // Extract concept and goal
             const match = initialMsg.match(/\[START_TOPIC\]\s+(.*?)\s+\[GOAL\]\s+(.*)/);

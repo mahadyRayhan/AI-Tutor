@@ -355,14 +355,55 @@ function renderMasterySliders(panel, safeId, concept, data) {
         </div>`;
     });
 
+    const cEsc = concept.replace(/'/g, "\\'");
     html += `
         <div class="mastery-panel-actions">
             <button class="mastery-save-btn" onclick="saveSelfAssessment('${safeId}', '${concept}')">Save Assessment</button>
+            <button class="mastery-verify-btn" onclick="verifyMastery('${cEsc}')" title="Take a quiz to raise your mastery — the only way up">🎯 Verify Mastery</button>
             <span class="mastery-save-status" id="status-${safeId}"></span>
         </div>
+        ${masteryHint(concept, data)}
     </div>`;
 
     panel.innerHTML = html;
+}
+
+// "What else to do" — weakest tier + any uncertified prerequisite.
+function masteryHint(concept, data) {
+    const labels = { quiz: 'Quiz', micro: 'Micro-Challenge', code: 'Code Review' };
+    const parts = [];
+
+    // 1. Weakest tier = the one furthest from certification (most answers still needed).
+    let worst = null, worstN = -1;
+    ['quiz', 'micro', 'code'].forEach(t => {
+        const n = data.tiers[t] && data.tiers[t].answers_to_master;
+        if (typeof n === 'number' && n > worstN) { worstN = n; worst = t; }
+    });
+    if (worstN > 0) {
+        parts.push(`Focus your <b>${labels[worst]}</b> tier — about ${worstN} correct in a row to go.`);
+    }
+
+    // 2. Prerequisites that are not yet certified (from the skill-network data).
+    const net = window._skillNet;
+    if (net && net.edges) {
+        const byC = {};
+        (net.nodes || []).forEach(n => { byC[n.concept] = n; });
+        const missing = net.edges
+            .filter(([pre, dep]) => dep === concept && byC[pre] && !byC[pre].ever_certified)
+            .map(([pre]) => pre);
+        if (missing.length) {
+            parts.push(`Prerequisite not yet certified: <b>${missing.join(', ')}</b> — mastering it gives this topic a head start.`);
+        }
+    }
+
+    if (!parts.length) return `<div class="mastery-hint success">🎉 This topic is fully certified — nice work!</div>`;
+    return `<div class="mastery-hint">💡 ${parts.join(' ')}</div>`;
+}
+
+// Deep-link to the chat and fire the verify quiz (the earned path UP).
+function verifyMastery(concept) {
+    const msg = encodeURIComponent(`[VERIFY_MASTERY] ${concept}`);
+    window.location.href = `index.html?initial_msg=${msg}`;
 }
 
 function onSliderMove(safeId, tier, value, pBkt) {

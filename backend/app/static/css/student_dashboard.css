@@ -429,6 +429,43 @@ h2 {
     font-weight: 500;
 }
 
+.mastery-verify-btn {
+    background: transparent;
+    color: var(--success-color);
+    border: 1px solid var(--success-color);
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.mastery-verify-btn:hover {
+    background: var(--success-color);
+    color: var(--bg-color);
+}
+
+.mastery-hint {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(168, 199, 250, 0.08);
+    border: 1px solid var(--border-color);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+.mastery-hint b { color: var(--text-primary); font-weight: 600; }
+
+.mastery-hint.success {
+    background: rgba(52, 211, 153, 0.08);
+    border-color: rgba(52, 211, 153, 0.25);
+    color: var(--success-color);
+}
+
 .mastery-panel-note {
     font-size: 0.72rem;
     color: var(--text-muted);
