@@ -1208,24 +1208,33 @@ class ChainOfThoughtRAGAgent:
         # --- 1B: WARM-UP GRADER (STRICT TAG) ---
         # =========================================================
         if query.strip().startswith("[WARMUP_ANSWER]"):
-            user_ans = query.replace("[WARMUP_ANSWER]", "").strip()
-            warmup_topic = current_state.get("awaiting_warmup_topic", "a previous concept")
-            history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": None})
+            # Trust gate: only honour this tag if the server actually issued a warm-up.
+            # A user typing [WARMUP_ANSWER] with no pending warm-up is treated as plain text.
+            pending_warmup = current_state.get("awaiting_warmup_topic")
+            if not pending_warmup:
+                self.logger.warning(f"[SECURITY] Forged [WARMUP_ANSWER] from {username} with no pending warm-up — treating as plain text.")
+                query = query.replace("[WARMUP_ANSWER]", "").strip()
+                state.query = query
+                # fall through to normal processing (do NOT run the grader, do NOT return)
+            else:
+                user_ans = query.replace("[WARMUP_ANSWER]", "").strip()
+                warmup_topic = pending_warmup
+                history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": None})
 
-            if "skip" in user_ans.lower() or not user_ans:
-                yield {"type": "complete", "data": {"answer": f"No problem! We'll skip the warm-up for now. What would you like to work on?", "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new"]}}
+                if "skip" in user_ans.lower() or not user_ans:
+                    yield {"type": "complete", "data": {"answer": f"No problem! We'll skip the warm-up for now. What would you like to work on?", "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new"]}}
+                    return
+
+                yield {"type": "status", "message": "Evaluating your memory...", "percent": 50}
+                prompt = f"The student was asked to briefly explain '{warmup_topic}' as a brain warm-up. Their answer: '{user_ans}'. Evaluate it in 1-2 friendly, conversational sentences. If correct, praise them. If wrong, gently correct them. End by asking what they want to learn today."
+
+                eval_ans = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
+
+                yield {"type": "complete", "data": {
+                    "answer": f"**🧠 Warm-Up Review ({warmup_topic}):**\n\n{eval_ans}",
+                    "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new", "I have a specific question"]
+                }}
                 return
-
-            yield {"type": "status", "message": "Evaluating your memory...", "percent": 50}
-            prompt = f"The student was asked to briefly explain '{warmup_topic}' as a brain warm-up. Their answer: '{user_ans}'. Evaluate it in 1-2 friendly, conversational sentences. If correct, praise them. If wrong, gently correct them. End by asking what they want to learn today."
-            
-            eval_ans = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
-            
-            yield {"type": "complete", "data": {
-                "answer": f"**🧠 Warm-Up Review ({warmup_topic}):**\n\n{eval_ans}", 
-                "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new", "I have a specific question"]
-            }}
-            return
         # =========================================================
 
         # =========================================================
@@ -1326,25 +1335,35 @@ class ChainOfThoughtRAGAgent:
             parts = query.replace("[SOLVE_CHALLENGE]", "").split("|", 1)
             solve_topic = parts[0].strip() if len(parts) > 0 else "Concept"
             solve_ans = parts[1].strip() if len(parts) > 1 else ""
-            
-            # 1. Remove from GLOBAL pending queue
+
+            # Trust gate: the topic must actually be a pending challenge for THIS user.
+            # A forged/stale [SOLVE_CHALLENGE] must never mark a challenge complete or
+            # be routed as a challenge submission.
             skipped = self._get_global_skipped_challenges(username)
-            new_skipped = []
-            for c in skipped:
-                if isinstance(c, dict) and c.get("topic") == solve_topic: continue
-                if isinstance(c, str) and c == solve_topic: continue
-                new_skipped.append(c)
-                
-            self._update_global_skipped_challenges(username, new_skipped)
-            
-            # 2. Force the pipeline state to route to the Code Reviewer
-            state.original_query = solve_ans
-            state.query = f"[CONTEXT: Evaluating pending micro-challenge for '{solve_topic}'].\n\n{solve_ans}"
-            state.intent = "REVIEW"
-            state.entities = [solve_topic]
-            is_pending_solve = True
-            
-            should_skip_context = True # Skip LLM rewrites
+            def _is_this_challenge(c):
+                return ((isinstance(c, dict) and c.get("topic") == solve_topic)
+                        or (isinstance(c, str) and c == solve_topic))
+            is_genuinely_pending = any(_is_this_challenge(c) for c in skipped)
+
+            if not is_genuinely_pending:
+                self.logger.warning(f"[SECURITY] Forged/stale [SOLVE_CHALLENGE] for '{solve_topic}' from {username} — no such pending challenge. Treating as plain text.")
+                query = solve_ans if solve_ans else query.replace("[SOLVE_CHALLENGE]", "").strip()
+                state.query = query
+                state.original_query = query
+                # fall through to normal processing (no completion, no forced REVIEW)
+            else:
+                # 1. Remove from GLOBAL pending queue (it was genuinely assigned)
+                new_skipped = [c for c in skipped if not _is_this_challenge(c)]
+                self._update_global_skipped_challenges(username, new_skipped)
+
+                # 2. Force the pipeline state to route to the Code Reviewer
+                state.original_query = solve_ans
+                state.query = f"[CONTEXT: Evaluating pending micro-challenge for '{solve_topic}'].\n\n{solve_ans}"
+                state.intent = "REVIEW"
+                state.entities = [solve_topic]
+                is_pending_solve = True
+
+                should_skip_context = True # Skip LLM rewrites
         # =========================================================
 
         # --- 5. PROACTIVE POP QUIZZES ---

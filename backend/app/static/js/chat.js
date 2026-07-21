@@ -5,6 +5,26 @@ let activeChallenge = null;
 let globalPendingChallenges = [];
 let currentTTSAudio = null;
 
+// --- OUTPUT SANITIZATION (XSS defense) ---
+// Any message content — from the LLM, retrieved docs, or another user's stored
+// history — is untrusted. Render markdown, then strip scripts / event handlers /
+// javascript: URIs with DOMPurify before it ever touches innerHTML.
+function renderMD(text) {
+    const html = marked.parse(text || "");
+    if (window.DOMPurify) {
+        return DOMPurify.sanitize(html, { ADD_ATTR: ['target'], FORBID_TAGS: ['style'] });
+    }
+    // Fail closed: if the sanitizer didn't load, never inject raw HTML.
+    return escapeHTML(text || "");
+}
+
+// Escape a plain string for safe insertion as text inside innerHTML.
+function escapeHTML(text) {
+    const d = document.createElement('div');
+    d.textContent = (text == null) ? "" : String(text);
+    return d.innerHTML;
+}
+
 // --- TELEMETRY (Productive Struggle — Contribution 2) ---
 let lastAiResponseAt = null;     // timestamp when AI finished responding
 let dwellLoggedForTurn = false;  // ensure one dwell sample per AI turn
@@ -270,11 +290,12 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
         // Parse it with Marked if it has a markdown block, otherwise use basic formatting
         let displayText = displayUserText;
         if (displayUserText.includes('```c')) {
-            displayText = marked.parse(displayUserText);
+            displayText = renderMD(displayUserText);
         } else {
-            displayText = displayUserText.replace(/\n/g, '<br>');
             if (displayUserText.includes('{') || displayUserText.includes(';')) {
-                displayText = `<pre><code class="language-c">${displayUserText.replace(/</g, '&lt;')}</code></pre>`;
+                displayText = `<pre><code class="language-c">${escapeHTML(displayUserText)}</code></pre>`;
+            } else {
+                displayText = escapeHTML(displayUserText).replace(/\n/g, '<br>');
             }
         }
         
@@ -352,7 +373,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                 renderedLength = Math.min(renderedLength + chunkSize, fullMarkdown.length);
                 const textContainer = document.getElementById(`text-${progId}`);
                 if (textContainer) {
-                    textContainer.innerHTML = marked.parse(fullMarkdown.slice(0, renderedLength));
+                    textContainer.innerHTML = renderMD(fullMarkdown.slice(0, renderedLength));
                 }
                 scrollToBottom();
                 typewriterTimer = setTimeout(renderNextChunk, TICK_MS);
@@ -380,7 +401,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                 updatePendingChallengesUI(data.data.skipped_challenges);
             }
 
-            botDiv.innerHTML = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>` + marked.parse(data.data.answer);
+            botDiv.innerHTML = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>` + renderMD(data.data.answer);
             displaySources(data.data.sources);
 
 
@@ -573,7 +594,7 @@ function displaySources(sources) {
     unique.forEach(s => {
         const div = document.createElement('div');
         div.className = 'source-card';
-        div.innerHTML = `<div class="source-title">📄 ${s.document_name}</div><div class="source-content">${marked.parse(s.chunk_text || "")}</div>`;
+        div.innerHTML = `<div class="source-title">📄 ${escapeHTML(s.document_name)}</div><div class="source-content">${renderMD(s.chunk_text || "")}</div>`;
         list.appendChild(div);
     });
     Prism.highlightAllUnder(list);
@@ -593,7 +614,9 @@ async function renderDiagrams(container) {
                 const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
                 const { svg } = await window.mermaid.render(id, txt);
                 const div = document.createElement('div');
-                div.innerHTML = svg;
+                div.innerHTML = window.DOMPurify
+                    ? DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } })
+                    : "";
                 div.style.textAlign = 'center';
 
                 // Replace the <pre> parent if it exists, otherwise just the <code>
@@ -728,7 +751,7 @@ function initializeApp() {
             // Show the problem as the user's message
             const userDiv = document.createElement('div');
             userDiv.className = 'message user';
-            userDiv.innerHTML = `<div class="msg-sender">You</div>` + problem;
+            userDiv.innerHTML = `<div class="msg-sender">You</div>` + escapeHTML(problem);
             document.getElementById('messages').appendChild(userDiv);
             scrollToBottom();
 
@@ -741,7 +764,7 @@ function initializeApp() {
             // Friendly user-facing message
             const userDiv = document.createElement('div');
             userDiv.className = 'message user';
-            userDiv.innerHTML = `<div class="msg-sender">You</div>Verify my mastery of ${concept}`;
+            userDiv.innerHTML = `<div class="msg-sender">You</div>Verify my mastery of ${escapeHTML(concept)}`;
             document.getElementById('messages').appendChild(userDiv);
             scrollToBottom();
 
@@ -758,7 +781,7 @@ function initializeApp() {
                 // Visually insert the user's question so the chat doesn't look empty
                 const userDiv = document.createElement('div');
                 userDiv.className = 'message user';
-                userDiv.innerHTML = `<div class="msg-sender">You</div>` + fakeUserMsg;
+                userDiv.innerHTML = `<div class="msg-sender">You</div>` + escapeHTML(fakeUserMsg);
                 document.getElementById('messages').appendChild(userDiv);
                 scrollToBottom();
             }
@@ -882,11 +905,16 @@ async function loadSession(sessionId) {
             const div = document.createElement('div');
             div.className = `message ${msg.role}`;
             if (msg.role === 'user') {
-                let text = msg.content.replace(/\n/g, '<br>');
-                if (text.includes('{') || text.includes(';')) text = `<pre><code class="language-c">${text.replace(/</g, '&lt;')}</code></pre>`;
+                // User content is untrusted — always escape before insertion.
+                let text;
+                if (msg.content.includes('{') || msg.content.includes(';')) {
+                    text = `<pre><code class="language-c">${escapeHTML(msg.content)}</code></pre>`;
+                } else {
+                    text = escapeHTML(msg.content).replace(/\n/g, '<br>');
+                }
                 div.innerHTML = `<div class="msg-sender">You</div>` + text;
             } else {
-                div.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(msg.content);
+                div.innerHTML = `<div class="msg-sender bot">Tutor</div>` + renderMD(msg.content);
                 renderDiagrams(div);
             }
             msgDiv.appendChild(div);
@@ -2071,9 +2099,9 @@ function renderMarkdownCr(text) {
     if (!text) return '';
     if (typeof marked !== 'undefined') {
         marked.setOptions({ breaks: true, gfm: true });
-        return marked.parse(text);
+        return renderMD(text);
     }
-    return text.replace(/\n/g, '<br>');
+    return escapeHTML(text).replace(/\n/g, '<br>');
 }
 
 // Init
@@ -2160,7 +2188,7 @@ function openSolveModal(topic, rawQuestion) {
     document.getElementById('solveModalTopic').innerText = topic;
     
     // Render the question using Markdown safely
-    const questionHtml = rawQuestion ? marked.parse(rawQuestion) : "No question text available.";
+    const questionHtml = rawQuestion ? renderMD(rawQuestion) : "No question text available.";
     document.getElementById('solveModalQuestion').innerHTML = questionHtml;
     
     // Highlight any code blocks in the question
