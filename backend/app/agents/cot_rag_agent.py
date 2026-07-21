@@ -228,13 +228,46 @@ class ChainOfThoughtRAGAgent:
         profile["skipped_challenges"] = skipped
         db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), username))
     
+    # Sub-topic → canonical concept-node aliases. The Neo4j curriculum stores broad
+    # concepts ("Memory Allocation", "Recursion"), but students ask using specific API
+    # names ("malloc", "calloc") that aren't node names — so the prereq gate found no
+    # node and silently let advanced topics through (Module-B F3-03/F3-04). Map them.
+    _CONCEPT_ALIASES = {
+        "malloc": "Memory Allocation",
+        "calloc": "Memory Allocation",
+        "realloc": "Memory Allocation",
+        "dynamic memory": "Memory Allocation",
+        "dynamic memory allocation": "Memory Allocation",
+        "recursion": "Recursion",
+        "recursive": "Recursion",
+    }
+
+    def _canonicalize_entities(self, entities: List[str]) -> List[str]:
+        """Map specific sub-topic names to their canonical curriculum concept node."""
+        out = []
+        for e in entities or []:
+            out.append(self._CONCEPT_ALIASES.get((e or "").lower().strip(), e))
+        return out
+
     def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
-        # Same as before
+        # Canonicalize sub-topics first (malloc → Memory Allocation, recursion → Recursion)
+        # so they resolve to a concept node that carries a direct prerequisite edge.
+        # We match the node's OWN REQUIRES edges only (not a parent Section's) — inheriting
+        # Section-level prereqs over-gates foundational concepts like Variables (F2-01).
+        initial_entities = self._canonicalize_entities(initial_entities)
         prereqs = []
         for entity in initial_entities:
-            cypher = "MATCH (target) WHERE (toLower(target.name) CONTAINS toLower($name) OR toLower($name) CONTAINS toLower(target.name)) AND NOT target:Section MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req) RETURN req.name as name"
+            cypher = (
+                "MATCH (target) "
+                "WHERE (toLower(target.name) CONTAINS toLower($name) "
+                "       OR toLower($name) CONTAINS toLower(target.name)) "
+                "  AND NOT target:Section "
+                "MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req) "
+                "RETURN DISTINCT req.name as name"
+            )
             results = self.graph_db.execute_query(cypher, {"name": entity})
-            for record in results: prereqs.append(record['name'])
+            for record in results:
+                prereqs.append(record['name'])
         return list(set(prereqs))
 
     # def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
@@ -525,18 +558,15 @@ class ChainOfThoughtRAGAgent:
                 "causal_flags": causal_flags
             }
 
-        # --- LEARNING UPDATE (Logic only) ---
+        # --- LEARNING UPDATE ---
+        # NOTE: self-declaration ("I know variables") is NOT certification. It already
+        # bypasses the prerequisite gate for THIS turn (see _check_gatekeeping, which
+        # returns None when "i know" is in the query), but it must never write permanent
+        # mastery — only BKT certification (bkt.is_mastered) may call mark_concept_as_known.
+        # Writing here caused Module-B F3-05/F4-01/F5-02: "mastered" claims the dashboard
+        # (BKT) disagreed with. Intentionally left as a no-op.
         if "i know" in query.lower():
-            # If the user says "I know them" or "I know variables", 
-            # we need to credit them for the PREREQUISITES of the current topic.
-            reqs = self._check_prerequisites(query, entities)
-            for req in reqs:
-                knowledge_manager.mark_concept_as_known(username, req)
-                self.logger.info(f"🧠 Learned that {username} knows prerequisite: {req}")
-            
-            if "teach me" not in query.lower():
-                 for entity in entities:
-                    knowledge_manager.mark_concept_as_known(username, entity)
+            self.logger.info(f"🗣️ {username} self-declared prior knowledge — honored for this turn's gate only, not certified.")
 
         # 3. Prerequisite Check (Graph DB)
         t0 = time.time()
@@ -728,7 +758,11 @@ class ChainOfThoughtRAGAgent:
         
         # Don't check prereqs for simple greetings or non-concept intents
         if intent not in ["CONCEPT", "PROBLEM"]: return None
-        
+
+        # Resolve sub-topic aliases (malloc → Memory Allocation, recursion → Recursion)
+        # so both the prereq lookup and the graph-node validation below succeed.
+        entities = self._canonicalize_entities(entities)
+
         # Do the Graph Check
         all_prereqs = self._check_prerequisites(query, entities)
         

@@ -321,8 +321,11 @@ class ExaminerAgent(BaseAgent):
 
         if result['is_correct']:
             knowledge_manager.resolve_misconception(state.user_id, check_topic)
-            # BKT-gated mastery: mark known only when P(L) crosses 0.95 threshold
-            if bkt.is_mastered(state.user_id, check_topic):
+            # BKT is the sole mastery authority: mark known only when P(L) >= 0.95 across
+            # tiers. Capture the decision so the message can't claim mastery the dashboard
+            # (BKT) disagrees with — Module-B F3-05/F4-01/F4-04.
+            _bkt_mastered = bkt.is_mastered(state.user_id, check_topic)
+            if _bkt_mastered:
                 knowledge_manager.mark_concept_as_known(state.user_id, check_topic)
                 self.logger.info(f"🏆 [BKT] Mastery unlocked: '{check_topic}' P(L)={p_mastery:.3f}")
             else:
@@ -343,16 +346,23 @@ class ExaminerAgent(BaseAgent):
                     msg += "📊 *Knowledge credibility verified — 3 evidence points credited to your mastery record.*\n\n"
             else:
                 msg = f"✅ **{result['feedback']}**\n\n"
-                
-            msg += f"You've officially mastered **{check_topic}**.\n\n"
-            msg += f"🧠 **Feynman Challenge:** To truly lock this into your long-term memory, try explaining **{check_topic}** back to me in your own words, as if I were a 5-year-old!"
-            
-            suggestions = ["I'll try explaining it!", "What should I learn next?"]
+
+            # Only claim mastery when BKT agrees; otherwise affirm the correct answer and
+            # the real progress, and point to the next step (positive feedback + next step).
+            if _bkt_mastered:
+                msg += f"You've officially mastered **{check_topic}**! 🎉\n\n"
+                msg += f"🧠 **Feynman Challenge:** To truly lock this into your long-term memory, try explaining **{check_topic}** back to me in your own words, as if I were a 5-year-old!"
+                suggestions = ["I'll try explaining it!", "What should I learn next?"]
+            else:
+                msg += f"Nice — that's correct! You're making solid progress on **{check_topic}**. A little more practice and you'll have it fully mastered.\n\n"
+                msg += f"Want to keep going and lock it in?"
+                suggestions = ["Try another question", "What should I learn next?"]
+
             if goals_stack:
                 last_goal = goals_stack[-1]
                 msg += f"\n\nOr, if you prefer, shall we go back to your goal: **\"{last_goal}\"**?"
                 suggestions.append(f"Back to: {last_goal}")
-            
+
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": suggestions, "intent": "EVALUATION", "entities": state.entities}}
         else:
             # =========================================================
