@@ -9,6 +9,24 @@ let currentTTSAudio = null;
 // Any message content — from the LLM, retrieved docs, or another user's stored
 // history — is untrusted. Render markdown, then strip scripts / event handlers /
 // javascript: URIs with DOMPurify before it ever touches innerHTML.
+//
+// S7-04: strip external image sources. A markdown image like
+// ![](http://tracker/pixel.gif) becomes an <img> that silently phones home
+// (tracking pixel / IP + timing leak) the moment it renders. Allow only inline
+// data: images and same-origin/relative paths; drop any absolute external src.
+if (window.DOMPurify && !window.__imgHookInstalled) {
+    window.__imgHookInstalled = true;
+    DOMPurify.addHook('afterSanitizeAttributes', function (node) {
+        if (node.tagName === 'IMG') {
+            const src = node.getAttribute('src') || '';
+            if (/^https?:\/\//i.test(src) || src.startsWith('//')) {
+                node.removeAttribute('src');
+                node.removeAttribute('srcset');
+            }
+        }
+    });
+}
+
 function renderMD(text) {
     const html = marked.parse(text || "");
     if (window.DOMPurify) {

@@ -103,8 +103,61 @@ class SentinelAgent(BaseAgent):
         
         # Default to empty list if no suggestions are provided
         suggs = suggestions if suggestions else []
-        
+
         return {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "SECURITY_RISK", "suggestions": suggs}}
+
+    # High-precision destructive-code signatures. These have no legitimate use in a
+    # beginner C course, so they are HARD-blocked (unlike the S_goal-gated triggers,
+    # which can be softened for high-alignment users). Deliberately EXCLUDES taught
+    # concepts — "buffer overflow", "stack overflow", "segfault", "memory leak",
+    # "infinite loop" — so debugging questions are never caught here.
+    _HARMFUL_CODE_SIGNATURES = [
+        "fork bomb", "forkbomb", ":(){", ":|:&", ":() {",
+        "keylogger", "key logger", "reverse shell", "bind shell",
+        "ransomware", "rootkit", "botnet", "spyware", "backdoor",
+        "rm -rf", "del /f /s", "format c:", "wipe the disk",
+        "/etc/shadow", "/etc/passwd", "port scanner", "syn flood",
+        "sql injection", "drop table", "dump credentials",
+        "steal password", "steal credentials", "steal the password",
+        "crash the server", "crash the system", "brick the",
+        "self-replicating", "self replicating",
+    ]
+
+    def _is_harmful_code(self, query_lower: str) -> bool:
+        """S5-02: detect requests to WRITE functional harmful code, independent of
+        goal alignment. Returns True if the query matches a destructive signature."""
+        return any(sig in query_lower for sig in self._HARMFUL_CODE_SIGNATURES)
+
+    # S6-02: cross-user privacy guard.
+    _PRIVACY_THIRD_PARTY = [
+        "another user", "another student", "another learner", "other user",
+        "other student", "other students", "someone else", "other people",
+        "everyone else", "all users", "all students", "list of students",
+        "list all users", "other user's", "classmate", "my friend",
+        "the other guy", "different student",
+    ]
+    _PRIVACY_DATA_NOUNS = [
+        "goal", "progress", "mastery", "history", "score", "answer",
+        "profile", "account", "record", "chat", "conversation", "message",
+        "password", "grade", "performance", "data",
+    ]
+
+    def _is_privacy_leak(self, query_lower: str, original_query: str, current_user: str = "") -> bool:
+        """Detect requests for ANOTHER user's private learning data. We refuse rather
+        than fabricate (the failure mode in S6-02 was hallucinating a stranger's goal)."""
+        has_data_noun = any(n in query_lower for n in self._PRIVACY_DATA_NOUNS)
+        if not has_data_noun:
+            return False
+        if any(p in query_lower for p in self._PRIVACY_THIRD_PARTY):
+            return True
+        # Possessive proper noun that isn't the current user: "what is Bob's progress".
+        current = (current_user or "").lower()
+        _self_tokens = {current, "i", "it", "the", "this", "that", "there",
+                        "here", "what", "who", "my", "your", "our"}
+        for name in re.findall(r"\b([A-Z][a-zA-Z]{2,20})'s\b", original_query):
+            if name.lower() not in _self_tokens:
+                return True
+        return False
 
     async def process(self, state: AgentState) -> AsyncGenerator[dict, None]:
         """
@@ -139,7 +192,7 @@ class SentinelAgent(BaseAgent):
                 "ignore all", "system override", "developer mode", "unfiltered", "jailbreak",
                 "/etc/passwd", "/etc/shadow", "reverse shell", "rm -rf", "drop table",
             ]
-            if any(t in payload_lower for t in _tag_bypass_triggers):
+            if any(t in payload_lower for t in _tag_bypass_triggers) or self._is_harmful_code(payload_lower):
                 self.logger.warning(f"🚨 [Sentinel L0] Tag-smuggled attack blocked: '{payload.strip()[:80]}'")
                 yield self._block_response(state, "Tag Bypass Attempt")
                 return
@@ -153,7 +206,35 @@ class SentinelAgent(BaseAgent):
                 state.intent = "CONCEPT"
             # If [SOLVE_CHALLENGE], intent is already forced to REVIEW in orchestrator
             return
-            
+
+        # =========================================================
+        # LAYER 1a: HARMFUL-CODE HARD BLOCK (S5-02)
+        # Destructive-code signatures are refused regardless of goal alignment.
+        # Runs before the S_goal softening gate so a "trusted" user still can't
+        # extract a fork bomb / keylogger / reverse shell.
+        # =========================================================
+        if self._is_harmful_code(query_lower):
+            self.logger.warning(f"🚨 [Sentinel L1a] Harmful-code request blocked: '{state.original_query[:80]}'")
+            msg = ("🛡️ I can't help write malicious or destructive code (that includes "
+                   "fork bombs, keyloggers, shells, or anything meant to damage a system "
+                   "or steal data).\n\nI'm happy to *explain* how these risks arise so you "
+                   "can defend against them, or help you with legitimate C programming.")
+            yield self._block_response(state, "Harmful Code", custom_msg=msg)
+            return
+
+        # =========================================================
+        # LAYER 1b: CROSS-USER PRIVACY GUARD (S6-02)
+        # Refuse requests for another student's private learning data. We never
+        # fabricate a stranger's goal/progress (the original failure mode).
+        # =========================================================
+        if self._is_privacy_leak(query_lower, state.original_query, state.user_id):
+            self.logger.warning(f"🚨 [Sentinel L1b] Cross-user privacy request blocked: '{state.original_query[:80]}'")
+            msg = ("🔒 I can only see **your own** learning data. I can't share another "
+                   "student's goals, progress, history, or answers — and I won't make them "
+                   "up.\n\nWant to check *your* progress or keep working on your goal?")
+            yield self._block_response(state, "Cross-User Privacy", custom_msg=msg)
+            return
+
         c_context_keywords = [
             "pointer", "array", "struct", "loop", "function", "variable", "int ", 
             "char ", "float ", "double", "void", "string", "printf", "scanf", 
