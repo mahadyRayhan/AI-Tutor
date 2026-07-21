@@ -386,28 +386,47 @@ async def chat_stream(request: ChatRequest):
     else:
         user_msg_id = history_manager.add_message(request.username, session_id, "user", request.message)
 
+    # Watchdog: max seconds to wait for the *next* event from the agent before we
+    # treat the stream as hung. Generous enough for RAG + first-token latency, but
+    # bounded so a stalled LLM can never leave the client "stuck on generating".
+    STREAM_STALL_TIMEOUT = 90
+
     async def generate_stream():
         full_bot_response = ""
         final_sources = []
         style_used_for_session = None
         _turn_start = time.time()
+        terminal_sent = False   # did we emit a terminal 'complete' event?
+        _agen = None
 
         try:
             if not cot_rag_agent:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Agent not initialized'})}\n\n"
+                yield f"data: {json.dumps({'type': 'complete', 'data': {'answer': '⚠️ The tutor is still starting up. Please try again in a moment.', 'sources': [], 'intent': 'ERROR', 'suggestions': [], 'session_id': session_id}})}\n\n"
+                terminal_sent = True
                 return
 
             user_goal = knowledge_manager.get_goal(request.username)
 
-            # --- 5. RUN AGENT ---
-            async for event in cot_rag_agent.run_stream(
-                request.message, 
-                request.user_role, 
+            # --- 5. RUN AGENT (timeout-guarded manual iteration) ---
+            # We drive the async generator by hand so we can bound how long we wait
+            # for each event; a hung LLM call trips STREAM_STALL_TIMEOUT and the
+            # finally block below still emits a terminal event to the client.
+            _agen = cot_rag_agent.run_stream(
+                request.message,
+                request.user_role,
                 username=request.username,
                 user_goal=user_goal,
                 conversation_context=last_context,
                 session_id=session_id
-            ):
+            )
+            while True:
+                try:
+                    event = await asyncio.wait_for(_agen.__anext__(), timeout=STREAM_STALL_TIMEOUT)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    logger.error(f"⏱️ [Stream] Agent produced no event for >{STREAM_STALL_TIMEOUT}s — aborting to avoid a stuck client.")
+                    break
                 # A. Capture Tokens (Streaming)
                 if event["type"] in ["token", "answer"]:
                     text_chunk = event.get("text", "")
@@ -539,14 +558,45 @@ async def chat_stream(request: ChatRequest):
                             logger.info(f"📹 [CLASSROOM] Suggested video: '{classroom_video['title']}' for topic '{detected_topic}'")
 
                     event["data"]["session_id"] = session_id
+                    terminal_sent = True   # this is a terminal 'complete' event
 
                 yield f"data: {json.dumps(event)}\n\n"
 
         except Exception as e:
+            # Log, but don't emit a bespoke 'error' here — the finally block emits a
+            # single guaranteed terminal 'complete' so the client always resolves.
             logger.error(f"Streaming error: {e}", exc_info=True)
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-        
+
         finally:
+            # Close the underlying agent generator (it may have been cancelled by the
+            # stall timeout mid-step); ignore any teardown noise.
+            if _agen is not None:
+                try:
+                    await _agen.aclose()
+                except Exception:
+                    pass
+
+            # --- TERMINAL-EVENT GUARANTEE ---
+            # If the agent finished (or hung, or crashed) without emitting a 'complete',
+            # the client would sit on the spinner forever ("stuck on generating").
+            # Emit one final terminal event so the UI always resolves.
+            if not terminal_sent:
+                _partial = full_bot_response.strip()
+                _ans = _partial or "⚠️ Sorry — I couldn't finish that response. Please try again."
+                _fallback_event = {
+                    "type": "complete",
+                    "data": {
+                        "answer": _ans,
+                        "sources": final_sources,
+                        "intent": "PARTIAL" if _partial else "ERROR",
+                        "suggestions": [],
+                        "session_id": session_id,
+                    },
+                }
+                logger.warning(f"🔚 [Stream] No terminal event from agent — emitting fallback ({'partial' if _partial else 'error'}).")
+                yield f"data: {json.dumps(_fallback_event)}\n\n"
+                terminal_sent = True
+
             # --- 6. SAVE BOT MESSAGE (Guaranteed Execution) ---
             # We save whatever response we have, even if the stream crashed
             if full_bot_response.strip():

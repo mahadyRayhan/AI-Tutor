@@ -361,11 +361,29 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             session_id: currentSessionId
         };
 
+        // Watchdog: if no bytes arrive for WATCHDOG_MS, abort the fetch so we can
+        // resolve the UI instead of spinning forever on a hung/half-open stream.
+        const controller = new AbortController();
+        const WATCHDOG_MS = 100000;  // > server STREAM_STALL_TIMEOUT (90s) so the server's own terminal event wins first
+        let watchdogTimer = null;
+        function armWatchdog() {
+            if (watchdogTimer) clearTimeout(watchdogTimer);
+            watchdogTimer = setTimeout(() => {
+                console.warn("Stream watchdog fired — aborting stalled response.");
+                try { controller.abort(); } catch (_) {}
+            }, WATCHDOG_MS);
+        }
+        function clearWatchdog() {
+            if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = null; }
+        }
+
         const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
         });
+        armWatchdog();
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -378,6 +396,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
         let typewriterTimer = null;
         let streamDone = false;         // has the SSE stream closed?
         let completeEvent = null;       // stash the 'complete' event
+        let finalized = false;          // has the response been finalized (spinner cleared)?
 
         const TICK_MS = 16;             // ~60fps render tick
 
@@ -399,6 +418,10 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                 // Buffer fully drained AND stream is done → do final render
                 finishRender(completeEvent);
                 completeEvent = null;
+            } else if (streamDone && !finalized) {
+                // Stream closed without a terminal 'complete' but we drip-fed some
+                // text — finalize gracefully so the spinner never lingers.
+                finalizeIncomplete('stream closed without completion');
             }
             // else: buffer caught up — typewriterTimer is null,
             //       so startTypewriter() can restart when new tokens arrive
@@ -412,6 +435,9 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
 
         // Final rich render after typewriter finishes
         function finishRender(data) {
+            finalized = true;
+            clearWatchdog();
+            if (typewriterTimer) { clearTimeout(typewriterTimer); typewriterTimer = null; }
             if (data.data.session_id) currentSessionId = data.data.session_id;
 
             // --- Update Pending Challenges UI ---
@@ -452,10 +478,36 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             scrollToBottom();
         }
 
+        // Graceful finalize when the stream ends/aborts WITHOUT a terminal 'complete'.
+        // Renders whatever partial text arrived (or an error) and clears the spinner,
+        // so the UI never stays "stuck on generating".
+        function finalizeIncomplete(reason) {
+            if (finalized) return;
+            finalized = true;
+            clearWatchdog();
+            if (typewriterTimer) { clearTimeout(typewriterTimer); typewriterTimer = null; }
+            const partial = (fullMarkdown || "").trim();
+            const header = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>`;
+            if (partial) {
+                botDiv.innerHTML = header + renderMD(partial) +
+                    `<div style="color:#c98a00;font-size:0.85em;margin-top:8px;">⚠️ This response may be incomplete — please retry if it looks cut off.</div>`;
+                renderDiagrams(botDiv);
+                Prism.highlightAllUnder(botDiv);
+                injectCopyButtons(botDiv);
+                addFeedbackButtons(botDiv, rawText);
+            } else {
+                botDiv.innerHTML = header +
+                    `<span style="color:#ff897d;">⚠️ Sorry — I couldn't finish that response. Please try again.</span>`;
+            }
+            markAiResponded();
+            scrollToBottom();
+        }
+
         // ── SSE Read Loop ──────────────────────────────────────
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            armWatchdog();  // bytes arrived → reset the stall timer
 
             const lines = decoder.decode(value, { stream: true }).split('\n');
             for (const line of lines) {
@@ -463,6 +515,12 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                     try {
                         const data = JSON.parse(line.slice(6));
 
+                        // 0. ERROR → terminal: finalize gracefully, stop spinning
+                        if (data.type === 'error') {
+                            streamDone = true;
+                            finalizeIncomplete(data.message || 'server error');
+                            continue;
+                        }
                         // 1. STATUS UPDATE
                         if (data.type === 'status') {
                             const statusText = document.getElementById(`status-text-${progId}`);
@@ -497,15 +555,38 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             }
         }
 
-        // Safety: if stream ends without a 'complete' event, clean up typewriter
+        // Stream closed. Guarantee the UI resolves even if no terminal 'complete'
+        // arrived: drain any buffered text, else finalize gracefully.
         streamDone = true;
-        if (!completeEvent && typewriterTimer) {
-            // Let the remaining buffer drain naturally
+        clearWatchdog();
+        if (!finalized) {
+            if (completeEvent) {
+                finishRender(completeEvent);
+                completeEvent = null;
+            } else if (renderedLength >= (fullMarkdown || "").length) {
+                // Nothing left to drip-feed — finalize now.
+                finalizeIncomplete('stream closed without completion');
+            }
+            // else: typewriter is still draining buffered text; renderNextChunk will
+            // call finalizeIncomplete once it empties (streamDone && !completeEvent).
         }
 
     } catch (e) {
+        clearWatchdog();
         console.error(e);
-        botDiv.innerHTML = "<span style='color:#ff897d'>Connection failed.</span>";
+        // Render partial content if we have any; otherwise show a clear error.
+        if (!finalized) {
+            if ((fullMarkdown || "").trim()) {
+                finalizeIncomplete(e && e.name === 'AbortError' ? 'timed out' : 'connection failed');
+            } else {
+                botDiv.innerHTML = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>` +
+                    (e && e.name === 'AbortError'
+                        ? "<span style='color:#ff897d;'>⚠️ The response timed out. Please try again.</span>"
+                        : "<span style='color:#ff897d;'>⚠️ Connection failed. Please try again.</span>");
+                finalized = true;
+                markAiResponded();
+            }
+        }
     }
 };
 
