@@ -1367,15 +1367,21 @@ class SelfAssessmentRequest(BaseModel):
 @app.get("/api/v1/mastery/{username}/{concept}")
 async def get_mastery_detail(username: str, concept: str):
     """Return per-tier mastery breakdown with BKT, self-assessment, and effective scores."""
-    from app.core.bkt_model import bkt, EVIDENCE_CONFIG, _read_row, _apply_decay, _parse_ts, _TS_COL, _LAM_COL
+    from app.core.bkt_model import (bkt, EVIDENCE_CONFIG, _read_row, _apply_decay, _parse_ts,
+                                    _TS_COL, _LAM_COL, _get_user_params, answers_to_certify,
+                                    calibrator)
     from app.core.srl_calibration import get_self_assessment
 
     row = _read_row(username, concept)
     if not row:
+        # Brand-new topic: answers-to-master computed from the cold-start priors.
         return {
             "concept": concept,
-            "tiers": {t: {"p_bkt": 0.0, "p_self": None, "p_effective": 0.0,
-                          "n_evidence": 0, "adapted_P_G": None}
+            "tiers": {t: {"p_bkt": round(EVIDENCE_CONFIG[t]["P_L0"], 4), "p_self": None,
+                          "p_effective": 0.0, "n_evidence": 0, "adapted_P_G": None,
+                          "answers_to_master": answers_to_certify(
+                              EVIDENCE_CONFIG[t]["P_L0"], 0, EVIDENCE_CONFIG[t],
+                              theta=calibrator.get_threshold(concept, t))}
                       for t in ("quiz", "micro", "code")},
             "composite_effective": 0.0,
             "is_certified": False,
@@ -1388,12 +1394,20 @@ async def get_mastery_detail(username: str, concept: str):
         p_raw = row[EVIDENCE_CONFIG[tier]["col"]] or EVIDENCE_CONFIG[tier]["P_L0"]
         p_bkt = _apply_decay(p_raw, tier, _parse_ts(row[_TS_COL[tier]]), lam=row[_LAM_COL[tier]])
         cal = get_self_assessment(username, concept, tier)
+        n_ev = row[f"n_evidence_{tier}"] or 0
+        # Best-case consecutive-correct answers still needed to certify this tier.
+        # Uses raw p_bkt (certification reads raw) and the user's own BKT params.
+        answers = answers_to_certify(
+            p_bkt, n_ev, _get_user_params(username, concept, tier),
+            theta=calibrator.get_threshold(concept, tier),
+        )
         tiers[tier] = {
             "p_bkt": round(p_bkt, 4),
             "p_self": cal["self_assessment"] if cal else None,
             "p_effective": effective[tier],
-            "n_evidence": row[f"n_evidence_{tier}"] or 0,
+            "n_evidence": n_ev,
             "adapted_P_G": cal["adapted_P_G"] if cal else None,
+            "answers_to_master": answers,
         }
 
     return {
@@ -1449,14 +1463,17 @@ async def get_head_start(username: str, concept: str):
 
 # Canonical C-curriculum prerequisite edges among the dashboard skill topics.
 # Used as a reliable fallback when the graph DB is empty or names don't line up.
-SKILL_TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings", "Pointers", "Structures"]
+SKILL_TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings",
+                "Pointers", "Structures", "Memory Allocation", "File I/O"]
 CANONICAL_PREREQ_EDGES = [
     ("Variables", "Control Flow"),
+    ("Variables", "Pointers"),
     ("Control Flow", "Functions"),
     ("Control Flow", "Arrays"),
-    ("Functions", "Pointers"),
     ("Arrays", "Strings"),
     ("Arrays", "Structures"),
+    ("Pointers", "Memory Allocation"),
+    ("Strings", "File I/O"),
 ]
 
 

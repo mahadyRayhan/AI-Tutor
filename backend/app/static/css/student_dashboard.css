@@ -381,6 +381,25 @@ h2 {
     opacity: 0.6;
 }
 
+.mastery-tier-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+}
+
+.mastery-tier-target {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--accent-color);
+}
+
+.mastery-tier-target.mastered {
+    color: var(--success-color);
+}
+
 .mastery-panel-actions {
     display: flex;
     align-items: center;

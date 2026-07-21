@@ -4,7 +4,8 @@ const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
 // Auth Guard
 if (!currentUser) window.location.href = 'index.html';
 
-const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings", "Pointers", "Structures"];
+const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings",
+               "Pointers", "Structures", "Memory Allocation", "File I/O"];
 
 // --- MAIN INIT ---
 function initDashboard() {
@@ -138,13 +139,15 @@ function renderCharts(data) {
 // --- SKILL NETWORK RENDERER ---
 // Fixed layered layout for the C-curriculum topics (prereqs flow left → right).
 const NET_POS = {
-    "Variables":    { x: 80,  y: 190 },
-    "Control Flow": { x: 240, y: 190 },
-    "Functions":    { x: 400, y: 100 },
-    "Arrays":       { x: 400, y: 280 },
-    "Pointers":     { x: 580, y: 90  },
-    "Strings":      { x: 580, y: 200 },
-    "Structures":   { x: 580, y: 310 },
+    "Variables":         { x: 60,  y: 200 },
+    "Control Flow":      { x: 190, y: 115 },
+    "Pointers":          { x: 190, y: 290 },
+    "Functions":         { x: 340, y: 65  },
+    "Arrays":            { x: 340, y: 175 },
+    "Memory Allocation": { x: 340, y: 300 },
+    "Strings":           { x: 500, y: 110 },
+    "Structures":        { x: 500, y: 215 },
+    "File I/O":          { x: 645, y: 110 },
 };
 const NET_R = 30;                       // node radius
 const NET_CIRC = 2 * Math.PI * NET_R;   // ring circumference
@@ -222,7 +225,7 @@ function drawNetwork(mastery, net) {
     });
 
     host.innerHTML = `
-    <svg viewBox="0 0 680 380" role="img" aria-label="Skill prerequisite network">
+    <svg viewBox="0 0 720 380" role="img" aria-label="Skill prerequisite network">
         <defs>
             <marker id="net-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                 <path d="M0,0 L10,5 L0,10 z" fill="rgba(255,255,255,0.22)"></path>
@@ -315,6 +318,18 @@ function renderMasterySliders(panel, safeId, concept, data) {
         const adapted = t.adapted_P_G !== null;
         const maxVal = pBkt;
 
+        // How many correct-in-a-row still needed to certify this tier.
+        const need = (typeof t.answers_to_master === 'number') ? t.answers_to_master : null;
+        let targetHtml;
+        if (need === 0) {
+            targetHtml = `<span class="mastery-tier-target mastered">✓ tier certified</span>`;
+        } else if (need !== null) {
+            const word = need === 1 ? 'answer' : 'answers';
+            targetHtml = `<span class="mastery-tier-target">🎯 ≈ ${need} correct ${word} in a row to certify</span>`;
+        } else {
+            targetHtml = '';
+        }
+
         html += `
         <div class="mastery-tier-row">
             <div class="mastery-tier-label">
@@ -333,7 +348,10 @@ function renderMasterySliders(panel, safeId, concept, data) {
                     oninput="onSliderMove('${safeId}', '${tier}', this.value, ${pBkt})">
                 <span class="mastery-slider-value" id="val-${safeId}-${tier}">${(pSelf * 100).toFixed(0)}%</span>
             </div>
-            <div class="mastery-tier-evidence">n_evidence: ${t.n_evidence}</div>
+            <div class="mastery-tier-foot">
+                <span class="mastery-tier-evidence">evidence ${t.n_evidence}/3</span>
+                ${targetHtml}
+            </div>
         </div>`;
     });
 

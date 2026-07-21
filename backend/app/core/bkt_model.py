@@ -419,6 +419,27 @@ def is_mastered(username: str, concept: str) -> bool:
     return newly_mastered
 
 
+def answers_to_certify(p_current: float, n_evidence: int, cfg: dict,
+                       theta: float = THETA_CERTIFY, n_min: int = N_MIN,
+                       max_iter: int = 50) -> int:
+    """
+    Best-case number of consecutive CORRECT answers this tier still needs to
+    certify, given its current raw posterior and evidence count.
+
+    Certification requires BOTH P̃ ≥ theta AND n_evidence ≥ n_min, so the answer is
+    max(steps to cross theta, remaining evidence). Simulates the real BKT step with
+    the user's own parameters. Assumes a single session (no decay between answers)
+    and is a best case — a wrong answer resets the streak. Returns 0 if already met.
+    """
+    steps = 0
+    p = p_current
+    while p < theta and steps < max_iter:
+        p = _bkt_step(p, True, cfg)
+        steps += 1
+    need_for_evidence = max(0, n_min - (n_evidence or 0))
+    return max(steps, need_for_evidence)
+
+
 bkt = type("BKTModel", (), {
     "update":                staticmethod(update),
     "get_mastery":           staticmethod(get_mastery),
