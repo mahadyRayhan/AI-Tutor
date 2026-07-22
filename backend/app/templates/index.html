@@ -22,7 +22,16 @@
     <!-- Mermaid.js Module -->
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+        // htmlLabels:false forces node/edge labels to render as native SVG <text>
+        // elements instead of HTML inside <foreignObject>. This is required because
+        // renderDiagrams() sanitizes the SVG with DOMPurify's svg profile, which
+        // strips <foreignObject> — otherwise boxes render with NO text inside them.
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'dark',
+            htmlLabels: false,
+            flowchart: { htmlLabels: false }
+        });
         window.mermaid = mermaid;
     </script>
 
