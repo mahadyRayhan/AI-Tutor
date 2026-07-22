@@ -379,7 +379,7 @@ async def chat_stream(request: ChatRequest):
     msg_text = request.message.strip()
     
     # Do not save system triggers or skipped warmups to the database
-    skip_save = msg_text in ["[INIT_SESSION]", "[NEW_CHAT]"] or msg_text.startswith("[WARMUP_ANSWER] skip")
+    skip_save = msg_text in ["[INIT_SESSION]", "[NEW_CHAT]"] or msg_text.startswith("[WARMUP_ANSWER] skip") or msg_text.startswith("[MASTERY_EXAM]")
     
     if skip_save:
         user_msg_id = None
@@ -1532,7 +1532,7 @@ async def get_skill_network(username: str):
     """Prerequisite network for the skill-progress dashboard: one node per topic
     (with mastery state, certification, and head-start flags) plus prerequisite edges.
     This is the visual face of the same graph the head-start mechanism runs on."""
-    from app.core import bkt_model, prereq_headstart
+    from app.core import bkt_model
 
     nodes = []
     for c in SKILL_TOPICS:
@@ -1553,21 +1553,13 @@ async def get_skill_network(username: str):
                 "has_head_start": False, "n_evidence": 0,
             })
 
-    # Prefer the live graph; fall back to the canonical curriculum map.
-    edges = []
-    try:
-        by_lower = {t.lower(): t for t in SKILL_TOPICS}
-        for dep in SKILL_TOPICS:
-            for pre in prereq_headstart._prerequisites_of(dep):
-                key = pre.lower()
-                if key in by_lower and by_lower[key] != dep:
-                    pair = [by_lower[key], dep]
-                    if pair not in edges:
-                        edges.append(pair)
-    except Exception:
-        edges = []
-    if not edges:
-        edges = [[a, b] for a, b in CANONICAL_PREREQ_EDGES]
+    # The dashboard shows 9 COARSE topics whose prerequisite structure is fixed
+    # curriculum knowledge — that's exactly CANONICAL_PREREQ_EDGES (curated to match
+    # SKILL_TOPICS, fully connected). We do NOT derive edges from the live graph: it
+    # stores fine-grained concept names ("Variables and Types", "Loops", "Operators")
+    # that don't match the coarse topic names, which silently dropped most edges and
+    # disconnected the graph. Node STATE still comes from live BKT data above.
+    edges = [[a, b] for a, b in CANONICAL_PREREQ_EDGES]
 
     return {"nodes": nodes, "edges": edges}
 

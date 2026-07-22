@@ -440,9 +440,64 @@ def answers_to_certify(p_current: float, n_evidence: int, cfg: dict,
     return max(steps, need_for_evidence)
 
 
+# How a student earns evidence in each tier — shown in the ledger so they know
+# exactly which action feeds which bar (Module-B F2-05 transparency).
+_TIER_LABEL = {"quiz": "Quiz", "micro": "Micro", "code": "Code"}
+_TIER_HOWTO = {
+    "quiz":  "quizzes & 🎯 Verify Mastery",
+    "micro": '"Your Turn" code challenges',
+    "code":  "submitting code for review",
+}
+
+
+def mastery_ledger(username: str, concept: str) -> str:
+    """Compact per-tier mastery progress block for a concept, as Markdown.
+
+    Shows each tier's progress bar, how many more correct answers it needs to
+    certify, and HOW to earn that evidence — so students understand that quiz,
+    micro, and code answers feed different bars. Returns "" for unknown/General
+    concepts so it can be safely appended to any graded response.
+    """
+    if not concept or concept.strip().lower() in ("", "general", "code submission"):
+        return ""
+
+    row = _read_row(username, concept)
+
+    def _bar(frac: float, cells: int = 4) -> str:
+        filled = max(0, min(cells, round(max(0.0, min(1.0, frac)) * cells)))
+        return "▰" * filled + "▱" * (cells - filled)
+
+    # Cold-start (no evidence yet): show empty ladder from the priors.
+    if not row:
+        lines = [f"### 🎯 {concept} — mastery progress"]
+        for t in ("quiz", "micro", "code"):
+            p0 = EVIDENCE_CONFIG[t]["P_L0"]
+            more = answers_to_certify(p0, 0, EVIDENCE_CONFIG[t],
+                                      theta=calibrator.get_threshold(concept, t))
+            lines.append(f"- **{_TIER_LABEL[t]}** {_bar(p0 / THETA_CERTIFY)} — ~{more} more · earn via {_TIER_HOWTO[t]}")
+        lines.append("\n*Certify this topic by clearing all three bars.*")
+        return "\n\n---\n" + "\n".join(lines)
+
+    if row["ever_certified"]:
+        return f"\n\n---\n✅ **You've mastered {concept}!** (all three tiers verified)"
+
+    lines = [f"### 🎯 {concept} — mastery progress"]
+    for t in ("quiz", "micro", "code"):
+        p_raw = row[EVIDENCE_CONFIG[t]["col"]] or EVIDENCE_CONFIG[t]["P_L0"]
+        p_bkt = _apply_decay(p_raw, t, _parse_ts(row[_TS_COL[t]]), lam=row[_LAM_COL[t]])
+        n_ev = row[f"n_evidence_{t}"] or 0
+        more = answers_to_certify(p_bkt, n_ev, _get_user_params(username, concept, t),
+                                  theta=calibrator.get_threshold(concept, t))
+        status = "✓ certified" if more == 0 else f"~{more} more"
+        lines.append(f"- **{_TIER_LABEL[t]}** {_bar(p_bkt / THETA_CERTIFY)} — {status} · earn via {_TIER_HOWTO[t]}")
+    lines.append("\n*Certify this topic by clearing all three bars.*")
+    return "\n\n---\n" + "\n".join(lines)
+
+
 bkt = type("BKTModel", (), {
     "update":                staticmethod(update),
     "get_mastery":           staticmethod(get_mastery),
     "get_effective_mastery": staticmethod(get_effective_mastery),
     "is_mastered":           staticmethod(is_mastered),
+    "mastery_ledger":        staticmethod(mastery_ledger),
 })()

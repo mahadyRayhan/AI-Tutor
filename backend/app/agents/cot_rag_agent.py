@@ -1018,6 +1018,123 @@ class ChainOfThoughtRAGAgent:
             }
         }
     
+    def _recent_quizzable_concept(self, username: str):
+        """Most recent concept the student has studied that has a quiz available.
+
+        Prefers NOT-yet-certified concepts so surprise quizzes trickle quiz-tier
+        evidence for what the student is actively learning (Module-B F2-05, task 2);
+        falls back to certified concepts for review. Returns None if none quizzable.
+        """
+        from app.db.sqlite_db import db
+        rows = db.fetch_all(
+            "SELECT concept, ever_certified FROM user_knowledge WHERE username=? ORDER BY timestamp DESC",
+            (username,)) or []
+        # In-progress first (trickle while learning), then certified (review).
+        ordered = [r["concept"] for r in rows if not r["ever_certified"]] + \
+                  [r["concept"] for r in rows if r["ever_certified"]]
+        for c in ordered:
+            if c and not c.lower().startswith("solved:") and self.examiner._fetch_quiz_question(c, []):
+                return c
+        return None
+
+    async def _process_mastery_exam(self, state, current_state, username, session_id):
+        """Comprehensive 3-stage Mastery Exam (Module-B F2-05, Option A).
+
+        Walks the student quiz → micro → code in one sitting, feeding ALL three BKT
+        tiers so acing it advances real certification. Repeatable: each run adds one
+        evidence point per tier. State lives in session as `mastery_exam`.
+        """
+        from app.core.bkt_model import bkt
+        q = (state.original_query or "").strip()
+        exam = (current_state or {}).get("mastery_exam")
+        CODE_CHARS = [";", "{", "}", "=", "(", ")"]
+
+        # --- START (dashboard tag or a "Retake exam: X" button) ---
+        is_start = q.startswith("[MASTERY_EXAM]") or q.lower().startswith("retake exam")
+        if is_start:
+            if q.startswith("[MASTERY_EXAM]"):
+                concept = q.replace("[MASTERY_EXAM]", "").strip()
+            else:
+                concept = q.split(":", 1)[1].strip() if ":" in q else ""
+            if not concept:
+                concept = state.entities[0] if state.entities else "this concept"
+
+            qa = self.examiner._fetch_quiz_question(concept, [])
+            if not qa:
+                yield {"type": "complete", "data": {
+                    "answer": f"I don't have exam questions for **{concept}** yet — try learning it first, or pick another topic.",
+                    "sources": [], "intent": "GUIDANCE", "suggestions": [f"Explain {concept}"]}}
+                return
+            exam = {"concept": concept, "stage": "quiz", "score": {},
+                    "quiz_a": qa["a"], "quiz_vg": qa["a_vector"], "quiz_vl": qa.get("a_vector_local")}
+            history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
+            msg = (f"## 🎓 Mastery Exam — {concept}\n\n"
+                   f"Three quick steps, one per skill tier — each adds real evidence toward certification. "
+                   f"(Type *stop* anytime to cancel.)\n\n"
+                   f"**Step 1 of 3 · Quiz**\n\n{qa['q']}\n\n👉 *Type your answer below.*")
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM",
+                                                "suggestions": ["I don't know (Skip)"]}}
+            return
+
+        if not exam:
+            return
+        concept = exam["concept"]
+        stage = exam.get("stage")
+
+        # --- Escape hatch ---
+        if q.lower() in ("stop", "quit", "cancel", "exit", "stop exam", "cancel exam"):
+            history_manager.update_session_state(username, session_id, {"mastery_exam": None})
+            yield {"type": "complete", "data": {
+                "answer": "No problem — exam cancelled. The evidence you earned so far is saved.",
+                "sources": [], "intent": "GUIDANCE", "suggestions": []}}
+            return
+
+        # --- STAGE 1: QUIZ (real embedding grade) ---
+        if stage == "quiz":
+            res = await self.examiner._smart_grade_answer(q, exam.get("quiz_vg"), exam.get("quiz_vl"), exam.get("quiz_a"))
+            bkt.update(username, concept, bool(res["is_correct"]), evidence_type="quiz")
+            exam["score"]["quiz"] = bool(res["is_correct"])
+            exam["stage"] = "micro"
+            history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
+            fb = "✅ **Correct!**" if res["is_correct"] else f"❌ {res.get('feedback', 'Not quite.')}"
+            msg = (f"{fb}\n\n**Step 2 of 3 · Micro-Challenge**\n\n"
+                   f"Write **one line of C** that uses **{concept}**.\n\n👉 *Type your code.*")
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM", "suggestions": []}}
+            return
+
+        # --- STAGE 2: MICRO (attempt-with-code = evidence) ---
+        if stage == "micro":
+            has_code = any(c in q for c in CODE_CHARS)
+            bkt.update(username, concept, has_code, evidence_type="micro")
+            exam["score"]["micro"] = has_code
+            exam["stage"] = "code"
+            history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
+            fb = "✅ **Nice — that's valid C.**" if has_code else "⚠️ That didn't look like code, but let's finish."
+            msg = (f"{fb}\n\n**Step 3 of 3 · Code**\n\n"
+                   f"Write a short C snippet (2–4 lines) that demonstrates **{concept}** in action.\n\n👉 *Type your code.*")
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM", "suggestions": []}}
+            return
+
+        # --- STAGE 3: CODE (final) ---
+        if stage == "code":
+            has_code = any(c in q for c in [";", "{", "}"])
+            bkt.update(username, concept, has_code, evidence_type="code")
+            exam["score"]["code"] = has_code
+            history_manager.update_session_state(username, session_id, {"mastery_exam": None})
+            passed = sum(1 for v in exam["score"].values() if v)
+            certified = bkt.is_mastered(username, concept)
+            head = (f"## 🎓 Mastery Exam Complete — {concept}\n\n"
+                    f"You cleared **{passed}/3** steps this round.\n")
+            if certified:
+                head += f"\n🏆 **{concept} is now certified!** Outstanding work.\n"
+            else:
+                head += ("\nEach step added evidence to its tier. **Retake the exam** to add more — "
+                         "certification needs sustained correct performance across all three tiers.\n")
+            head += bkt.mastery_ledger(username, concept)
+            yield {"type": "complete", "data": {"answer": head, "sources": [], "intent": "EXAM",
+                                                "suggestions": [f"Retake exam: {concept}", "What should I learn next?"]}}
+            return
+
     async def run_stream(self, query: str, user_role: str = 'student', **kwargs):
         import time
         t_start = time.time()
@@ -1400,6 +1517,17 @@ class ChainOfThoughtRAGAgent:
                 should_skip_context = True # Skip LLM rewrites
         # =========================================================
 
+        # --- MASTERY EXAM (comprehensive 3-tier: quiz → micro → code) ---
+        # Intercept the dashboard exam trigger and any in-progress exam before the
+        # normal pipeline so each step routes to the exam state machine.
+        _exam_active = current_state.get("mastery_exam") if current_state else None
+        _exam_start = (state.original_query or "").strip().startswith("[MASTERY_EXAM]") \
+            or (state.original_query or "").strip().lower().startswith("retake exam")
+        if _exam_active or _exam_start:
+            async for _ev in self._process_mastery_exam(state, current_state, username, session_id):
+                yield _ev
+            return
+
         # --- 5. PROACTIVE POP QUIZZES ---
         msg_list = current_state.get("messages", []) if current_state else []
         if not msg_list and session_id:
@@ -1437,14 +1565,12 @@ class ChainOfThoughtRAGAgent:
         if should_trigger_quiz:
             self.logger.info("🎯 Triggering Proactive Pop Quiz!")
             
-            # FIX: Use ACTUAL mastered concepts from the DB, not bot message metadata.
-            # This ensures the quiz is about something the student actually learned.
-            known_concepts = knowledge_manager.get_known_concepts(username)
-            
-            if known_concepts:
-                # Pick the most recently mastered concept (last in the list)
-                recent_topic = known_concepts[-1]
-                
+            # Prefer a concept the student is actively LEARNING (has evidence but not
+            # yet certified) so quiz-tier evidence trickles in during normal study;
+            # fall back to a mastered concept for review. Guaranteed to have a quiz.
+            recent_topic = self._recent_quizzable_concept(username)
+
+            if recent_topic:
                 # Push the current query onto the goals stack
                 goals_stack = current_state.get("pending_goals", []) if current_state else []
                 if state.query not in goals_stack:
@@ -1454,10 +1580,10 @@ class ChainOfThoughtRAGAgent:
                 state.intent = "QUIZ"
                 state.entities = [recent_topic]
                 state.profile['is_surprise_quiz'] = True
-                self.logger.info(f"🎯 Quiz topic from mastery DB: '{recent_topic}'")
+                self.logger.info(f"🎯 Surprise quiz topic: '{recent_topic}'")
             else:
-                # No mastered concepts — skip the quiz entirely instead of defaulting to 'Variables'
-                self.logger.info("⏭️ Skipping pop quiz: no mastered concepts to quiz on")
+                # Nothing quizzable yet (no studied concept has a quiz) — skip.
+                self.logger.info("⏭️ Skipping pop quiz: no quizzable studied concept")
         # --------------------------------------------
 
         # ---------------------------------------------------------
@@ -1640,6 +1766,10 @@ class ChainOfThoughtRAGAgent:
                 if has_code:
                     state.intent = "REVIEW"
                     state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this code. Keep it brief."
+                    # Attribute the upcoming code review to the real concept (not the
+                    # generic "code submission"), so code-tier evidence AND the mastery
+                    # ledger land on this topic (Module-B F2-05).
+                    state.entities = [challenge_topic]
                     # BKT micro evidence: student attempted procedural code → always counts as attempt
                     from app.core.bkt_model import bkt as _bkt_micro
                     _bkt_micro.update(username, challenge_topic, True, evidence_type="micro")

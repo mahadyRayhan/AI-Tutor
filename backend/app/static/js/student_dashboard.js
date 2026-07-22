@@ -359,7 +359,7 @@ function renderMasterySliders(panel, safeId, concept, data) {
     html += `
         <div class="mastery-panel-actions">
             <button class="mastery-save-btn" onclick="saveSelfAssessment('${safeId}', '${concept}')">Save Assessment</button>
-            <button class="mastery-verify-btn" onclick="verifyMastery('${cEsc}')" title="Take a quiz to raise your mastery — the only way up">🎯 Verify Mastery</button>
+            <button class="mastery-verify-btn" onclick="verifyMastery('${cEsc}')" title="Answer quiz questions to raise your Quiz tier. Full certification also needs the Micro (Your Turn code challenges) and Code (submit code for review) tiers.">🎯 Verify Mastery</button>
             <span class="mastery-save-status" id="status-${safeId}"></span>
         </div>
         ${masteryHint(concept, data)}
@@ -371,6 +371,12 @@ function renderMasterySliders(panel, safeId, concept, data) {
 // "What else to do" — weakest tier + any uncertified prerequisite.
 function masteryHint(concept, data) {
     const labels = { quiz: 'Quiz', micro: 'Micro-Challenge', code: 'Code Review' };
+    // How a student earns each tier — so they know which action feeds which bar.
+    const howto = {
+        quiz: 'answer quiz questions or click 🎯 Verify Mastery',
+        micro: 'answer the tutor\'s "Your Turn" challenges with a line of C code',
+        code: 'submit code and ask for a review',
+    };
     const parts = [];
 
     // 1. Weakest tier = the one furthest from certification (most answers still needed).
@@ -380,7 +386,7 @@ function masteryHint(concept, data) {
         if (typeof n === 'number' && n > worstN) { worstN = n; worst = t; }
     });
     if (worstN > 0) {
-        parts.push(`Focus your <b>${labels[worst]}</b> tier — about ${worstN} correct in a row to go.`);
+        parts.push(`Focus your <b>${labels[worst]}</b> tier — about ${worstN} correct in a row to go. To earn it: ${howto[worst]}.`);
     }
 
     // 2. Prerequisites that are not yet certified (from the skill-network data).

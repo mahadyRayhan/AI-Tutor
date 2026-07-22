@@ -867,8 +867,8 @@ function initializeApp() {
             document.getElementById('messages').appendChild(userDiv);
             scrollToBottom();
 
-            // Send the internal "(verify)" trigger silently → examiner runs the verify quiz
-            setTimeout(() => window.sendMessage(`I know ${concept} (verify)`, true), 50);
+            // Send the exam trigger → runs the comprehensive 3-tier Mastery Exam
+            setTimeout(() => window.sendMessage(`[MASTERY_EXAM] ${concept}`, true), 50);
         } else if (initialMsg.startsWith('[START_TOPIC]')) {
             // Extract concept and goal
             const match = initialMsg.match(/\[START_TOPIC\]\s+(.*?)\s+\[GOAL\]\s+(.*)/);

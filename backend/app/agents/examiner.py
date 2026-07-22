@@ -363,6 +363,7 @@ class ExaminerAgent(BaseAgent):
                 msg += f"\n\nOr, if you prefer, shall we go back to your goal: **\"{last_goal}\"**?"
                 suggestions.append(f"Back to: {last_goal}")
 
+            msg += bkt.mastery_ledger(state.user_id, check_topic)  # F2-05: show tier progress
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": suggestions, "intent": "EVALUATION", "entities": state.entities}}
         else:
             # =========================================================
@@ -383,16 +384,17 @@ class ExaminerAgent(BaseAgent):
                 msg = f"❌ **{result['feedback']}**\n\n"
 
             suggestions = [
-                f"Explain {check_topic}",   
+                f"Explain {check_topic}",
                 "Try another question"
             ]
-            
+
+            msg += bkt.mastery_ledger(state.user_id, check_topic)  # F2-05: show tier progress
             yield {"type": "complete", "data": {
-                "answer": msg, 
-                "sources": [], 
-                "suggestions": suggestions, 
+                "answer": msg,
+                "sources": [],
+                "suggestions": suggestions,
                 "intent": "EVALUATION",
-                "entities": state.entities 
+                "entities": state.entities
             }}
 
     async def _smart_grade_answer(self, student_answer: str, vec_google, vec_local, correct_text: str) -> dict:
