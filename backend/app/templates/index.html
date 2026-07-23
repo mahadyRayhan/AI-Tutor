@@ -36,6 +36,7 @@
     </script>
 
     <link rel="stylesheet" href="/static/css/chat.css?v=7">
+    <link rel="stylesheet" href="/static/css/auth.css?v=1">
 </head>
 
 <body>
@@ -44,30 +45,100 @@
     <!--            AUTH SCREEN                  -->
     <!-- ═══════════════════════════════════════ -->
     <div id="auth-screen">
-        <!-- Login Form -->
-        <div class="auth-card" id="loginForm">
-            <h2>👋 Welcome Back</h2>
-            <input type="text" id="loginUser" class="auth-input" placeholder="Username">
-            <input type="password" id="loginPass" class="auth-input" placeholder="Password">
-            <button class="auth-btn" onclick="performLogin()">Log In</button>
-            <div class="toggle-link" onclick="toggleAuth('signup')">Create an account</div>
-            <div class="error-msg" id="loginError"></div>
-        </div>
-        <!-- Signup Form -->
-        <div class="auth-card hidden" id="signupForm">
-            <h2>🚀 Create Account</h2>
-            <input type="text" id="signName" class="auth-input" placeholder="Full Name">
-            <input type="email" id="signEmail" class="auth-input" placeholder="Email">
-            <input type="text" id="signUser" class="auth-input" placeholder="Username">
-            <input type="password" id="signPass" class="auth-input" placeholder="Password">
-            <input type="text" id="signUni" class="auth-input" placeholder="University (Optional)">
-            <input type="text" id="signDept" class="auth-input" placeholder="Department (Optional)">
-            <input type="text" id="signInterest" class="auth-input" placeholder="Topic of Interest (Optional)">
-            <button class="auth-btn" onclick="performSignup()">Sign Up</button>
-            <div class="toggle-link" onclick="toggleAuth('login')">Back to Login</div>
-            <div class="error-msg" id="signupError"></div>
+      <div class="auth-shell">
+        <!-- Brand / hero panel -->
+        <aside class="auth-brand">
+          <div class="auth-brand-inner">
+            <div class="auth-logo"><span class="auth-logo-mark">&lt;/&gt;</span> SAGE <span class="auth-logo-sub">C&nbsp;Tutor</span></div>
+            <h1 class="auth-headline">Master C programming with a tutor that adapts to you.</h1>
+            <p class="auth-sub">Interactive lessons, guided practice, and instant feedback — personalized to how you learn.</p>
+            <ul class="auth-features">
+              <li>Socratic, step-by-step guidance</li>
+              <li>Mastery tracking across every concept</li>
+              <li>Video classroom &amp; personalized learning paths</li>
+            </ul>
+          </div>
+          <div class="auth-brand-foot">© 2026 SAGE · University of Missouri</div>
+        </aside>
+
+        <!-- Form panel -->
+        <main class="auth-panel">
+          <!-- Login -->
+          <form class="auth-card" id="loginForm" onsubmit="return false;" novalidate>
+            <h2>Welcome back</h2>
+            <p class="auth-lead">Log in to continue learning.</p>
+            <div class="field">
+              <label for="loginUser">Username</label>
+              <input type="text" id="loginUser" autocomplete="username" placeholder="your_username">
+            </div>
+            <div class="field">
+              <label for="loginPass">Password</label>
+              <div class="pw-wrap">
+                <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••">
+                <button type="button" class="pw-toggle" data-target="loginPass" aria-label="Show password">Show</button>
+              </div>
+            </div>
+            <div class="field-error" id="loginError"></div>
+            <button type="submit" class="auth-btn" onclick="performLogin()">Log in</button>
+            <div class="auth-switch">New here? <a tabindex="0" onclick="toggleAuth('signup')">Create an account</a></div>
+          </form>
+
+          <!-- Signup -->
+          <form class="auth-card hidden" id="signupForm" onsubmit="return false;" novalidate>
+            <h2>Create your account</h2>
+            <p class="auth-lead">Start learning C in minutes.</p>
+            <div class="field">
+              <label for="signName">Full name</label>
+              <input type="text" id="signName" autocomplete="name" placeholder="Ada Lovelace">
+              <div class="field-error" id="err-name"></div>
+            </div>
+            <div class="field">
+              <label for="signEmail">Email</label>
+              <input type="email" id="signEmail" autocomplete="email" placeholder="you@university.edu">
+              <div class="field-error" id="err-email"></div>
+            </div>
+            <div class="field">
+              <label for="signUser">Username</label>
+              <input type="text" id="signUser" autocomplete="username" placeholder="3–30 letters, numbers, _">
+              <div class="field-error" id="err-username"></div>
+            </div>
+            <div class="field">
+              <label for="signPass">Password</label>
+              <div class="pw-wrap">
+                <input type="password" id="signPass" autocomplete="new-password" placeholder="Create a strong password">
+                <button type="button" class="pw-toggle" data-target="signPass" aria-label="Show password">Show</button>
+              </div>
+              <div class="pw-meter" aria-hidden="true"><span id="pwBar"></span></div>
+              <div class="pw-strength-label" id="pwStrength"></div>
+              <ul class="pw-reqs" id="pwReqs">
+                <li data-req="len">At least 8 characters</li>
+                <li data-req="upper">One uppercase letter</li>
+                <li data-req="lower">One lowercase letter</li>
+                <li data-req="digit">One number</li>
+              </ul>
+              <div class="field-error" id="err-password"></div>
+            </div>
+            <div class="field">
+              <label for="signPass2">Confirm password</label>
+              <div class="pw-wrap">
+                <input type="password" id="signPass2" autocomplete="new-password" placeholder="Re-enter password">
+                <button type="button" class="pw-toggle" data-target="signPass2" aria-label="Show password">Show</button>
+              </div>
+              <div class="field-error" id="err-password2"></div>
+            </div>
+            <details class="auth-optional">
+              <summary>Optional details</summary>
+              <div class="field"><label for="signUni">University</label><input type="text" id="signUni" placeholder="University"></div>
+              <div class="field"><label for="signDept">Department</label><input type="text" id="signDept" placeholder="Department"></div>
+              <div class="field"><label for="signInterest">Topic of interest</label><input type="text" id="signInterest" placeholder="e.g. Pointers"></div>
+            </details>
+            <div class="field-error" id="signupError"></div>
             <div class="success-msg" id="signupSuccess"></div>
-        </div>
+            <button type="submit" class="auth-btn" onclick="performSignup()">Create account</button>
+            <div class="auth-switch">Already have an account? <a tabindex="0" onclick="toggleAuth('login')">Log in</a></div>
+          </form>
+        </main>
+      </div>
     </div>
 
     <!-- ═══════════════════════════════════════ -->
@@ -446,7 +517,7 @@
         </div>
     </div>
 
-    <script src="/static/js/chat.js?v=13" defer></script>
+    <script src="/static/js/chat.js?v=14" defer></script>
 </body>
 
 </html>

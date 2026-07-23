@@ -764,19 +764,34 @@ async def login(creds: LoginRequest):
 
 @app.post("/api/v1/auth/signup")
 async def signup(req: SignupRequest):
+    from app.core import validators
+
+    # 1. Authoritative server-side validation (never trust the client).
+    field, err = validators.validate_signup(req.name, req.email, req.username, req.password)
+    if err:
+        raise HTTPException(status_code=422, detail=err)
+
+    name = req.name.strip()
+    username = req.username.strip()
+    email = validators.normalize_email(req.email)
+
+    # 2. Uniqueness checks with specific, actionable messages.
+    if user_manager.email_taken(email):
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+
     success = user_manager.create_user(
-        username=req.username,
+        username=username,
         password=req.password,
-        name=req.name,
-        email=req.email,
+        name=name,
+        email=email,
         university=req.university,
         department=req.department,
         interest=req.interest
     )
     if success:
-        return {"status": "success", "message": "Account created! Please login."}
+        return {"status": "success", "message": "Account created! Please log in."}
     else:
-        raise HTTPException(status_code=400, detail="Username already exists")
+        raise HTTPException(status_code=409, detail="That username is already taken.")
 
 @app.get("/api/v1/admin/users", dependencies=[Depends(verify_teacher)])
 async def get_users_paginated(page: int = 1, page_size: int = 10):

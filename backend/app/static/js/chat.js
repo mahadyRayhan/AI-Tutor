@@ -750,6 +750,14 @@ function autoResize(textarea) {
 function toggleAuth(view) {
     document.getElementById('loginForm').classList.toggle('hidden', view === 'signup');
     document.getElementById('signupForm').classList.toggle('hidden', view !== 'signup');
+    // Clear any lingering messages when switching forms
+    ['loginError', 'signupError', 'err-name', 'err-email', 'err-username',
+     'err-password', 'err-password2'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.innerText = ''; el.classList.remove('show'); el.style.display = 'none'; }
+    });
+    const s = document.getElementById('signupSuccess');
+    if (s) s.style.display = 'none';
 }
 
 function handleKeyPress(e) {
@@ -765,9 +773,87 @@ function scrollToBottom() {
 }
 
 // --- 4. AUTH & LOAD ---
+// --- Auth helpers ---------------------------------------------------------
+function showError(id, msg) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerText = msg;
+    el.classList.add('show');
+    el.style.display = 'block';
+}
+function clearError(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerText = '';
+    el.classList.remove('show');
+    el.style.display = 'none';
+}
+function setFieldState(inputId, errId, msg) {
+    const inp = document.getElementById(inputId);
+    if (msg) { if (inp) { inp.classList.add('invalid'); inp.classList.remove('valid'); } showError(errId, msg); }
+    else { if (inp) { inp.classList.remove('invalid'); inp.classList.add('valid'); } clearError(errId); }
+    return !msg;
+}
+
+// Client-side validators (mirror backend app/core/validators.py — UX only; the
+// server re-validates authoritatively).
+const AUTH_RE = {
+    email: /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/,
+    username: /^[A-Za-z0-9_]{3,30}$/,
+};
+function vName(v)  { return (v || '').trim().length >= 2 ? '' : 'Please enter your full name.'; }
+function vEmail(v) { return AUTH_RE.email.test((v || '').trim()) ? '' : 'Please enter a valid email address.'; }
+function vUser(v)  { return AUTH_RE.username.test((v || '').trim()) ? '' : 'Username must be 3–30 letters, numbers, or underscores.'; }
+function vPass(v, user, email) {
+    const p = v || '';
+    if (p.length < 8) return 'Password must be at least 8 characters.';
+    if (!/[a-z]/.test(p)) return 'Add a lowercase letter.';
+    if (!/[A-Z]/.test(p)) return 'Add an uppercase letter.';
+    if (!/\d/.test(p)) return 'Add a number.';
+    if (user && p.toLowerCase().includes(user.toLowerCase())) return 'Password must not contain your username.';
+    return '';
+}
+
+function passwordStrength(p) {
+    p = p || '';
+    let score = 0;
+    if (p.length >= 8) score++;
+    if (p.length >= 12) score++;
+    if (/[a-z]/.test(p) && /[A-Z]/.test(p)) score++;
+    if (/\d/.test(p)) score++;
+    if (/[^A-Za-z0-9]/.test(p)) score++;
+    return Math.min(score, 4); // 0..4
+}
+
+function updatePasswordUI() {
+    const p = document.getElementById('signPass')?.value || '';
+    // requirement checklist
+    const reqs = { len: p.length >= 8, upper: /[A-Z]/.test(p), lower: /[a-z]/.test(p), digit: /\d/.test(p) };
+    document.querySelectorAll('#pwReqs li').forEach(li => {
+        li.classList.toggle('met', !!reqs[li.dataset.req]);
+    });
+    // strength bar
+    const bar = document.getElementById('pwBar');
+    const label = document.getElementById('pwStrength');
+    if (!bar) return;
+    if (!p) { bar.style.width = '0'; if (label) label.innerText = ''; return; }
+    const s = passwordStrength(p);
+    const map = [
+        { w: '25%', c: '#ff8a80', t: 'Weak' },
+        { w: '45%', c: '#fbbf24', t: 'Fair' },
+        { w: '70%', c: '#a8c7fa', t: 'Good' },
+        { w: '100%', c: '#4ade80', t: 'Strong' },
+    ][Math.max(0, s - 1)];
+    bar.style.width = map.w;
+    bar.style.background = map.c;
+    if (label) { label.innerText = 'Password strength: ' + map.t; label.style.color = map.c; }
+}
+
 async function performLogin() {
-    const u = document.getElementById('loginUser').value;
-    const p = document.getElementById('loginPass').value;
+    clearError('loginError');
+    const u = (document.getElementById('loginUser').value || '').trim();
+    const p = document.getElementById('loginPass').value || '';
+    if (!u || !p) { showError('loginError', 'Please enter your username and password.'); return; }
     try {
         const res = await fetch(`${API_URL}/api/v1/auth/login`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -779,50 +865,93 @@ async function performLogin() {
             localStorage.setItem('c_tutor_user', JSON.stringify(currentUser));
             routeUser();
         } else {
-            document.getElementById('loginError').innerText = result.detail;
-            document.getElementById('loginError').style.display = 'block';
+            showError('loginError', result.detail || 'Incorrect username or password.');
         }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); showError('loginError', 'Connection failed. Please try again.'); }
 }
 
 async function performSignup() {
-    // Safe selection: use ?.value to prevent crash if element is missing
+    ['err-name', 'err-email', 'err-username', 'err-password', 'err-password2', 'signupError'].forEach(clearError);
+    const name = (document.getElementById('signName')?.value || '').trim();
+    const email = (document.getElementById('signEmail')?.value || '').trim();
+    const username = (document.getElementById('signUser')?.value || '').trim();
+    const password = document.getElementById('signPass')?.value || '';
+    const password2 = document.getElementById('signPass2')?.value || '';
+
+    // Client-side validation (server re-checks authoritatively)
+    let ok = true;
+    ok = setFieldState('signName', 'err-name', vName(name)) && ok;
+    ok = setFieldState('signEmail', 'err-email', vEmail(email)) && ok;
+    ok = setFieldState('signUser', 'err-username', vUser(username)) && ok;
+    ok = setFieldState('signPass', 'err-password', vPass(password, username, email)) && ok;
+    ok = setFieldState('signPass2', 'err-password2', password2 === password ? '' : 'Passwords do not match.') && ok;
+    if (!ok) return;
+
     const data = {
-        name: document.getElementById('signName')?.value || "",
-        email: document.getElementById('signEmail')?.value || "",
-        username: document.getElementById('signUser')?.value || "",
-        password: document.getElementById('signPass')?.value || "",
-        // Optional fields with safety check
+        name, email, username, password,
         university: document.getElementById('signUni')?.value || "",
         department: document.getElementById('signDept')?.value || "",
         interest: document.getElementById('signInterest')?.value || ""
     };
-
-    // Validation
-    if (!data.username || !data.password || !data.name) {
-        showError('signupError', "Name, Username, and Password are required.");
-        return;
-    }
-
+    const btn = document.querySelector('#signupForm .auth-btn');
+    if (btn) { btn.disabled = true; btn.innerText = 'Creating account…'; }
     try {
         const res = await fetch(`${API_URL}/api/v1/auth/signup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-
+        const result = await res.json().catch(() => ({}));
         if (res.ok) {
-            document.getElementById('signupSuccess').innerText = "Account created! Please login.";
-            document.getElementById('signupSuccess').style.display = 'block';
-            setTimeout(() => toggleAuth('login'), 1500);
+            const s = document.getElementById('signupSuccess');
+            s.innerText = "✓ Account created! Redirecting to log in…";
+            s.style.display = 'block';
+            setTimeout(() => toggleAuth('login'), 1400);
         } else {
-            const result = await res.json();
-            showError('signupError', result.detail || "Signup failed");
+            // Map server field errors back onto the right field when possible
+            const detail = result.detail || 'Signup failed. Please try again.';
+            const dl = detail.toLowerCase();
+            if (dl.includes('email')) setFieldState('signEmail', 'err-email', detail);
+            else if (dl.includes('username')) setFieldState('signUser', 'err-username', detail);
+            else if (dl.includes('password')) setFieldState('signPass', 'err-password', detail);
+            else showError('signupError', detail);
         }
     } catch (e) {
         console.error(e);
-        showError('signupError', "Connection failed");
+        showError('signupError', "Connection failed. Please try again.");
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerText = 'Create account'; }
     }
+}
+
+// Wire show/hide toggles, live password meter, and live field validation.
+function initAuthUI() {
+    document.querySelectorAll('.pw-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const inp = document.getElementById(btn.dataset.target);
+            if (!inp) return;
+            const show = inp.type === 'password';
+            inp.type = show ? 'text' : 'password';
+            btn.innerText = show ? 'Hide' : 'Show';
+            btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        });
+    });
+    const sp = document.getElementById('signPass');
+    if (sp) sp.addEventListener('input', updatePasswordUI);
+    // Live validation on blur for immediate, friendly feedback
+    const live = [
+        ['signName', 'err-name', v => vName(v)],
+        ['signEmail', 'err-email', v => vEmail(v)],
+        ['signUser', 'err-username', v => vUser(v)],
+    ];
+    live.forEach(([id, err, fn]) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('blur', () => { if (el.value) setFieldState(id, err, fn(el.value)); });
+    });
+    const p2 = document.getElementById('signPass2');
+    if (p2) p2.addEventListener('input', () => {
+        const p1 = document.getElementById('signPass')?.value || '';
+        if (p2.value) setFieldState('signPass2', 'err-password2', p2.value === p1 ? '' : 'Passwords do not match.');
+    });
 }
 
 function routeUser() {
@@ -2215,6 +2344,7 @@ function renderMarkdownCr(text) {
 }
 
 // Init
+initAuthUI();
 const stored = localStorage.getItem('c_tutor_user');
 if (stored) { currentUser = JSON.parse(stored); routeUser(); }
 
