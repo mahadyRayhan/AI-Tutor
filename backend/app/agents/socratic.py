@@ -92,7 +92,9 @@ class SocraticTutorAgent(BaseAgent):
             prompt, style_used = self._build_concept_prompt(
                 state.query, context_text, state.user_goal, state.profile,
                 state.original_query, state.entities,
-                mastery_level=state.mastery_level, mastery_detail=state.mastery_detail
+                mastery_level=state.mastery_level, mastery_detail=state.mastery_detail,
+                calibration_state=state.calibration_state,
+                calibration_detail=state.calibration_detail,
             )
 
         # 5. Stream Answer
@@ -216,7 +218,7 @@ class SocraticTutorAgent(BaseAgent):
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())
         except: return ["Tell me more", "Example code", "Challenge: Write it"]
  
-    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "") -> str:
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "", calibration_state: str = "", calibration_detail: str = "") -> str:
         
         # =========================================================
         # C_style: Few-Shot Personalization Vector
@@ -350,6 +352,14 @@ class SocraticTutorAgent(BaseAgent):
                 style_instruction += f"\n\nStudent's Mastery Level: {mastery_level.upper()} — {mastery_detail}"
             else:
                 style_instruction += f"\n\nStudent's Mastery Level: {mastery_level.upper()}"
+
+            # --- MCN: metacognitive-calibration directive (empty unless over/under) ---
+            if calibration_state in ("over", "under"):
+                try:
+                    from app.core.mcn_service import prompt_directive
+                    style_instruction += prompt_directive({"map_C": calibration_state})
+                except Exception:
+                    pass
             # =========================================================
 
             format_builder = ["**STRICT RESPONSE FORMAT:**\nYou MUST use ONLY the exact Markdown headers (##) requested below."]

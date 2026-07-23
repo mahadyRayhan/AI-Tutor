@@ -166,6 +166,29 @@ def log_calibration(username: str, concept: str, tier: str, p_bkt_at_time: float
         logger.warning(f"[telemetry] log_calibration failed: {e}")
 
 
+# ── SRL: Metacognitive Calibration Network verdicts ─────────────────────────────
+
+def log_mcn_verdict(username: str, concept: str, verdict: dict) -> None:
+    """Persist one MCN calibration inference for offline evaluation / CPT refit."""
+    try:
+        import json as _json
+        sid = get_study_id(username)
+        post = verdict.get("posterior_C", {}) or {}
+        db.execute(
+            "INSERT INTO mcn_log "
+            "(study_id, username, concept, map_C, map_K, confidence, n_signals, "
+            " p_over, p_cal, p_under, evidence_json, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (sid, username, concept,
+             verdict.get("map_C"), verdict.get("map_K"),
+             verdict.get("confidence"), verdict.get("n_signals"),
+             post.get("over"), post.get("cal"), post.get("under"),
+             _json.dumps(verdict.get("evidence_used", {})), _now()),
+        )
+    except Exception as e:
+        logger.warning(f"[telemetry] log_mcn_verdict failed: {e}")
+
+
 # ── SRL: JOL ───────────────────────────────────────────────────────────────────
 
 def log_jol(username: str, concept: str, confidence_1_5: int, is_correct: bool,

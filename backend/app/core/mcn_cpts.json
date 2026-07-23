@@ -1,0 +1,153 @@
+{
+  "name": "default_v1",
+  "prior_K": {
+    "low": 0.5,
+    "med": 0.3,
+    "high": 0.2
+  },
+  "prior_C": {
+    "over": 0.25,
+    "cal": 0.5,
+    "under": 0.25
+  },
+  "S_given_KC": {
+    "low": {
+      "cal": {
+        "low": 0.7,
+        "med": 0.25,
+        "high": 0.05
+      },
+      "over": {
+        "low": 0.15,
+        "med": 0.35,
+        "high": 0.5
+      },
+      "under": {
+        "low": 0.85,
+        "med": 0.13,
+        "high": 0.02
+      }
+    },
+    "med": {
+      "cal": {
+        "low": 0.2,
+        "med": 0.6,
+        "high": 0.2
+      },
+      "over": {
+        "low": 0.05,
+        "med": 0.25,
+        "high": 0.7
+      },
+      "under": {
+        "low": 0.6,
+        "med": 0.35,
+        "high": 0.05
+      }
+    },
+    "high": {
+      "cal": {
+        "low": 0.05,
+        "med": 0.25,
+        "high": 0.7
+      },
+      "over": {
+        "low": 0.02,
+        "med": 0.18,
+        "high": 0.8
+      },
+      "under": {
+        "low": 0.5,
+        "med": 0.4,
+        "high": 0.1
+      }
+    }
+  },
+  "P_given_K": {
+    "low": {
+      "poor": 0.65,
+      "mixed": 0.28,
+      "good": 0.07
+    },
+    "med": {
+      "poor": 0.2,
+      "mixed": 0.55,
+      "good": 0.25
+    },
+    "high": {
+      "poor": 0.05,
+      "mixed": 0.3,
+      "good": 0.65
+    }
+  },
+  "B_given_K": {
+    "low": {
+      "struggling": 0.6,
+      "normal": 0.33,
+      "fluent": 0.07
+    },
+    "med": {
+      "struggling": 0.25,
+      "normal": 0.55,
+      "fluent": 0.2
+    },
+    "high": {
+      "struggling": 0.08,
+      "normal": 0.37,
+      "fluent": 0.55
+    }
+  },
+  "A_given_KC": {
+    "low": {
+      "cal": {
+        "frustrated": 0.5,
+        "neutral": 0.35,
+        "engaged": 0.15
+      },
+      "over": {
+        "frustrated": 0.3,
+        "neutral": 0.45,
+        "engaged": 0.25
+      },
+      "under": {
+        "frustrated": 0.65,
+        "neutral": 0.27,
+        "engaged": 0.08
+      }
+    },
+    "med": {
+      "cal": {
+        "frustrated": 0.25,
+        "neutral": 0.5,
+        "engaged": 0.25
+      },
+      "over": {
+        "frustrated": 0.15,
+        "neutral": 0.45,
+        "engaged": 0.4
+      },
+      "under": {
+        "frustrated": 0.45,
+        "neutral": 0.42,
+        "engaged": 0.13
+      }
+    },
+    "high": {
+      "cal": {
+        "frustrated": 0.1,
+        "neutral": 0.4,
+        "engaged": 0.5
+      },
+      "over": {
+        "frustrated": 0.07,
+        "neutral": 0.38,
+        "engaged": 0.55
+      },
+      "under": {
+        "frustrated": 0.3,
+        "neutral": 0.45,
+        "engaged": 0.25
+      }
+    }
+  }
+}

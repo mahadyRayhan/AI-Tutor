@@ -31,9 +31,59 @@ async function loadStats() {
 
         // Render the prerequisite skill network (nodes = topics, edges = prereqs)
         renderSkillNetwork(data.mastery || {});
+
+        // Metacognitive calibration panel (only renders if the MCN feature is on)
+        loadCalibration();
     } catch (e) {
         console.error("Stats load failed", e);
     }
+}
+
+// --- METACOGNITIVE CALIBRATION (MCN) PANEL ---
+async function loadCalibration() {
+    const card = document.getElementById('calibrationCard');
+    const list = document.getElementById('calibrationList');
+    if (!card || !list) return;
+    try {
+        const res = await fetch(`${API_URL}/api/v1/mcn/calibration/${currentUser.username}`);
+        const data = await res.json();
+        // Feature off, or no topics with enough signal → keep the card hidden.
+        if (!data.enabled || !Array.isArray(data.items) || data.items.length === 0) {
+            card.style.display = 'none';
+            return;
+        }
+        const META = {
+            under: { cls: 'cal-under', icon: '💪', tag: 'You know this better than you think' },
+            over:  { cls: 'cal-over',  icon: '🔎', tag: 'Worth a quick double-check' },
+            cal:   { cls: 'cal-ok',    icon: '✅', tag: 'Confidence matches performance' },
+        };
+        list.innerHTML = '';
+        data.items.forEach(it => {
+            const m = META[it.state] || META.cal;
+            const pct = Math.round((it.confidence || 0) * 100);
+            const el = document.createElement('div');
+            el.className = `calibration-item ${m.cls}`;
+            el.innerHTML =
+                `<div class="cal-head">
+                    <span class="cal-icon">${m.icon}</span>
+                    <span class="cal-concept">${escapeHTMLc(it.concept)}</span>
+                    <span class="cal-badge">${escapeHTMLc(it.label || '')}</span>
+                 </div>
+                 <div class="cal-tag">${m.tag}</div>
+                 <div class="cal-conf" title="model confidence">confidence ${pct}%</div>`;
+            list.appendChild(el);
+        });
+        card.style.display = 'block';
+    } catch (e) {
+        console.error("Calibration load failed", e);
+        card.style.display = 'none';
+    }
+}
+
+function escapeHTMLc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
 // --- SLOW DATA LOADER ---

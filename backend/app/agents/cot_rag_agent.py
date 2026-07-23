@@ -1815,6 +1815,21 @@ class ChainOfThoughtRAGAgent:
             except Exception as e:
                 self.logger.warning(f"[MCRA] Classification failed: {e}")
 
+            # --- MCN: metacognitive calibration (flag-gated; None when off/insufficient) ---
+            try:
+                from app.core import mcn_service
+                concept = state.entities[0] if state.entities else ""
+                verdict = mcn_service.get_calibration(username, concept)
+                if verdict:
+                    state.calibration_state = verdict.get("map_C", "")
+                    state.calibration_detail = verdict.get("explanation", "")
+                    self.logger.info(
+                        f"🧭 [MCN] {username}/{concept}: {verdict.get('label')} "
+                        f"(p={verdict.get('confidence'):.2f})"
+                    )
+            except Exception as e:
+                self.logger.warning(f"[MCN] calibration step failed: {e}")
+
         # --- Telemetry: response adaptation (mastery level applied to this turn) ---
         if username and state.intent in ["CONCEPT", "PROBLEM"]:
             try:

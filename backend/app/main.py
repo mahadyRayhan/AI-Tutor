@@ -1564,6 +1564,40 @@ async def get_skill_network(username: str):
     return {"nodes": nodes, "edges": edges}
 
 
+@app.get("/api/v1/mcn/calibration/{username}")
+async def get_calibration_map(username: str):
+    """
+    Metacognitive Calibration Network readout for the dashboard: per-topic calibration
+    state (over / calibrated / under) fused from self-report, performance, behaviour,
+    and BKT knowledge. Flag-gated — returns enabled:false and an empty list when the
+    MCN feature is off, so the panel simply hides itself.
+    """
+    from app.core import mcn_service
+
+    if not mcn_service.is_enabled():
+        return {"enabled": False, "items": []}
+
+    from app.core import bkt_model
+    items = []
+    for c in SKILL_TOPICS:
+        # Only surface topics the learner has actually touched (has a BKT row).
+        if not bkt_model._read_row(username, c):
+            continue
+        verdict = mcn_service.get_calibration(username, c, log=False)
+        if not verdict:
+            continue  # insufficient signal → don't show a misleading verdict
+        items.append({
+            "concept": c,
+            "state": verdict.get("map_C"),
+            "label": verdict.get("label"),
+            "knowledge": verdict.get("map_K"),
+            "confidence": round(verdict.get("confidence", 0.0), 3),
+            "n_signals": verdict.get("n_signals"),
+            "explanation": verdict.get("explanation"),
+        })
+    return {"enabled": True, "items": items}
+
+
 # ── Unified Learner Model + Motivational Self-Report ─────────────────────────
 
 @app.get("/api/v1/learner-model/{username}")

@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- LINK TO YOUR NEW CSS FILE -->
-    <link rel="stylesheet" href="/static/css/student_dashboard.css?v=net4">
+    <link rel="stylesheet" href="/static/css/student_dashboard.css?v=net6">
 </head>
 
 <body>
@@ -121,6 +121,23 @@
                 </div>
             </div>
 
+            <!-- 4b. Metacognitive Calibration (MCN) — hidden unless feature is on -->
+            <div class="card full-width" id="calibrationCard" style="display:none;">
+                <h2>
+                    🧭 Confidence Check
+                    <div class="info-icon">ⓘ
+                        <span class="tooltip-text">
+                            <strong>How your self-belief lines up with your performance.</strong><br>
+                            For each topic we compare how confident you feel against how you
+                            actually do. <span style="color:#60a5fa;">Underrating</span> means you
+                            know it better than you think; <span style="color:#f472b6;">overrating</span>
+                            means it's worth a quick double-check.
+                        </span>
+                    </div>
+                </h2>
+                <div id="calibrationList" class="calibration-list"></div>
+            </div>
+
             <!-- 5. AI Insights -->
             <div class="card full-width">
                 <h2>🤖 Personal Tutor Assessment</h2>
@@ -148,7 +165,7 @@
         </div>
     </div>
 
-    <script src="/static/js/student_dashboard.js?v=net5" defer></script>
+    <script src="/static/js/student_dashboard.js?v=net6" defer></script>
 </body>
 
 </html>

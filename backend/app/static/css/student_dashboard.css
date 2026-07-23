@@ -852,3 +852,56 @@ h2 {
         width: 100%;
     }
 }
+
+/* --- Metacognitive Calibration (MCN) panel --- */
+.calibration-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+}
+.calibration-item {
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--text-muted);
+    border-radius: 10px;
+    padding: 12px 14px;
+}
+.calibration-item.cal-under { border-left-color: #60a5fa; }
+.calibration-item.cal-over  { border-left-color: #f472b6; }
+.calibration-item.cal-ok    { border-left-color: var(--success-color); }
+.cal-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.cal-icon { font-size: 1.05rem; }
+.cal-concept {
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+}
+.cal-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.cal-under .cal-badge { color: #60a5fa; }
+.cal-over  .cal-badge { color: #f472b6; }
+.cal-ok    .cal-badge { color: var(--success-color); }
+.cal-tag {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+}
+.cal-conf {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}

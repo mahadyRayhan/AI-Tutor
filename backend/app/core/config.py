@@ -146,6 +146,13 @@ ENABLE_HISTORICAL_RELATIONSHIP_INFERENCE = os.getenv("ENABLE_HISTORICAL_RELATION
 # Document classification thresholds
 DOMAIN_CLASSIFICATION_THRESHOLD = float(os.getenv("DOMAIN_CLASSIFICATION_THRESHOLD", "0.3"))  # Minimum score difference to classify as STEM vs Non-STEM
 
+# --- Metacognitive Calibration Network (MCN) ---
+# Master switch for the SRL calibration Bayesian network. Default OFF so the feature
+# ships dark and can be deployed without changing behaviour; flip to "true" to enable
+# calibration-aware interventions + the dashboard panel. When off, every MCN accessor
+# returns None and the tutor behaves exactly as before.
+MCN_ENABLED = os.getenv("MCN_ENABLED", "false").lower() == "true"
+
 # --- Enhanced Logging Settings ---
 ENTITY_EXTRACTION_LOG_LEVEL = os.getenv("ENTITY_EXTRACTION_LOG_LEVEL", DEFAULT_LOG_LEVEL)
 RELATIONSHIP_EXTRACTION_LOG_LEVEL = os.getenv("RELATIONSHIP_EXTRACTION_LOG_LEVEL", DEFAULT_LOG_LEVEL)

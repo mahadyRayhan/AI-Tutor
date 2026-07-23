@@ -496,6 +496,25 @@ class SQLiteDB:
                 )
             """)
 
+            # SRL: Metacognitive Calibration Network verdicts (append-only)
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS mcn_log (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    study_id      TEXT,
+                    username      TEXT,
+                    concept       TEXT,
+                    map_C         TEXT,
+                    map_K         TEXT,
+                    confidence    REAL,
+                    n_signals     INTEGER,
+                    p_over        REAL,
+                    p_cal         REAL,
+                    p_under       REAL,
+                    evidence_json TEXT,
+                    ts_utc        TIMESTAMP
+                )
+            """)
+
             # Safe catch to add the column to existing databases without breaking
             import sqlite3
             try:

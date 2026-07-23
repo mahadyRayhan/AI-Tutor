@@ -22,6 +22,10 @@ class AgentState(BaseModel):
     mastery_level: str = "novice"    # novice | developing | proficient | reviewing
     mastery_detail: str = ""         # BKT summary injected into LLM prompt
 
+    # Metacognitive Calibration (MCN) — inferred, flag-gated. "" when unknown/disabled.
+    calibration_state: str = ""      # "" | over | cal | under
+    calibration_detail: str = ""     # short account injected into the LLM prompt
+
     # Internal State (Passed between agents)
     intent: Optional[str] = None
     entities: List[str] = []
