@@ -169,6 +169,8 @@ def _behavior_state(username: str) -> Optional[str]:
             ev = (r["event"] or "").lower()
             if ev in ("hint_request", "skip_challenge"):
                 struggle += 1
+            elif ev == "thumbs_down_click":
+                struggle += 1              # dissatisfaction — a weak struggle signal
             elif ev == "copy_code":
                 fluent += 1
             elif ev == "dwell":

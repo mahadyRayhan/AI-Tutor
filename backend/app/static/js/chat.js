@@ -281,6 +281,15 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
 
     if (!rawText) return;
 
+    // MCN behaviour telemetry: detect genuine help-seeking as a "struggle" signal.
+    // Skip system-tagged messages (they all start with "[").
+    if (!hidden && !rawText.startsWith('[')) {
+        const HINT_RE = /\b(hint|stuck|i'?m lost|confused|too hard|just tell me|give me (the|a) (answer|solution|hint)|i don'?t (get|understand)|help me|explain .*(again|simpler))\b/i;
+        if (HINT_RE.test(rawText)) {
+            logBehavior('hint_request', rawText.slice(0, 80));
+        }
+    }
+
     // Hide Welcome Screen
     const welcome = document.getElementById('welcome-view');
     if (welcome) welcome.style.display = 'none';
@@ -647,8 +656,10 @@ function submitWarmup() {
 
 function skipWarmup() {
     document.getElementById('warmupModal').style.display = 'none';
+    // MCN behaviour telemetry: skipping a challenge is a "struggle" signal.
+    logBehavior('skip_challenge', 'warmup');
     // Send hidden skip to backend so it doesn't clutter chat
-    window.sendMessage(`[WARMUP_ANSWER] skip`, true); 
+    window.sendMessage(`[WARMUP_ANSWER] skip`, true);
 }
 
 // --- 2. SUGGESTION RENDERER (Crucial) ---
