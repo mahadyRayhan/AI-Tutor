@@ -146,6 +146,13 @@ ENABLE_HISTORICAL_RELATIONSHIP_INFERENCE = os.getenv("ENABLE_HISTORICAL_RELATION
 # Document classification thresholds
 DOMAIN_CLASSIFICATION_THRESHOLD = float(os.getenv("DOMAIN_CLASSIFICATION_THRESHOLD", "0.3"))  # Minimum score difference to classify as STEM vs Non-STEM
 
+# --- Rate limiting & request-size caps (cost + abuse control) ---
+# In-memory, per-IP, per-minute. Tune via env without a code change. These bound
+# the worst-case LLM cost per client: (requests/min) × (max chars/request).
+RATE_LIMIT_CHAT_MAX = int(os.getenv("RATE_LIMIT_CHAT_MAX", "20"))   # chat msgs / minute / IP
+RATE_LIMIT_AUTH_MAX = int(os.getenv("RATE_LIMIT_AUTH_MAX", "10"))   # login+signup / minute / IP
+MAX_MESSAGE_CHARS   = int(os.getenv("MAX_MESSAGE_CHARS", "8000"))   # max chat message length
+
 # --- Metacognitive Calibration Network (MCN) ---
 # Master switch for the SRL calibration Bayesian network. Default OFF so the feature
 # ships dark and can be deployed without changing behaviour; flip to "true" to enable

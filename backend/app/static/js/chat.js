@@ -281,6 +281,14 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
 
     if (!rawText) return;
 
+    // Guard message size (keep in sync with backend config.MAX_MESSAGE_CHARS).
+    const MAX_MESSAGE_CHARS = 8000;
+    if (rawText.length > MAX_MESSAGE_CHARS) {
+        alert(`Your message is too long (${rawText.length.toLocaleString()} characters). ` +
+              `Please keep it under ${MAX_MESSAGE_CHARS.toLocaleString()} characters.`);
+        return;
+    }
+
     // MCN behaviour telemetry: detect genuine help-seeking as a "struggle" signal.
     // Skip system-tagged messages (they all start with "[").
     if (!hidden && !rawText.startsWith('[')) {

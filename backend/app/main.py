@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form 
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
 import re
@@ -26,6 +26,7 @@ from pathlib import Path
 
 # Import components
 from app.core import config
+from app.core.rate_limiter import rate_limit
 from app.db.llm_interface import LLMInterface
 from app.db.vector_store import ChromaVectorStore
 from app.db.graph_db import Neo4jGraphDB
@@ -304,7 +305,9 @@ async def shutdown_event():
         graph_db.close()
 
 class ChatRequest(BaseModel):
-    message: str
+    # Cap message length to bound per-request LLM token cost / abuse. Oversized
+    # payloads are rejected with 422 before any model call is made.
+    message: str = Field(..., max_length=config.MAX_MESSAGE_CHARS)
     user_role: Optional[str] = "student"
     username: Optional[str] = "anonymous"  # <--- CRITICAL
     session_id: Optional[str] = None 
@@ -348,7 +351,8 @@ async def serve_specific_html(request: Request, page_name: str):
 async def health():
     return {"status": "healthy", "agent_ready": cot_rag_agent is not None}
 
-@app.post("/api/v1/chat/stream")
+@app.post("/api/v1/chat/stream",
+          dependencies=[Depends(rate_limit("chat", config.RATE_LIMIT_CHAT_MAX, 60))])
 async def chat_stream(request: ChatRequest):
     # --- 1. START PROFILER ---
     profiler = None
@@ -750,7 +754,8 @@ async def update_topic(update: TopicUpdate):
     settings_manager.update_topic(update.topic, update.enabled)
     return {"status": "success", "topic": update.topic, "enabled": update.enabled}
 
-@app.post("/api/v1/auth/login")
+@app.post("/api/v1/auth/login",
+          dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
 async def login(creds: LoginRequest):
     try:
         user = user_manager.authenticate(creds.username, creds.password)
@@ -762,7 +767,8 @@ async def login(creds: LoginRequest):
         # Catch the "Account Blocked" exception from user_manager
         raise HTTPException(status_code=403, detail=str(e))
 
-@app.post("/api/v1/auth/signup")
+@app.post("/api/v1/auth/signup",
+          dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
 async def signup(req: SignupRequest):
     from app.core import validators
 
