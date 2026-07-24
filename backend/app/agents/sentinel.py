@@ -294,11 +294,23 @@ class SentinelAgent(BaseAgent):
         # S_goal = 0 if (I_q = MALICIOUS AND s_goal < Adaptive_Threshold)
         # =========================================================
         security_triggers = [
-            "exam solution", "answer key", "hack", "virus", "exploit", 
-            "fork()", "infinite loop", "ignore previous", "keylogger", 
+            "exam solution", "answer key", "hack", "virus", "exploit",
+            "fork()", "ignore previous", "keylogger",
             "malware", "steal", "ddos"
         ]
         is_malicious = any(t in query_lower for t in security_triggers) or state.intent == "SECURITY_RISK"
+
+        # "infinite loop" is a legitimate C concept (students must learn to
+        # recognize, debug, and avoid them). Treat it as malicious ONLY when it
+        # co-occurs with a harmful verb/goal in the same message — the phrase
+        # alone must never block "what is an infinite loop?" or "why does my
+        # code have an infinite loop?" (a debugging student).
+        if "infinite loop" in query_lower:
+            harmful_context = ["virus", "crash", "freeze", "attack", "ddos", "fork",
+                               "break the", "destroy", "overload", "bomb", "malware",
+                               "hang the", "lock up", "denial of service", "exploit"]
+            if any(h in query_lower for h in harmful_context):
+                is_malicious = True
         
         if is_malicious:
             # Fetch Mastery Count from DB to calculate adaptive radius
