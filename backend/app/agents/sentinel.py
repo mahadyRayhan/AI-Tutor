@@ -21,7 +21,54 @@ class SentinelAgent(BaseAgent):
     
     # --- CONFIGURATION TOGGLE ---
     # Set to True to enable the slower but smarter LLM Safety Check
-    ENABLE_AI_SAFETY_JUDGE = True 
+    ENABLE_AI_SAFETY_JUDGE = True
+
+    # --- MULTI-TURN (CRESCENDO) TRAJECTORY DEFENSE ---
+    # Peak + decayed-accumulation session risk built from signals we ALREADY
+    # compute (intent, s_goal, C-domain context, off-topic strikes). The only
+    # new state is two floats in sessions.state. No new module.
+    TRAJ_ACC_DECAY = 0.8       # accumulator memory (decayed sum of per-turn risk)
+    TRAJ_PEAK_DECAY = 0.9      # peak cools over ~5-6 clean turns (usability guard)
+    TRAJ_TAU_JUDGE = 0.45      # >= this: escalate to the conversation-level LLM judge
+    TRAJ_TAU_BLOCK = 0.85      # >= this: hard block on extreme accumulated risk
+    # Unambiguous attack terms (strong per-turn signal).
+    TRAJ_HIGH_TERMS = [
+        "hack", "virus", "exploit", "malware", "keylogger", "ddos", "fork bomb",
+        "reverse shell", "backdoor", "rootkit", "ransomware", "self-replicat",
+        "brute force", "payload", "botnet", "spyware", "steal password",
+        "steal credential", "/etc/passwd", "/etc/shadow",
+    ]
+    # Suspicious-in-context terms (mild signal; legit in isolated debugging, but
+    # accumulate across a crescendo). The LLM judge — not a hard rule — arbitrates.
+    TRAJ_MED_TERMS = [
+        "fork", "infinite loop", "never stop", "never end", "runs forever",
+        "forever", "while(1)", "while (1)", "system(", "exec(", "crash",
+        "overload", "freeze", "disable", "spread", "infect", "self replicate",
+        "keep going", "keep calling", "tight loop", "as fast as possible",
+        "repeatedly", "endless", "as many as", "over and over", "spawn",
+    ]
+
+    def _trajectory_risk(self, state, has_c_context: bool, query_lower: str):
+        """Session-level multi-turn risk (Peak + Accumulation). Reuses existing
+        signals only; persists two floats in session state. No LLM call here."""
+        from app.core.history_manager import history_manager
+
+        high_hits = sum(1 for t in self.TRAJ_HIGH_TERMS if t in query_lower)
+        med_hits = sum(1 for t in self.TRAJ_MED_TERMS if t in query_lower)
+        sec = min(1.0, 0.5 * high_hits) + min(0.6, 0.25 * med_hits)
+        goal_drift = (1.0 - state.s_goal) if state.user_goal else 0.0   # only when a goal exists
+        domain_drift = 0.0 if has_c_context else 0.35
+        offtopic = min(1.0, (state.n_strike or 0) / 3.0)
+        r_t = min(1.0, min(1.0, sec) + 0.25 * goal_drift + 0.15 * domain_drift + 0.15 * offtopic)
+
+        st = history_manager.get_session_state(state.user_id, state.session_id) or {}
+        acc = min(1.0, self.TRAJ_ACC_DECAY * st.get("traj_risk_accum", 0.0) + r_t)
+        peak = max(r_t, self.TRAJ_PEAK_DECAY * st.get("traj_risk_peak", 0.0))
+        risk = 0.5 * peak + 0.5 * acc
+        state.traj_risk = round(risk, 3)   # snapshot for the audit trail
+        history_manager.update_session_state(state.user_id, state.session_id,
+            {"traj_risk_accum": round(acc, 4), "traj_risk_peak": round(peak, 4)})
+        return risk, r_t, acc, peak
 
     async def _semantic_safety_check(self, query: str) -> bool:
         """
@@ -100,11 +147,27 @@ class SentinelAgent(BaseAgent):
         )
         state.final_response = msg
         state.stop_processing = True
-        
+
         # Default to empty list if no suggestions are provided
         suggs = suggestions if suggestions else []
 
-        return {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "SECURITY_RISK", "suggestions": suggs}}
+        # --- AUDIT TRAIL: persist every block (who caught it, when, on what) ---
+        # Durable record in event_log so blocks can be reviewed per user/session.
+        try:
+            from app.core import telemetry
+            telemetry.log_event(state.user_id, "security_block", {
+                "reason": reason,                       # WHICH layer caught it
+                "intent": state.intent,
+                "query": (state.original_query or "")[:300],
+                "traj_risk": getattr(state, "traj_risk", None),
+            }, session_id=state.session_id)
+        except Exception as e:
+            self.logger.warning(f"[audit] security_block log failed: {e}")
+
+        return {"type": "complete", "data": {
+            "answer": msg, "sources": [], "intent": "SECURITY_RISK",
+            "block_reason": reason, "suggestions": suggs,
+        }}
 
     # High-precision destructive-code signatures. These have no legitimate use in a
     # beginner C course, so they are HARD-blocked (unlike the S_goal-gated triggers,
@@ -295,20 +358,26 @@ class SentinelAgent(BaseAgent):
         # =========================================================
         security_triggers = [
             "exam solution", "answer key", "hack", "virus", "exploit",
-            "fork()", "ignore previous", "keylogger",
+            "ignore previous", "keylogger",
             "malware", "steal", "ddos"
         ]
         is_malicious = any(t in query_lower for t in security_triggers) or state.intent == "SECURITY_RISK"
 
-        # "infinite loop" is a legitimate C concept (students must learn to
-        # recognize, debug, and avoid them). Treat it as malicious ONLY when it
-        # co-occurs with a harmful verb/goal in the same message — the phrase
-        # alone must never block "what is an infinite loop?" or "why does my
-        # code have an infinite loop?" (a debugging student).
-        if "infinite loop" in query_lower:
-            harmful_context = ["virus", "crash", "freeze", "attack", "ddos", "fork",
-                               "break the", "destroy", "overload", "bomb", "malware",
-                               "hang the", "lock up", "denial of service", "exploit"]
+        # Context-gated concepts: legitimate C topics (students must learn to
+        # recognize, debug, and avoid them) that are malicious ONLY when paired
+        # with harmful intent in the SAME message. The phrase alone must never
+        # block "what does fork() do?" or "why does my code have an infinite
+        # loop?" (a debugging student). The real attacks — "fork bomb" etc. —
+        # are still hard-blocked at Layer 1a regardless of this gate. Crucially,
+        # NOT blocking the benign single turn here lets it reach the Layer-7
+        # trajectory net, where a whole crescendo is judged together.
+        context_gated = ["infinite loop", "fork(", "fork ", "while(1)", "while (1)", "for(;;)"]
+        if any(c in query_lower for c in context_gated):
+            harmful_context = ["virus", "crash", "freeze", "attack", "ddos", "bomb",
+                               "break the", "destroy", "overload", "malware", "hang the",
+                               "lock up", "denial of service", "exploit", "never stop",
+                               "never end", "runs forever", "eat all", "consume all",
+                               "exhaust", "spread", "infect", "self-replicat"]
             if any(h in query_lower for h in harmful_context):
                 is_malicious = True
         
@@ -397,15 +466,50 @@ class SentinelAgent(BaseAgent):
                         return
 
         # =========================================================
-        # LAYER 7: SEMANTIC LLM JUDGE (The Cascade Safety Net)
-        # Only runs if ENABLE_AI_SAFETY_JUDGE=True
+        # LAYER 7 + TRAJECTORY: multi-turn (crescendo) safety net
+        # Per-message layers above caught anything with a "tell" this turn. Here
+        # we look at the whole CONVERSATION: a benign-looking final turn can still
+        # complete a harmful multi-step request. The accumulator flags the drift;
+        # the (existing) LLM judge — now fed the recent transcript — confirms it.
         # =========================================================
+        traj_risk, r_t, traj_acc, traj_peak = self._trajectory_risk(state, has_c_context, query_lower)
+        if traj_risk >= 0.3:
+            self.logger.info(f"📈 [Sentinel Traj] risk={traj_risk:.2f} (r_t={r_t:.2f} acc={traj_acc:.2f} peak={traj_peak:.2f})")
+
+        # Extreme accumulated risk: block without spending an LLM call.
+        if traj_risk >= self.TRAJ_TAU_BLOCK:
+            self.logger.warning(f"🚨 [Sentinel Traj] BLOCK — accumulated multi-turn risk {traj_risk:.2f}")
+            yield self._block_response(state, "Trajectory Risk",
+                custom_msg=("🛡️ This conversation is trending toward unsafe territory. "
+                            "Let's refocus on legitimate C programming — what concept are you working on?"))
+            return
+
         is_suspiciously_long = len(state.original_query.split()) > 15
-        
-        if getattr(self, 'ENABLE_AI_SAFETY_JUDGE', False) and is_suspiciously_long and not has_c_context:
-            self.logger.info("🕵️ [Sentinel L7] Math passed, but query is long/suspicious. Triggering LLM Judge...")
-            is_safe = await self._semantic_safety_check(state.original_query)
+        trigger_judge = (traj_risk >= self.TRAJ_TAU_JUDGE) or (is_suspiciously_long and not has_c_context)
+
+        if getattr(self, 'ENABLE_AI_SAFETY_JUDGE', False) and trigger_judge:
+            # When the trigger is trajectory risk, judge the RECENT CONVERSATION
+            # (short-term memory) rather than this turn alone — that's what lets a
+            # benign final turn be seen in the context of the whole arc.
+            judge_input = state.original_query
+            if traj_risk >= self.TRAJ_TAU_JUDGE:
+                try:
+                    from app.core.history_manager import history_manager
+                    sess = history_manager.get_session_details(state.user_id, state.session_id)
+                    msgs = (sess or {}).get("messages", [])[-6:]
+                    transcript = "\n".join(
+                        f"{'Student' if m['role'] == 'user' else 'Tutor'}: {m['content'][:200]}"
+                        for m in msgs if not m['content'].startswith("["))
+                    if transcript.strip():
+                        judge_input = ("Judge the STUDENT's overall intent across this whole "
+                                       "conversation. A benign-looking final message can still "
+                                       "complete a harmful multi-step request:\n\n" + transcript)
+                except Exception as e:
+                    self.logger.warning(f"[Traj] transcript build failed: {e}")
+
+            self.logger.info(f"🕵️ [Sentinel L7] Judge triggered (traj_risk={traj_risk:.2f}, long={is_suspiciously_long}).")
+            is_safe = await self._semantic_safety_check(judge_input)
             if not is_safe:
-                self.logger.warning(f"🚨 [Sentinel L7] BLOCKED semantic jailbreak: '{state.original_query[:80]}'")
+                self.logger.warning(f"🚨 [Sentinel L7] BLOCKED (traj_risk={traj_risk:.2f}): '{state.original_query[:80]}'")
                 yield self._block_response(state, "AI Semantic Judge", custom_msg="I cannot fulfill this request as it violates safety policies.")
                 return

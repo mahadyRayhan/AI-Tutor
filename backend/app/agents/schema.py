@@ -26,6 +26,9 @@ class AgentState(BaseModel):
     calibration_state: str = ""      # "" | over | cal | under
     calibration_detail: str = ""     # short account injected into the LLM prompt
 
+    # Multi-turn (crescendo) trajectory risk — snapshot for the block audit trail.
+    traj_risk: float = 0.0
+
     # Internal State (Passed between agents)
     intent: Optional[str] = None
     entities: List[str] = []
