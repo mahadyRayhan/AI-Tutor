@@ -31,6 +31,17 @@ class SentinelAgent(BaseAgent):
     TRAJ_PEAK_DECAY = 0.9      # peak cools over ~5-6 clean turns (usability guard)
     TRAJ_TAU_JUDGE = 0.45      # >= this: escalate to the conversation-level LLM judge
     TRAJ_TAU_BLOCK = 0.85      # >= this: hard block on extreme accumulated risk
+    # A per-message block returns BEFORE the L7 trajectory step, so the blocked
+    # turn would otherwise leave session risk untouched — letting the very next
+    # turn ("show me the code that does exactly that") slip through with a clean
+    # accumulator. These security-grade blocks therefore POISON the accumulator
+    # so follow-up turns are scrutinized by the conversation judge.
+    _SECURITY_BLOCK_REASONS = {
+        "Goal-Bounded Security", "Harmful Code", "Cross-User Privacy",
+        "AI Semantic Judge", "Trajectory Risk", "Tag Bypass Attempt", "Security Policy",
+    }
+    TRAJ_POST_BLOCK_ACC = 0.8   # accumulator floor after a security block
+    TRAJ_POST_BLOCK_PEAK = 0.7  # peak floor after a security block
     # Unambiguous attack terms (strong per-turn signal).
     TRAJ_HIGH_TERMS = [
         "hack", "virus", "exploit", "malware", "keylogger", "ddos", "fork bomb",
@@ -150,6 +161,22 @@ class SentinelAgent(BaseAgent):
 
         # Default to empty list if no suggestions are provided
         suggs = suggestions if suggestions else []
+
+        # --- POISON THE TRAJECTORY ACCUMULATOR ---
+        # Closes the "state amnesia" gap: a per-message block returns before the
+        # L7 trajectory step, so without this the NEXT turn (e.g. "show me the
+        # code that does exactly that") would start from a clean accumulator.
+        # Raising the floor here means the follow-up is judged in context.
+        try:
+            if reason in self._SECURITY_BLOCK_REASONS and state.session_id:
+                from app.core.history_manager import history_manager
+                st = history_manager.get_session_state(state.user_id, state.session_id) or {}
+                history_manager.update_session_state(state.user_id, state.session_id, {
+                    "traj_risk_accum": max(st.get("traj_risk_accum", 0.0), self.TRAJ_POST_BLOCK_ACC),
+                    "traj_risk_peak": max(st.get("traj_risk_peak", 0.0), self.TRAJ_POST_BLOCK_PEAK),
+                })
+        except Exception as e:
+            self.logger.warning(f"[Traj] post-block accumulator bump failed: {e}")
 
         # --- AUDIT TRAIL: persist every block (who caught it, when, on what) ---
         # Durable record in event_log so blocks can be reviewed per user/session.
