@@ -2,6 +2,7 @@
 
 import logging
 import re # Import Regex
+import difflib
 from gliner import GLiNER
 from sentence_transformers import SentenceTransformer, util
 from app.core import config
@@ -69,16 +70,29 @@ class FastClassifier:
         if any(q_lower.startswith(g) for g in greeting_starters) and len(query.split()) <= 6:
             return "GREETING"
         
-        # 1. Hard Security Keywords (Override Model)
-        security_triggers = ["exam", "solution", "answer key", "hack", "virus", "exploit", "leak", "ignore previous"]
-        if any(t in q_lower for t in security_triggers):
+        # 1. Hard Security Keywords (Override Model) — word-boundary matching so
+        #    innocent substrings never trip the gate (e.g. "exam" inside
+        #    "example", "leak" inside a legit word).
+        security_triggers = [
+            r"\bexam\b", r"\bexams\b", r"\bexam answers?\b", r"\bsolution\b",
+            r"\banswer key\b", r"\bhack\b", r"\bvirus\b", r"\bexploit\b",
+            r"\bleak\b", r"\bignore (?:all )?previous\b", r"\bmalware\b",
+            r"\bkeylogger\b",
+        ]
+        if any(re.search(t, q_lower) for t in security_triggers):
             return "SECURITY_RISK"
 
         # 2. Code Review Heuristic
         if "{" in query and "}" in query and ";" in query:
             return "REVIEW"
-        
-        # 3. Off-topic detection (before keyword rules — catches non-C queries)
+
+        # 3. Quiz (checked before broad concept/problem rules)
+        quiz_keywords = ("quiz me", "test me on", "test my knowledge", "give me a quiz",
+                         "ask me a question", "challenge me on", "another question", "try another")
+        if any(kw in q_lower for kw in quiz_keywords):
+            return "QUIZ"
+
+        # 4. Off-topic detection (before keyword rules — catches non-C queries)
         query_words = set(re.findall(r'[a-z_]+', q_lower))
         has_c_terms = bool(query_words & self.C_CONCEPT_TERMS)
 
@@ -92,44 +106,87 @@ class FastClassifier:
             if any(s in q_lower for s in off_topic_signals):
                 return "OFF_TOPIC"
 
-        # 4. Deterministic Keyword Rules
-        concept_starters = ("explain", "what is", "what are", "what's", "define",
-                           "tell me about", "describe", "how does", "how do")
+        # 5. Deterministic Keyword Rules (broad coverage so few queries reach the
+        #    fragile embedding fallback). Order matters: CONCEPT before PROBLEM so
+        #    "help me understand X" → CONCEPT while "help me build X" → PROBLEM.
+        concept_starters = (
+            "explain", "what is", "what are", "what's", "whats", "define",
+            "definition of", "tell me about", "describe", "how does", "how do",
+            "teach me", "can you explain", "could you explain", "can you describe",
+            "can you tell me", "help me understand", "i want to understand",
+            "i want to learn", "i'd like to learn", "i would like to learn",
+            "can you give me an example", "give me an example", "show me an example",
+            "can you show me an example", "difference between",
+            "what's the difference", "whats the difference", "what is the difference",
+            "compare", "when do i use", "when should i use", "when to use",
+            "what does", "why do we use", "why use", "when do you use",
+        )
         if any(q_lower.startswith(p) for p in concept_starters):
             return "CONCEPT"
 
-        guidance_starters = ("how do i", "how can i", "how to")
+        guidance_starters = ("how do i", "how can i", "how to", "how would i")
         if any(q_lower.startswith(p) for p in guidance_starters):
             return "CONCEPT"
 
-        problem_starters = ("write a c program", "write a program", "create a program",
-                           "build a", "implement", "code a", "solve")
+        problem_starters = (
+            "write a c program", "write a program", "write a function", "write code",
+            "create a program", "build a", "implement", "code a", "solve",
+            "make a", "develop a", "design a",
+            "i want to build", "i want to make", "i want to create",
+            "i want to write", "i want to implement", "i want to develop",
+            "i need to build", "i need to make", "i need to create",
+            "i need to write", "let's build", "lets build", "let's make",
+            "lets make", "help me build", "help me write", "help me create",
+            "help me make", "help me implement",
+        )
         if any(q_lower.startswith(p) for p in problem_starters):
             return "PROBLEM"
 
-        quiz_keywords = ("quiz me", "test me on", "test my knowledge", "give me a quiz",
-                         "ask me a question", "challenge me on", "another question", "try another")
-        if any(kw in q_lower for kw in quiz_keywords):
-            return "QUIZ"
-
-        debug_starters = ("why is", "fix", "debug", "error", "why does", "why doesn't")
+        debug_starters = ("why is", "fix", "debug", "error", "why does", "why doesn't",
+                          "why won't", "what's wrong", "whats wrong")
         if any(q_lower.startswith(p) for p in debug_starters):
             return "DEBUG"
-            
-        # 4. Model Inference (for ambiguous queries only)
+
+        # 6. Model Inference (ambiguous queries only). SECURITY_RISK is
+        #    intentionally EXCLUDED here: fuzzy embedding matches on innocent
+        #    words ("file", "give me") caused false blocks. Real security is
+        #    enforced by the hard keyword gate above + the downstream Sentinel.
         query_emb = self.intent_model.encode(query)
-        scores = {k: util.cos_sim(query_emb, v).item() for k, v in self.anchor_embeddings.items()}
-        
-        # 5. Confidence Threshold: if top two scores are too close, default to CONCEPT
+        scores = {k: util.cos_sim(query_emb, v).item()
+                  for k, v in self.anchor_embeddings.items() if k != "SECURITY_RISK"}
+
+        # 7. Confidence Threshold: if top two scores are too close, default safe
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         best_intent, best_score = sorted_scores[0]
         second_score = sorted_scores[1][1]
-        
+
         if best_score - second_score < 0.05:
             fallback = "CONCEPT" if has_c_terms else "OFF_TOPIC"
             logger.info(f"🎯 Low-confidence classification ({best_intent}={best_score:.3f} vs {sorted_scores[1][0]}={second_score:.3f}), defaulting to {fallback}")
             return fallback
-        
+
+        # 8. If the embedding lands on OFF_TOPIC but the query clearly contains C
+        #    terms, trust the C terms (embedding is weak on short technical text).
+        if best_intent == "OFF_TOPIC" and has_c_terms:
+            return "CONCEPT"
+
+    def _fuzzy_c_term(self, word: str) -> str:
+        """Typo-correct a word to a known C concept, but ONLY when it's a genuine
+        misspelling — same first letter and similar length. Prevents real English
+        words from being mangled into C terms (e.g. 'avoid' -> 'void', which broke
+        anaphora resolution by making the turn look like it named its own topic)."""
+        w = word.lower()
+        if len(w) < 5:  # too short to safely fuzzy-match ("int", "for", "one"...)
+            return ""
+        close = difflib.get_close_matches(w, self.C_CONCEPT_TERMS, n=1, cutoff=0.86)
+        if not close:
+            return ""
+        cand = close[0]
+        # A real typo keeps the first letter and stays close in length.
+        if cand[0] == w[0] and abs(len(cand) - len(w)) <= 2:
+            return cand
+        return ""
+
         return best_intent
 
     # Known C-programming concepts for entity validation
@@ -159,11 +216,28 @@ class FastClassifier:
     def extract_entities(self, query: str) -> list:
         # Use GLiNER
         entities = self.ner_model.predict_entities(query, self.ner_labels)
-        unique_entities = list(set([e['text'] for e in entities]))
-        
-        # Validate GLiNER output — remove non-C entities
+        # Order-preserving dedup (NOT list(set(...)) — that gave nondeterministic
+        # ordering, so the "primary" routed topic could change run to run).
+        seen = set()
+        unique_entities = []
+        for e in entities:
+            t = e['text']
+            if t.lower() not in seen:
+                seen.add(t.lower())
+                unique_entities.append(t)
+
+        # Validate GLiNER output — keep known C terms and multi-word phrases;
+        # fuzzy-correct single-word typos ("poitners" -> "pointers").
         if unique_entities:
-            validated = [e for e in unique_entities if e.lower() in self.C_CONCEPT_TERMS or len(e.split()) > 1]
+            validated = []
+            for e in unique_entities:
+                el = e.lower()
+                if el in self.C_CONCEPT_TERMS or len(e.split()) > 1:
+                    validated.append(e)
+                else:
+                    corrected = self._fuzzy_c_term(el)
+                    if corrected:
+                        validated.append(corrected)
             if validated:
                 unique_entities = validated
         
@@ -201,7 +275,11 @@ class FastClassifier:
                     if w in self.C_CONCEPT_TERMS:
                         potential_entities.insert(0, w)  # Prioritize known terms
                     else:
-                        potential_entities.append(w)
+                        corrected = self._fuzzy_c_term(w)
+                        if corrected:
+                            potential_entities.insert(0, corrected)  # typo-corrected known term
+                        else:
+                            potential_entities.append(w)
             
             # If we found potential keywords, use them
             if potential_entities:

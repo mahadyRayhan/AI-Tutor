@@ -25,8 +25,10 @@ class HistoryManager:
                 print(f"Analytics Log Error: {e}")
 
     # --- SESSION MANAGEMENT ---
-    def create_session(self, username: str, title: str = "New Chat") -> str:
-        session_id = str(uuid.uuid4())
+    def create_session(self, username: str, title: str = "New Chat", session_id: str = None) -> str:
+        # Honor a caller-supplied session_id (e.g. client-generated) so the
+        # sessions row matches the id actually used for messages/state.
+        session_id = session_id or str(uuid.uuid4())
         db.execute("""
             INSERT INTO sessions (session_id, username, title, state, created_at)
             VALUES (?, ?, ?, ?, ?)
@@ -35,9 +37,13 @@ class HistoryManager:
 
     def add_message(self, username: str, session_id: str, role: str, content: str, sources: list = None, action_taken: str = None, style_used: str = None) -> int:
         # 1. Ensure Session Exists
+        # CRITICAL: create the row under THIS session_id. The old code called
+        # create_session(username) with a fresh uuid, orphaning the real id —
+        # so update_session_state/get_session_state silently no-opped for the
+        # whole session (topic memory, quiz state, pending goals all dead).
         sess = db.fetch_one("SELECT 1 FROM sessions WHERE session_id = ?", (session_id,))
         if not sess:
-            self.create_session(username) 
+            self.create_session(username, session_id=session_id)
 
         # 2. Update Title based on first USER message (only if session still has default title)
         if role == "user" and not content.strip().startswith("["):

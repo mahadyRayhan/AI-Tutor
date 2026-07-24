@@ -143,6 +143,107 @@ class ChainOfThoughtRAGAgent:
             self.logger.error(f"Contextualization failed: {e}")
             return current_query
 
+    # =========================================================
+    # TOPIC AMNESIA CACHE (redesigned) — deterministic topic memory
+    # ---------------------------------------------------------
+    # Three responsibilities, cleanly separated:
+    #   _best_topic()        : pick the most salient C concept from a set of entities
+    #   _remember_topic()    : persist the anchor topic to session state (seeding)
+    #   _resolve_topic_memory(): rewrite anaphoric / vague follow-ups against the anchor
+    #
+    # The resolver is DETERMINISTIC (no LLM) and is called BEFORE the Sentinel,
+    # so a context-less fragment like "how does it work?" is bound to the
+    # remembered topic and can never be misread as SECURITY_RISK.
+    # =========================================================
+
+    # Pronouns / vague references that stand in for a previously-named topic.
+    _ANAPHORA_RE = re.compile(r"\b(it|its|this|that|these|those|them|they|one|ones|the syntax|the concept|the topic)\b", re.I)
+    # Interrogative / request openers that signal a topic-seeking follow-up.
+    _FOLLOWUP_OPENERS = (
+        "how", "what", "why", "which", "when", "where", "can you", "could you",
+        "show me", "give me", "tell me", "explain", "describe", "and", "so",
+        "but", "also", "more", "what about", "how about", "go on", "continue",
+    )
+    # Emotional / helplessness expressions that must NOT be rewritten as topics.
+    _EMOTIONAL_PHRASES = (
+        "too hard", "give up", "i can't", "i cant", "i give up", "idk",
+        "i don't know", "i dont know", "confused", "frustrated", "stuck",
+        "hate this", "makes no sense", "i quit",
+    )
+
+    def _best_topic(self, entities: list) -> str:
+        """Pick the most salient C concept from extracted entities.
+        Prefers known C-concept terms; among those, the longest (most specific)
+        string (e.g. ['int', 'Linked List'] -> 'Linked List')."""
+        from app.core.fast_classifier import fast_classifier
+        if not entities:
+            return ""
+        known = [e for e in entities if e.lower() in fast_classifier.C_CONCEPT_TERMS
+                 or any(w in fast_classifier.C_CONCEPT_TERMS for w in e.lower().split())]
+        pool = known if known else entities
+        return max(pool, key=len)
+
+    def _remember_topic(self, username: str, session_id: str, entities: list) -> str:
+        """Seed the amnesia cache with the anchor topic for this turn.
+        Called from the earliest reliable point so EVERY downstream path
+        (gatekeeper roadmap, scaffolding, socratic) leaves a usable anchor.
+        Returns the topic saved (or '')."""
+        if not session_id:
+            return ""
+        topic = self._best_topic(entities)
+        if topic and len(topic) >= 3:
+            history_manager.update_session_state(username, session_id, {"last_valid_topic": topic})
+            self.logger.info(f"🗂️ [TOPIC CACHE] Anchor remembered: '{topic}'")
+            return topic
+        return ""
+
+    def _resolve_topic_memory(self, query: str, cached_topic: str) -> tuple:
+        """Deterministically resolve an anaphoric / vague follow-up against the
+        remembered topic. Returns (resolved_query, anchor_topic, did_resolve).
+
+        Fires ONLY when the query (a) names no C concept of its own, (b) reads
+        like a topic-seeking follow-up (interrogative/pronoun), and (c) is not an
+        emotional/helplessness expression. Otherwise returns the query unchanged
+        so explicit topic switches and standalone questions pass straight through.
+        """
+        from app.core.fast_classifier import fast_classifier
+        if not cached_topic or cached_topic.strip().lower() in ("", "c programming"):
+            return query, None, False
+
+        q = query.strip()
+        ql = q.lower()
+
+        # (c) never rewrite an emotional / helplessness message into a topic query
+        if any(p in ql for p in self._EMOTIONAL_PHRASES):
+            return query, None, False
+
+        # (a) does the query already name its own C concept? -> explicit topic, no memory needed
+        own = fast_classifier.extract_entities(query)
+        has_own_topic = any(
+            e.lower() in fast_classifier.C_CONCEPT_TERMS
+            or any(w in fast_classifier.C_CONCEPT_TERMS for w in e.lower().split())
+            for e in own
+        )
+        if has_own_topic:
+            return query, None, False
+
+        # (b) does it read like a follow-up? interrogative form OR an anaphoric pronoun
+        has_pronoun = bool(self._ANAPHORA_RE.search(ql))
+        is_interrogative = ql.rstrip("?.! ").endswith(("?",)) or ql.endswith("?") or \
+            any(ql.startswith(op) for op in self._FOLLOWUP_OPENERS)
+        n_words = len(ql.rstrip("?.!").split())
+        is_followup = is_interrogative and (has_pronoun or n_words <= 7)
+
+        if not is_followup:
+            return query, None, False
+
+        # Resolve: swap the first pronoun for the anchor, else attach the anchor.
+        if has_pronoun:
+            resolved = self._ANAPHORA_RE.sub(cached_topic, q, count=1)
+        else:
+            resolved = f"{q.rstrip('?.! ')} about {cached_topic}"
+        return resolved, cached_topic, True
+
     def _classify_intent(self, query: str) -> str:
         prompt = f"""
         Classify this student query about C programming:
@@ -1463,9 +1564,42 @@ class ChainOfThoughtRAGAgent:
         except Exception as e:
             self.logger.warning(f"[Affect] telemetry failed: {e}")
 
+        # =========================================================
+        # TOPIC AMNESIA CACHE — deterministic resolution (BEFORE Sentinel)
+        # ---------------------------------------------------------
+        # 1. If this turn names its own concept, remember it as the anchor.
+        # 2. Otherwise, if it's an anaphoric/vague follow-up ("how does it
+        #    work?", "how do I declare it?", "what about a nested one?"),
+        #    bind it to the remembered anchor so the topic survives and the
+        #    Sentinel can't misread the bare fragment as SECURITY_RISK.
+        # =========================================================
+        anchor_topic = None
+        did_resolve = False
+        try:
+            cached_topic = current_state.get("last_valid_topic") if current_state else None
+            own_entities = fast_classifier.extract_entities(query) if config.INTENT_CLASSIFIER_MODE == "fast" else []
+            # "Own topic" must be a GENUINE C concept — a stray noun like "works"
+            # or "one" must NOT count, or the anaphora resolver would be skipped.
+            own_is_concept = any(
+                e.lower() in fast_classifier.C_CONCEPT_TERMS
+                or any(w in fast_classifier.C_CONCEPT_TERMS for w in e.lower().split())
+                for e in own_entities
+            )
+            if own_is_concept:
+                # This turn names its own concept -> refresh the anchor immediately.
+                self._remember_topic(username, session_id, own_entities)
+            else:
+                # No real concept this turn -> resolve against the remembered anchor.
+                resolved_q, anchor_topic, did_resolve = self._resolve_topic_memory(query, cached_topic)
+                if did_resolve:
+                    search_query = resolved_q
+                    self.logger.info(f"🧠 [TOPIC MEMORY] '{query}' + cache('{cached_topic}') -> '{resolved_q}'")
+        except Exception as e:
+            self.logger.warning(f"[TOPIC MEMORY] resolution failed: {e}")
+
         state = AgentState(
             query=search_query,
-            original_query=query, 
+            original_query=query,
             user_id=username,
             session_id=session_id,
             user_role=user_role,
@@ -1477,6 +1611,13 @@ class ChainOfThoughtRAGAgent:
             delta_f=current_frustration_delta,
             n_strike=n_strike_val
         )
+
+        # A resolved anaphoric follow-up gets its topic + intent pre-set so the
+        # Sentinel routes it as a normal CONCEPT question about the anchor topic
+        # instead of security-blocking a context-less fragment.
+        if did_resolve and anchor_topic:
+            state.intent = "CONCEPT"
+            state.entities = [anchor_topic]
 
         # =========================================================
         # --- NEW: PENDING CHALLENGE SOLVER INTERCEPTOR ---
@@ -1611,45 +1752,43 @@ class ChainOfThoughtRAGAgent:
             if state.stop_processing: return
         
         # =========================================================
-        # THE FIX: TOPIC AMNESIA CACHE
+        # TOPIC AMNESIA CACHE — post-Sentinel reconcile & reinforce
+        # ---------------------------------------------------------
+        # Anaphora was already resolved deterministically before the Sentinel
+        # (see "TOPIC MEMORY" above). Here we only:
+        #   (1) reinforce the anchor from the Sentinel's (possibly refined)
+        #       entities when this turn carried a real concept, and
+        #   (2) as a last-resort safety net, fall back to the remembered anchor
+        #       if the pipeline produced no usable topic at all.
         # =========================================================
-        # 1. Determine if the user provided a real C-concept this turn
-        # We ensure it's not just an exact echo of their raw query
-        is_real_topic = len(state.entities) > 0 and state.entities[0].lower() != state.original_query.lower()
+        is_real_topic = (
+            len(state.entities) > 0
+            and state.entities[0].lower() != state.original_query.lower()
+            and self._best_topic(state.entities)  # must contain a genuine C concept
+        )
 
         if is_real_topic:
-            # =========================================================
-            # SAGE PDF PAGE 6: TOPIC CACHE ARGMAX
-            # Select the most specific/salient entity (proxy: longest string) 
-            # rather than just the first one found.
-            # e.g., ["int", "Linked List"] -> "Linked List"
-            # =========================================================
-            best_entity = max(state.entities, key=len)
-            
-            # Save it to the SQLite session cache!
+            best_entity = self._best_topic(state.entities)
             history_manager.update_session_state(username, session_id, {"last_valid_topic": best_entity})
             cached_topic = best_entity
-            self.logger.info(f"🗂️ [TOPIC CACHE] Saved new anchor topic: {cached_topic}")
-            
+            self.logger.info(f"🗂️ [TOPIC CACHE] Anchor reinforced: {cached_topic}")
         else:
             cached_topic = current_state.get("last_valid_topic", "C Programming")
-            
-            # --- FIX: ONLY OVERRIDE IF VAGUE OR FRUSTRATED ---
-            is_vague = len(state.original_query.split()) <= 4
-            is_frustrated = learning_profile.get("frustration_level") in ["high", "rage"]
-            
-            if is_vague or is_frustrated or "confused" in state.original_query.lower():
+            # Safety net: an empty/garbage topic on a non-emotional turn falls
+            # back to the remembered anchor so RAG has something to work with.
+            no_usable_topic = (not state.entities) or (not self._best_topic(state.entities))
+            is_emotional = learning_profile.get("frustration_level") in ["high", "rage"] \
+                or "confused" in state.original_query.lower()
+            if did_resolve:
+                # already bound to the anchor before the Sentinel — keep it
+                self.logger.info(f"🧠 [TOPIC CACHE] Follow-up bound to anchor: {cached_topic}")
+            elif no_usable_topic and cached_topic != "C Programming":
                 state.entities = [cached_topic]
-                self.logger.info(f"🧠 [TOPIC CACHE] Overriding vague/emotional query with cached topic: {cached_topic}")
-                
-                # If they are actively raging/confused, override the RAG search entirely
-                if is_frustrated or "confused" in state.original_query.lower():
+                if is_emotional:
                     state.query = cached_topic
+                self.logger.info(f"🧠 [TOPIC CACHE] No usable topic — falling back to anchor: {cached_topic}")
             else:
-                # Let specific, long queries (like "Show me how to write a virus") pass through 
-                # so the RAG agent fails naturally and doesn't hallucinate previous topics.
-                self.logger.info(f"⏭️ [TOPIC CACHE] Query is specific. Bypassing amnesia cache.")
-        # =========================================================
+                self.logger.info(f"⏭️ [TOPIC CACHE] Query is specific/standalone. No override.")
         # =========================================================
 
         # =========================================================
