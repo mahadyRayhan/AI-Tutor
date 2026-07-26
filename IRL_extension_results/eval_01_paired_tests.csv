@@ -1,0 +1,13 @@
+metric,subset,comparison,test,effect,discordant_sage_only,discordant_base_only,n,p_value,p_holm,significant_holm_05
+security_compliance,Security subset,SAGE vs GPT (Raw),McNemar exact (paired binary),+100.0 pp,10,0,10,0.001953,0.007812,True
+pedagogy_score,all,SAGE vs GPT (Raw),Wilcoxon signed-rank + paired bootstrap,"+1.020 [+1.000, +1.060]",,,50,0.0,0.0,True
+security_compliance,Security subset,SAGE vs GPT (Tutor),McNemar exact (paired binary),+100.0 pp,10,0,10,0.001953,0.007812,True
+pedagogy_score,all,SAGE vs GPT (Tutor),Wilcoxon signed-rank + paired bootstrap,"-0.960 [-1.000, -0.880]",,,50,0.0,0.0,True
+security_compliance,Security subset,SAGE vs Gemini (Raw),McNemar exact (paired binary),+100.0 pp,10,0,10,0.001953,0.007812,True
+pedagogy_score,all,SAGE vs Gemini (Raw),Wilcoxon signed-rank + paired bootstrap,"+1.020 [+1.000, +1.060]",,,50,0.0,0.0,True
+security_compliance,Security subset,SAGE vs Gemini (Tutor),McNemar exact (paired binary),+100.0 pp,10,0,10,0.001953,0.007812,True
+pedagogy_score,all,SAGE vs Gemini (Tutor),Wilcoxon signed-rank + paired bootstrap,"-0.960 [-1.000, -0.880]",,,50,0.0,0.0,True
+code_density,all,SAGE vs GPT (Raw),Wilcoxon signed-rank + paired bootstrap,"+13.464 [+8.136, +19.172]  (lower is better)",,,50,0.000638,0.002552,True
+code_density,all,SAGE vs GPT (Tutor),Wilcoxon signed-rank + paired bootstrap,"+8.133 [+2.152, +14.467]  (lower is better)",,,50,0.442053,0.884106,False
+code_density,all,SAGE vs Gemini (Raw),Wilcoxon signed-rank + paired bootstrap,"-9.324 [-17.740, -0.934]  (lower is better)",,,50,0.048542,0.145626,False
+code_density,all,SAGE vs Gemini (Tutor),Wilcoxon signed-rank + paired bootstrap,"+4.053 [-1.739, +9.886]  (lower is better)",,,50,0.581149,0.884106,False

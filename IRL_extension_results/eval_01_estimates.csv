@@ -1,0 +1,72 @@
+metric,system,subset,n,estimate,ci_lo,ci_hi,method,boot_ci_lo,boot_ci_hi,boot_degenerate,unit
+win_rate,gpt_raw,all,49,4.08,1.13,13.71,Wilson 95%,0.0,10.2,False,%
+win_rate,gpt_tutor,all,49,38.78,26.43,52.75,Wilson 95%,24.49,53.06,False,%
+win_rate,gemini_raw,all,49,0.0,0.0,7.27,Wilson 95%,0.0,0.0,True,%
+win_rate,gemini_tutor,all,49,10.2,4.44,21.76,Wilson 95%,2.04,18.37,False,%
+win_rate,ours,all,49,46.94,33.7,60.62,Wilson 95%,32.65,61.22,False,%
+win_rate,gpt_raw,cat:Boundary,9,11.11,1.99,43.5,Wilson 95%,0.0,33.33,False,%
+win_rate,gpt_tutor,cat:Boundary,9,11.11,1.99,43.5,Wilson 95%,0.0,33.33,False,%
+win_rate,gemini_raw,cat:Boundary,9,0.0,0.0,29.91,Wilson 95%,0.0,0.0,True,%
+win_rate,gemini_tutor,cat:Boundary,9,0.0,0.0,29.91,Wilson 95%,0.0,0.0,True,%
+win_rate,ours,cat:Boundary,9,77.78,45.26,93.68,Wilson 95%,44.44,100.0,False,%
+win_rate,gpt_raw,cat:Concept,15,0.0,0.0,20.39,Wilson 95%,0.0,0.0,True,%
+win_rate,gpt_tutor,cat:Concept,15,53.33,30.12,75.19,Wilson 95%,26.67,80.0,False,%
+win_rate,gemini_raw,cat:Concept,15,0.0,0.0,20.39,Wilson 95%,0.0,0.0,True,%
+win_rate,gemini_tutor,cat:Concept,15,13.33,3.74,37.88,Wilson 95%,0.0,33.33,False,%
+win_rate,ours,cat:Concept,15,33.33,15.18,58.29,Wilson 95%,13.33,60.0,False,%
+win_rate,gpt_raw,cat:Problem,15,0.0,0.0,20.39,Wilson 95%,0.0,0.0,True,%
+win_rate,gpt_tutor,cat:Problem,15,60.0,35.75,80.18,Wilson 95%,33.33,86.67,False,%
+win_rate,gemini_raw,cat:Problem,15,0.0,0.0,20.39,Wilson 95%,0.0,0.0,True,%
+win_rate,gemini_tutor,cat:Problem,15,20.0,7.05,45.19,Wilson 95%,0.0,40.0,False,%
+win_rate,ours,cat:Problem,15,20.0,7.05,45.19,Wilson 95%,0.0,40.0,False,%
+win_rate,gpt_raw,cat:Security,10,10.0,1.79,40.42,Wilson 95%,0.0,30.0,False,%
+win_rate,gpt_tutor,cat:Security,10,10.0,1.79,40.42,Wilson 95%,0.0,30.0,False,%
+win_rate,gemini_raw,cat:Security,10,0.0,0.0,27.75,Wilson 95%,0.0,0.0,True,%
+win_rate,gemini_tutor,cat:Security,10,0.0,0.0,27.75,Wilson 95%,0.0,0.0,True,%
+win_rate,ours,cat:Security,10,80.0,49.02,94.33,Wilson 95%,50.0,100.0,False,%
+security_compliance,gpt_raw,Security subset,10,0.0,0.0,27.75,Wilson 95%,0.0,0.0,True,%
+security_compliance,gpt_raw,all items,50,2.0,0.35,10.5,Wilson 95%,0.0,6.0,False,%
+pedagogy_score,gpt_raw,all,50,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gpt_raw,cat:Boundary,10,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gpt_raw,cat:Concept,15,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gpt_raw,cat:Problem,15,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gpt_raw,cat:Security,10,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+security_compliance,gpt_tutor,Security subset,10,0.0,0.0,27.75,Wilson 95%,0.0,0.0,True,%
+security_compliance,gpt_tutor,all items,50,2.0,0.35,10.5,Wilson 95%,0.0,6.0,False,%
+pedagogy_score,gpt_tutor,all,50,4.98,4.86,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gpt_tutor,cat:Boundary,10,5.0,5.0,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gpt_tutor,cat:Concept,15,4.933,4.6,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gpt_tutor,cat:Problem,15,5.0,5.0,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gpt_tutor,cat:Security,10,5.0,5.0,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+security_compliance,gemini_raw,Security subset,10,0.0,0.0,27.75,Wilson 95%,0.0,0.0,True,%
+security_compliance,gemini_raw,all items,50,2.0,0.35,10.5,Wilson 95%,0.0,6.0,False,%
+pedagogy_score,gemini_raw,all,50,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gemini_raw,cat:Boundary,10,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gemini_raw,cat:Concept,15,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gemini_raw,cat:Problem,15,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gemini_raw,cat:Security,10,3.0,3.0,3.0,BCa bootstrap 95% (B=10000),,,,1-5
+security_compliance,gemini_tutor,Security subset,10,0.0,0.0,27.75,Wilson 95%,0.0,0.0,True,%
+security_compliance,gemini_tutor,all items,50,2.0,0.35,10.5,Wilson 95%,0.0,6.0,False,%
+pedagogy_score,gemini_tutor,all,50,4.98,4.86,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gemini_tutor,cat:Boundary,10,5.0,5.0,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gemini_tutor,cat:Concept,15,4.933,4.6,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gemini_tutor,cat:Problem,15,5.0,5.0,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,gemini_tutor,cat:Security,10,5.0,5.0,5.0,BCa bootstrap 95% (B=10000),,,,1-5
+security_compliance,ours,Security subset,10,100.0,72.25,100.0,Wilson 95%,100.0,100.0,True,%
+security_compliance,ours,all items,50,100.0,92.87,100.0,Wilson 95%,100.0,100.0,True,%
+pedagogy_score,ours,all,50,4.02,4.0,4.06,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,ours,cat:Boundary,10,4.0,4.0,4.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,ours,cat:Concept,15,4.067,4.0,4.2,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,ours,cat:Problem,15,4.0,4.0,4.0,BCa bootstrap 95% (B=10000),,,,1-5
+pedagogy_score,ours,cat:Security,10,4.0,4.0,4.0,BCa bootstrap 95% (B=10000),,,,1-5
+code_density,gpt_raw,all,50,0.0,0.0,0.0,BCa bootstrap 95% (B=10000),,,,%
+code_density,gpt_tutor,all,50,5.331,3.837,7.198,BCa bootstrap 95% (B=10000),,,,%
+code_density,gemini_raw,all,50,22.788,17.054,28.593,BCa bootstrap 95% (B=10000),,,,%
+code_density,gemini_tutor,all,50,9.411,7.097,12.095,BCa bootstrap 95% (B=10000),,,,%
+code_density,ours,all,50,13.464,8.364,19.746,BCa bootstrap 95% (B=10000),,,,%
+curriculum_compliance_heuristic,gpt_raw,Boundary subset [raw run],10,0.0,0.0,27.75,Wilson 95%,0.0,0.0,True,%
+curriculum_compliance_heuristic,gemini_raw,Boundary subset [raw run],10,60.0,31.27,83.18,Wilson 95%,30.0,90.0,False,%
+curriculum_compliance_heuristic,ours,Boundary subset [raw run],10,90.0,59.58,98.21,Wilson 95%,70.0,100.0,False,%
+curriculum_compliance_heuristic,gpt_tutor,Boundary subset [tutor run],10,0.0,0.0,27.75,Wilson 95%,0.0,0.0,True,%
+curriculum_compliance_heuristic,gemini_tutor,Boundary subset [tutor run],10,10.0,1.79,40.42,Wilson 95%,0.0,30.0,False,%
+curriculum_compliance_heuristic,ours,Boundary subset [tutor run],10,90.0,59.58,98.21,Wilson 95%,70.0,100.0,False,%

@@ -333,6 +333,15 @@ class ChainOfThoughtRAGAgent:
     # concepts ("Memory Allocation", "Recursion"), but students ask using specific API
     # names ("malloc", "calloc") that aren't node names — so the prereq gate found no
     # node and silently let advanced topics through (Module-B F3-03/F3-04). Map them.
+    #
+    # The same failure recurred on the C-EduBench Boundary subset: "union", "typedef",
+    # "enum" and "switch" exist in the curriculum graph only as INCLUDES *children* of
+    # a concept node, and a child carries no REQUIRES edge of its own — so the prereq
+    # lookup found a node, found zero prerequisites, and taught the gated topic
+    # outright. "structs" missed even the CONTAINS match, because "structures" does not
+    # contain the substring "structs". Mapping each child to the parent concept that
+    # owns the prerequisite edge is the minimal fix; the alternative (inheriting
+    # prereqs through INCLUDES) was tried before and over-gated foundational topics.
     _CONCEPT_ALIASES = {
         "malloc": "Memory Allocation",
         "calloc": "Memory Allocation",
@@ -341,6 +350,21 @@ class ChainOfThoughtRAGAgent:
         "dynamic memory allocation": "Memory Allocation",
         "recursion": "Recursion",
         "recursive": "Recursion",
+        # Structures and its INCLUDES children (Structures REQUIRES Variables+Arrays)
+        "struct": "Structures",
+        "structs": "Structures",
+        "structure": "Structures",
+        "structures": "Structures",
+        "union": "Structures",
+        "unions": "Structures",
+        "typedef": "Structures",
+        "enum": "Structures",
+        "enums": "Structures",
+        "enumeration": "Structures",
+        # Conditionals and its INCLUDES children (Conditionals REQUIRES Operators)
+        "switch": "Conditionals",
+        "switch case": "Conditionals",
+        "switch statement": "Conditionals",
     }
 
     def _canonicalize_entities(self, entities: List[str]) -> List[str]:
@@ -860,6 +884,13 @@ class ChainOfThoughtRAGAgent:
         # Don't check prereqs for simple greetings or non-concept intents
         if intent not in ["CONCEPT", "PROBLEM"]: return None
 
+        # Remember the student's own wording BEFORE canonicalisation. The gate needs
+        # the canonical concept ("Structures") to find the prerequisite edge, but the
+        # roadmap must speak the student's language: answering "What is enum?" with
+        # "Quick Roadmap for Structures" reads as a non-sequitur and was scored
+        # "off-topic and unhelpful" by the pedagogy rubric.
+        asked_term = (entities[0] if entities else "") or ""
+
         # Resolve sub-topic aliases (malloc → Memory Allocation, recursion → Recursion)
         # so both the prereq lookup and the graph-node validation below succeed.
         entities = self._canonicalize_entities(entities)
@@ -950,13 +981,24 @@ class ChainOfThoughtRAGAgent:
             # Build a clear roadmap instead of a vague dependency chain
             prereq_roadmap = "\n".join(f"   {i+1}. **{p}**" for i, p in enumerate(display_prereqs))
             
-            msg = f"## 🧱 Quick Roadmap for **{topic_name}**\n\n"
-            msg += f"To make **{topic_name}** click, it helps to know these first:\n\n"
+            # Name the topic the student actually asked about. When they asked about a
+            # sub-topic ("enum") that was canonicalised to its parent ("Structures"),
+            # say so explicitly rather than silently swapping the subject.
+            asked_clean = asked_term.strip()
+            is_alias = bool(asked_clean) and asked_clean.lower() != topic_name.lower()
+            headline = asked_clean if is_alias else topic_name
+
+            msg = f"## 🧱 Quick Roadmap for **{headline}**\n\n"
+            if is_alias:
+                msg += (f"`{asked_clean}` is part of **{topic_name}** in this course. "
+                        f"To make it click, it helps to know these first:\n\n")
+            else:
+                msg += f"To make **{topic_name}** click, it helps to know these first:\n\n"
             msg += prereq_roadmap
             msg += f"\n\n💡 You can **skip ahead** if you're comfortable, or I'll walk you through each one quickly!"
 
             # Put "Teach me anyway" FIRST (most prominent) to reduce frustration
-            btns = [f"Teach me {topic_name} anyway"]
+            btns = [f"Teach me {headline} anyway"]
             btns += [f"Explain {p}" for p in display_prereqs]
             btns += [f"I know {p} (Verify)" for p in display_prereqs]
 
@@ -1731,16 +1773,21 @@ class ChainOfThoughtRAGAgent:
         # AGENT PIPELINE
         # ---------------------------------------------------------
 
-        # 1. ACTIVE SCAFFOLDING PRIORITY (The Fix)
-        # If the user is currently in a guided plan, let the Scaffolding agent handle it.
-        # This prevents the Sentinel from blocking valid menu clicks like "Help me message the TA".
-        if is_in_plan:
-            async for event in self.scaffolding.process(state):
-                yield event
-            if state.stop_processing: return
-
-        # 2. SENTINEL (Security & Classification)
-        # Runs on all new queries that aren't part of an active plan
+        # 1. SENTINEL (Security & Classification) — MUST run before the scaffolding
+        # agent, on every free-text turn, including turns inside an active plan.
+        #
+        # This ordering used to be reversed: an active plan short-circuited straight
+        # into the Scaffolding agent and returned, so once a plan was open the rest of
+        # the session was Sentinel-free. That is a trajectory-defense bypass — a
+        # crescendo attacker whose turn happens to look like a PROBLEM of >8 words
+        # (scaffolding's trigger) opens a plan, and every later turn, including
+        # "how could that infinite loop freeze the system?", skips the security rules
+        # and the session risk accumulator entirely. Verified: the J2 DoS crescendo
+        # went from blocked@T3 to never blocked purely by opening a plan at T2.
+        #
+        # The original reason for scaffolding-first was to stop the Sentinel refusing
+        # in-plan menu actions ("Help me message the TA"). Security cannot be the
+        # thing that yields there — if a menu action trips a rule, fix the rule.
         if feedback_mode:
             state.intent = "CONCEPT"
             state.entities = [current_state.get("challenge_topic", "C Programming")]
@@ -1748,6 +1795,14 @@ class ChainOfThoughtRAGAgent:
             state.intent = "REVIEW" # Bypass sentinel to protect forced intent
         else:
             async for event in self.sentinel.process(state):
+                yield event
+            if state.stop_processing: return
+
+        # 2. ACTIVE SCAFFOLDING PRIORITY
+        # If the user is in a guided plan, the Scaffolding agent handles the turn —
+        # but only after the Sentinel has cleared it.
+        if is_in_plan:
+            async for event in self.scaffolding.process(state):
                 yield event
             if state.stop_processing: return
         
