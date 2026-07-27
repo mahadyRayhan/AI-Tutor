@@ -76,11 +76,35 @@ class FastClassifier:
         security_triggers = [
             r"\bexam\b", r"\bexams\b", r"\bexam answers?\b", r"\bsolution\b",
             r"\banswer key\b", r"\bhack\b", r"\bvirus\b", r"\bexploit\b",
-            r"\bleak\b", r"\bignore (?:all )?previous\b", r"\bmalware\b",
+            r"\bignore (?:all )?previous\b", r"\bmalware\b",
             r"\bkeylogger\b",
         ]
         if any(re.search(t, q_lower) for t in security_triggers):
             return "SECURITY_RISK"
+
+        # "leak" is a data-exfiltration trigger ("leak the exam file"), but "memory
+        # leak" / "resource leak" are core C debugging concepts. Only treat it as
+        # malicious when the query is NOT about a memory/resource leak. (Red-team
+        # suite B06: "What is a memory leak?" was hard-blocked as SECURITY_RISK.)
+        if re.search(r"\bleak", q_lower) and not re.search(
+                r"memory\s*leak|resource\s*leak|leak\w*\s+memory|leaking\s+memory", q_lower):
+            return "SECURITY_RISK"
+
+        # 1b. Metacognitive / emotional statements inside a tutoring session are NOT
+        #     off-topic. Without this they carry no C term, fall to the embedding
+        #     fallback, get labelled OFF_TOPIC, and earn a focus-mode strike — the
+        #     opposite of what a frustrated learner needs (red-team B05: "this is so
+        #     confusing, I give up" → Off-Topic Warning). Route to CONCEPT so the
+        #     topic-memory anchor and the frustration handler take over. Security
+        #     already ran above, so "I give up, just hack it" still blocks first.
+        frustration_phrases = (
+            "i give up", "i can't do this", "i cant do this", "this is so confusing",
+            "this is too hard", "too hard", "i'm stuck", "im stuck", "i am stuck",
+            "i don't get it", "i dont get it", "i'm confused", "im confused",
+            "i don't understand", "i dont understand", "this is frustrating",
+        )
+        if any(p in q_lower for p in frustration_phrases):
+            return "CONCEPT"
 
         # 2. Code Review Heuristic
         if "{" in query and "}" in query and ";" in query:

@@ -64,6 +64,14 @@ class ChainOfThoughtRAGAgent:
     async def _contextualize_query(self, current_query, username, session_id):
         if not session_id: return current_query
 
+        # Never rewrite an emotional / helplessness message. The standalone-question
+        # rewrite below strips the very cues ("I give up", "this is so confusing")
+        # that the intent classifier uses to route it to the frustration handler —
+        # leaving a bare rewrite that reads as OFF_TOPIC and earns a focus-mode
+        # strike (red-team B05). These messages carry no topic to resolve anyway.
+        if any(p in current_query.lower() for p in self._EMOTIONAL_PHRASES):
+            return current_query
+
         session_data = history_manager.get_session_details(username, session_id)
         if not session_data or not session_data.get('messages'): return current_query
 
