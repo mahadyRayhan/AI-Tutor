@@ -1,0 +1,41 @@
+archetype,question,directed_tier,judged_tier,why
+lopsided,What is a pointer in C?,code,none,"Encourages recall, not specific competence"
+lopsided,How do I declare a pointer variable?,code,code,Focus on syntax and code writing.
+lopsided,What is the address-of operator used for with pointers?,code,none,"Encourages self-reflection, not specific competence"
+lopsided,What does dereferencing a pointer mean?,code,none,"Encourages self-reflection, not specific competence"
+lopsided,What is a null pointer?,code,none,"Encourages self-reflection, not specific competence"
+lopsided,How is a pointer different from a regular variable?,code,quiz,Explains definitions and concepts clearly.
+lopsided,What is pointer arithmetic?,code,quiz,Explains pointer arithmetic conceptually
+lopsided,What does the * symbol mean when declaring a pointer?,code,none,"Encourages self-reflection, not specific competence"
+lopsided,What is a dangling pointer?,code,none,"Encourages self-reflection, not specific competence"
+lopsided,What is a pointer parameter in a function definition?,code,quiz,Defines pointer parameters and their use cases.
+lopsided,What is a pointer to a pointer?,code,none,"Encourages self-reflection, not specific competence"
+lopsided,How do I make a pointer point to an existing variable?,code,code,Focus on writing pointer code
+lopsided,What is the danger of an uninitialised pointer?,code,none,"Encourages self-reflection, not specific competence."
+lopsided,What is the size of a pointer in C?,code,none,Encourages recall without providing information
+lopsided,What is a function pointer in C?,code,none,"Encourages self-reflection, not specific competence"
+lopsided,What is the difference between a void pointer and a typed pointer?,code,quiz,Explains definitions and rules of pointers
+lopsided,How do I safely free memory held by a pointer?,code,quiz,Explains concepts and terminology of memory management.
+lopsided,What is a const pointer in C?,code,none,"Encourages self-reflection, not specific competence"
+lopsided,How do pointers cause memory leaks?,code,quiz,Explains memory leak conceptually
+lopsided,What does a pointer actually store in memory?,code,quiz,Explains what pointers store conceptually.
+inverse_lopsided,What is a pointer in C?,quiz,none,"Encourages self-recall, not new information"
+inverse_lopsided,How do I declare a pointer variable?,quiz,code,Focus on syntax and code writing.
+inverse_lopsided,What is the address-of operator used for with pointers?,quiz,none,"Encourages self-reflection, not specific competence."
+inverse_lopsided,What does dereferencing a pointer mean?,quiz,none,"Encourages self-reflection, not specific competence."
+inverse_lopsided,What is a null pointer?,quiz,none,"Encourages self-reflection, not specific competence"
+inverse_lopsided,How is a pointer different from a regular variable?,quiz,quiz,Explains concepts and definitions clearly
+inverse_lopsided,What is pointer arithmetic?,quiz,quiz,Defines pointer arithmetic and its rules.
+inverse_lopsided,What does the * symbol mean when declaring a pointer?,quiz,none,"Encourages self-reflection, not specific competence"
+inverse_lopsided,What is a dangling pointer?,quiz,none,"Encourages self-reflection, not specific competence"
+inverse_lopsided,What is a pointer parameter in a function definition?,quiz,quiz,Explains pointer parameters conceptually.
+inverse_lopsided,What is a pointer to a pointer?,quiz,none,"Encourages self-reflection, not specific competence"
+inverse_lopsided,How do I make a pointer point to an existing variable?,quiz,quiz,Focus on explaining pointer concepts and terminology.
+inverse_lopsided,What is the danger of an uninitialised pointer?,quiz,none,"Encourages self-reflection, not specific competence."
+inverse_lopsided,What is the size of a pointer in C?,quiz,none,"Encourages self-reflection, not specific competence"
+inverse_lopsided,What is a function pointer in C?,quiz,none,"Encourages self-reflection, not specific competence"
+inverse_lopsided,What is the difference between a void pointer and a typed pointer?,quiz,quiz,Explains definitions and differences of pointer types.
+inverse_lopsided,How do I safely free memory held by a pointer?,quiz,code,Focus on writing safe memory release code.
+inverse_lopsided,What is a const pointer in C?,quiz,none,"Encourages self-reflection, not specific competence"
+inverse_lopsided,How do pointers cause memory leaks?,quiz,quiz,Explains memory leak conceptually
+inverse_lopsided,What does a pointer actually store in memory?,quiz,quiz,Defines what a pointer stores in memory.

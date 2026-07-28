@@ -120,6 +120,12 @@ def _apply_decay(p_tilde: float, tier: str, last_at: datetime | None,
     """
     if last_at is None:
         return p_tilde
+    # Stored timestamps are naive local time, but a tz-aware value can reach here from
+    # any writer that used `datetime.now(timezone.utc)`. Subtracting mixed-awareness
+    # datetimes raises TypeError, and every caller of this function swallows exceptions,
+    # so the failure surfaces only as mastery silently reverting to the prior. Normalise.
+    if last_at.tzinfo is not None:
+        last_at = last_at.astimezone().replace(tzinfo=None)
     delta_days = (datetime.now() - last_at).total_seconds() / 86400.0
     if delta_days <= 0:
         return p_tilde

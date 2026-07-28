@@ -538,6 +538,14 @@ class SQLiteDB:
             except sqlite3.OperationalError:
                 pass
 
+            # Which evidence tier was lagging when the adaptation level was chosen.
+            # Without this the assigned level is observable but the diversity signal
+            # that produced it is not, so tier-steering cannot be audited.
+            try:
+                self.conn.execute("ALTER TABLE response_log ADD COLUMN weak_tier TEXT")
+            except sqlite3.OperationalError:
+                pass
+
             # Reparameterization migration: rows seeded under the old zero-prior
             # scheme have p_mastery_micro=0.0 or p_mastery_code=0.0 but no
             # recorded interactions (any actual interaction would push them above 0.09).

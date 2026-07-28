@@ -21,6 +21,7 @@ class AgentState(BaseModel):
     # Mastery-Conditioned Response Adaptation
     mastery_level: str = "novice"    # novice | developing | proficient | reviewing
     mastery_detail: str = ""         # BKT summary injected into LLM prompt
+    mastery_weak_tier: str = ""      # "" | quiz | micro | code — lowest-posterior tier
 
     # Metacognitive Calibration (MCN) — inferred, flag-gated. "" when unknown/disabled.
     calibration_state: str = ""      # "" | over | cal | under

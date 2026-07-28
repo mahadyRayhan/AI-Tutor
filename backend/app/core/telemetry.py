@@ -207,14 +207,17 @@ def log_jol(username: str, concept: str, confidence_1_5: int, is_correct: bool,
 # ── C2: response adaptation + behavior ─────────────────────────────────────────
 
 def log_response(username: str, session_id: str, concept: str, intent: str,
-                 mastery_level: str, format_sections: str = "") -> None:
+                 mastery_level: str, format_sections: str = "",
+                 weak_tier: str = "") -> None:
     try:
         sid = get_study_id(username)
         db.execute(
             "INSERT INTO response_log "
-            "(study_id, username, session_id, concept, intent, mastery_level, format_sections, ts_utc) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (sid, username, session_id, concept, intent, mastery_level, format_sections, _now()),
+            "(study_id, username, session_id, concept, intent, mastery_level, "
+            "format_sections, weak_tier, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (sid, username, session_id, concept, intent, mastery_level,
+             format_sections, weak_tier, _now()),
         )
     except Exception as e:
         logger.warning(f"[telemetry] log_response failed: {e}")

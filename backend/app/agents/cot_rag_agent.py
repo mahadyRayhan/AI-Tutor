@@ -27,6 +27,12 @@ from app.agents.socratic import SocraticTutorAgent
 from app.db.sqlite_db import db
 from app.agents.profiler import ProfilerAgent
 
+# Gate for naming a weakest evidence tier in the adaptation prompt. Below this spread the
+# tiers are within parameter noise of each other and no tier is meaningfully lagging;
+# without at least one observation in that tier the claim rests on the prior alone.
+_WEAK_TIER_MIN_SPREAD = 0.20
+_WEAK_TIER_MIN_EVIDENCE = 1
+
 import nltk
 from nltk.corpus import stopwords
 # Ensure resources are downloaded (do this once, maybe in __init__)
@@ -1026,50 +1032,96 @@ class ChainOfThoughtRAGAgent:
         Resolve entities to a knowledge-graph concept, read BKT state,
         and classify the student's mastery level for this topic.
 
-        Returns (mastery_level, mastery_detail, resolved_concept_or_None).
-        """
-        from app.core.bkt_model import _read_row, _apply_decay, _parse_ts, EVIDENCE_CONFIG, get_effective_mastery
+        Returns (mastery_level, mastery_detail, resolved_concept_or_None, weakest_tier_or_None).
 
-        # Step 1: Get canonical concept names from knowledge graph
+        Classification is CONJUNCTIVE over the three evidence tiers, mirroring the
+        certification rule: no tier may compensate for another. A learner who aces
+        quizzes but cannot write code is NOT proficient, and must not be handed
+        reduced scaffolding on the strength of the quiz tier alone.
+        """
+        from app.core.bkt_model import (
+            _read_row, _apply_decay, _parse_ts, _TS_COL, _LAM_COL, EVIDENCE_CONFIG,
+        )
+
+        # Step 1: Get candidate concept names from the knowledge graph, with out-degree.
+        # Out-degree separates a curriculum node (which INCLUDES children / REQUIRES
+        # prerequisites) from a leaf child, and is the tiebreaker when several node names
+        # contain the same word.
         try:
-            cypher = "MATCH (n) RETURN n.name AS name"
-            graph_concepts = [r["name"] for r in self.graph_db.execute_query(cypher, {}) if r.get("name")]
+            cypher = (
+                "MATCH (n) WHERE n.name IS NOT NULL "
+                "OPTIONAL MATCH (n)-[r]->() "
+                "RETURN n.name AS name, count(r) AS out_deg"
+            )
+            deg = {}
+            for r in self.graph_db.execute_query(cypher, {}):
+                if r.get("name"):
+                    # The same name can exist as two distinct nodes: ingestion MERGEs
+                    # relationship targets as `:Concept`, which creates a duplicate when a
+                    # `:Section` of that name already exists. Collapse them by name.
+                    deg[r["name"]] = max(deg.get(r["name"], 0), r.get("out_deg") or 0)
+            graph_concepts = list(deg)
         except Exception:
-            graph_concepts = []
+            deg, graph_concepts = {}, []
 
         if not graph_concepts:
-            return ("novice", "No knowledge graph available", None)
+            return ("novice", "No knowledge graph available", None, None)
 
-        # Step 2: Entity-to-concept resolution
-        resolved = None
-        for entity in entities:
+        # Step 2: Entity-to-concept resolution.
+        #
+        # This SCORES every candidate rather than taking the first fuzzy hit. First-match
+        # resolution is order-dependent, and Neo4j returns nodes in arbitrary order: the
+        # entity "pointer" fuzzy-matches `Memory and Pointers`, `Pointers` AND
+        # `FILE Pointer`, so whichever the driver happened to return first decided the
+        # student's adaptation level. In practice `Memory and Pointers` (a Section with no
+        # BKT row) came back first, its parent lookup reached the graph root, and every
+        # student was silently classified NOVICE regardless of their actual mastery.
+        def _sing(w: str) -> str:
+            return w[:-1] if len(w) > 3 and w.endswith("s") else w
+
+        # Extractors emit multi-word entities ("void pointer", "dangling pointer") that
+        # match no node name as a whole string. Score the tokens too, at a small penalty,
+        # so "void pointer" still reaches `Pointers` instead of resolving to nothing.
+        probes = []
+        for idx, entity in enumerate(entities):
             e_lower = entity.lower().strip()
+            if len(e_lower) >= 3:
+                probes.append((idx, e_lower, 0))
+            for tok in e_lower.split():
+                if len(tok) >= 3 and tok != e_lower:
+                    probes.append((idx, tok, 8))
 
-            # Pass 1: Exact case-insensitive match
+        best, best_score = None, 0
+        for idx, e_lower, tok_penalty in probes:
+            ne = _sing(e_lower)
             for gc in graph_concepts:
-                if e_lower == gc.lower():
-                    resolved = gc
-                    break
-            if resolved:
-                break
+                gcl = gc.lower()
+                gw = gcl.split()
+                if gcl == e_lower or _sing(gcl) == ne:
+                    score = 100                       # whole name is the concept
+                elif any(_sing(w) == ne for w in gw):
+                    score = 50                        # one word IS the concept
+                elif any(w.startswith(e_lower) or e_lower.startswith(w)
+                         for w in gw if len(w) >= 3):
+                    score = 20                        # prefix overlap only
+                else:
+                    continue
+                score -= 5 * (len(gw) - 1)            # prefer the most specific name
+                score -= tok_penalty                  # a token is weaker than the entity
+                if deg.get(gc, 0) > 0:
+                    score += 10                       # curriculum node, not a leaf
+                if _read_row(username, gc):
+                    score += 25                       # the student is tracked on it
+                score += (len(entities) - idx)        # earlier entities break ties
+                if score > best_score:
+                    best, best_score = gc, score
 
-            # Pass 2: Word-boundary fuzzy match (min entity length 3)
-            if len(e_lower) < 3:
-                continue
-            for gc in graph_concepts:
-                gc_words = gc.lower().split()
-                if any(
-                    (w.startswith(e_lower) or e_lower.startswith(w))
-                    for w in gc_words if len(w) >= 3
-                ):
-                    resolved = gc
-                    self.logger.info(f"🎯 [MCRA] Fuzzy matched '{entity}' → '{gc}'")
-                    break
-            if resolved:
-                break
+        resolved = best
+        if resolved:
+            self.logger.info(f"🎯 [MCRA] Resolved {entities} → '{resolved}' (score {best_score})")
 
         if not resolved:
-            return ("novice", f"No matching concept for entities: {entities}", None)
+            return ("novice", f"No matching concept for entities: {entities}", None, None)
 
         # Step 3: Read BKT row (try resolved node, then its parent concept)
         row = _read_row(username, resolved)
@@ -1092,32 +1144,58 @@ class ChainOfThoughtRAGAgent:
             except Exception:
                 pass
         if not row:
-            return ("novice", f"No prior interactions with '{resolved}'", resolved)
+            return ("novice", f"No prior interactions with '{resolved}'", resolved, None)
 
         # Step 4: ever_certified takes priority → reviewing
         if row["ever_certified"]:
-            return ("reviewing", f"Previously certified on '{resolved}'", resolved)
+            return ("reviewing", f"Previously certified on '{resolved}'", resolved, None)
 
-        # Step 5: Compute effective mastery (blends BKT + self-assessment for display/adaptation)
-        eff = get_effective_mastery(username, resolved)
-        p_q, p_m, p_c = eff["quiz"], eff["micro"], eff["code"]
+        # Step 5: Per-tier OBJECTIVE BKT posteriors (decay-adjusted).
+        # Deliberately NOT get_effective_mastery(): P_eff blends in the student's own
+        # self-assessment, which would let the SRL confidence slider move the amount of
+        # scaffolding they are given. Adaptation reads observed performance only.
+        p = {}
+        for tier in ("quiz", "micro", "code"):
+            p_raw = row[EVIDENCE_CONFIG[tier]["col"]] or EVIDENCE_CONFIG[tier]["P_L0"]
+            p[tier] = _apply_decay(
+                p_raw, tier, _parse_ts(row[_TS_COL[tier]]), lam=row[_LAM_COL[tier]]
+            )
+        p_q, p_m, p_c = p["quiz"], p["micro"], p["code"]
 
         n_q = row["n_evidence_quiz"] or 0
         n_m = row["n_evidence_micro"] or 0
         n_c = row["n_evidence_code"] or 0
-        avg_p = (p_q + p_m + p_c) / 3.0
+
+        p_min = min(p_q, p_m, p_c)          # conjunctive: no tier compensates another
+        n_all = min(n_q, n_m, n_c)
+        n_any = max(n_q, n_m, n_c)
+
+        # The weakest tier is only reported when the evidence actually supports naming
+        # one. The three tiers carry different Cromwell priors (quiz 0.30, micro 0.05,
+        # code 0.01) and different guess/slip parameters, so an unconditional argmin
+        # returns `code` for any learner with little evidence and still returns *some*
+        # tier for a genuinely balanced one — reporting parameter asymmetry as if it were
+        # a diagnosis. Median spread between strongest and weakest tier is 0.03 for a
+        # balanced learner versus 0.96 for a genuinely lopsided one, so a modest spread
+        # floor separates the two cleanly.
+        n_by_tier = {"quiz": n_q, "micro": n_m, "code": n_c}
+        cand = min(p, key=p.get)
+        spread = max(p.values()) - min(p.values())
+        weak_tier = cand if (spread >= _WEAK_TIER_MIN_SPREAD
+                             and n_by_tier[cand] >= _WEAK_TIER_MIN_EVIDENCE) else None
 
         detail = (
-            f"'{resolved}': avg_P_eff={avg_p:.2f} "
+            f"'{resolved}': min_P={p_min:.2f} "
+            f"(weakest tier: {weak_tier or 'none — tiers within ' + f'{spread:.2f}'}) "
             f"[quiz={p_q:.2f}(n={n_q}), micro={p_m:.2f}(n={n_m}), code={p_c:.2f}(n={n_c})]"
         )
 
-        # Step 6: Classification (uses effective mastery, NOT raw BKT)
-        if avg_p >= 0.75 and n_q >= 2 and n_m >= 2 and n_c >= 2:
-            return ("proficient", detail, resolved)
-        if avg_p >= 0.35 or n_q >= 2 or n_m >= 2 or n_c >= 2:
-            return ("developing", detail, resolved)
-        return ("novice", detail, resolved)
+        # Step 6: Conjunctive classification — same non-compensatory form as certification.
+        if p_min >= 0.75 and n_all >= 2:
+            return ("proficient", detail, resolved, weak_tier)
+        if p_min >= 0.35 or n_any >= 2:
+            return ("developing", detail, resolved, weak_tier)
+        return ("novice", detail, resolved, weak_tier)
 
     async def _execute_standard_rag(self, query, intent, entities, user_role, username, user_goal, session_id):
         yield {"type": "status", "message": "Searching knowledge base...", "percent": 60}
@@ -2010,9 +2088,10 @@ class ChainOfThoughtRAGAgent:
         # =========================================================
         if state.intent in ["CONCEPT", "PROBLEM"] and state.entities and username:
             try:
-                level, detail, _ = self._classify_mastery_level(username, state.entities)
+                level, detail, _, weak_tier = self._classify_mastery_level(username, state.entities)
                 state.mastery_level = level
                 state.mastery_detail = detail
+                state.mastery_weak_tier = weak_tier or ""
                 self.logger.info(f"🎯 [MCRA] {username}: {level.upper()} | {detail}")
             except Exception as e:
                 self.logger.warning(f"[MCRA] Classification failed: {e}")
@@ -2038,7 +2117,8 @@ class ChainOfThoughtRAGAgent:
                 from app.core import telemetry
                 concept = state.entities[0] if state.entities else ""
                 telemetry.log_response(username, session_id, concept,
-                                       state.intent, state.mastery_level)
+                                       state.intent, state.mastery_level,
+                                       weak_tier=state.mastery_weak_tier)
             except Exception as e:
                 self.logger.warning(f"[MCRA] response telemetry failed: {e}")
 
@@ -2121,6 +2201,8 @@ class ChainOfThoughtRAGAgent:
                     "s_goal": state.s_goal, "c_code": state.c_code,
                     "m_state": state.m_state, "delta_f": state.delta_f,
                     "n_strike": state.n_strike, "mastery_level": state.mastery_level,
+                    "mastery_weak_tier": state.mastery_weak_tier,
+                    "mastery_detail": state.mastery_detail,
                 }
                 
                 topic_name = state.entities[0] if state.entities else "the last topic"
