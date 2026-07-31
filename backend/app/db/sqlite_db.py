@@ -546,6 +546,15 @@ class SQLiteDB:
             except sqlite3.OperationalError:
                 pass
 
+            # Per-turn multi-turn risk (Eqs. 9-11) on EVERY turn, not only blocks.
+            # Required for escalation recall and any tau_judge sweep; without it the
+            # trajectory layer's contribution is not directly measurable.
+            for _col in ("traj_risk", "traj_acc", "traj_peak"):
+                try:
+                    self.conn.execute(f"ALTER TABLE turn_log ADD COLUMN {_col} REAL")
+                except sqlite3.OperationalError:
+                    pass
+
             # Reparameterization migration: rows seeded under the old zero-prior
             # scheme have p_mastery_micro=0.0 or p_mastery_code=0.0 but no
             # recorded interactions (any actual interaction would push them above 0.09).

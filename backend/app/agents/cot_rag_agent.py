@@ -1364,7 +1364,53 @@ class ChainOfThoughtRAGAgent:
                                                 "suggestions": [f"Retake exam: {concept}", "What should I learn next?"]}}
             return
 
+    @staticmethod
+    def _state_payload(state) -> dict:
+        """The sensory/state vector carried to the turn logger.
+
+        Shared by the Socratic completion path and by run_stream's injector, so a turn
+        that ends early records the same fields as one that runs to completion.
+        """
+        return {
+            "s_goal": state.s_goal, "c_code": state.c_code,
+            "m_state": state.m_state, "delta_f": state.delta_f,
+            "n_strike": state.n_strike, "mastery_level": state.mastery_level,
+            "mastery_weak_tier": state.mastery_weak_tier,
+            "mastery_detail": state.mastery_detail,
+            "traj_risk": state.traj_risk,
+            "traj_acc": state.traj_acc,
+            "traj_peak": state.traj_peak,
+        }
+
     async def run_stream(self, query: str, user_role: str = 'student', **kwargs):
+        """Public entry point. Wraps the orchestrator so that EVERY terminal event
+        carries the state vector.
+
+        The orchestrator has nineteen early-return paths (Sentinel block, prerequisite
+        gate, Socratic withholding, exam handlers, …) and only the Socratic path used to
+        attach `_state`. Turn telemetry therefore recorded nothing for 885 of 1854 stored
+        turns — 48%, and precisely the blocked ones. That makes the trajectory defense
+        unmeasurable on the turns where it fires, which is the only place it matters.
+
+        `blocked` is set from whether the orchestrator attached `_state` itself, which is
+        the same signal `main.py` previously derived from the key's absence. Injecting the
+        payload unconditionally would otherwise have silently reclassified every block as
+        a normal turn.
+        """
+        sink: Dict[str, Any] = {}
+        async for event in self._run_stream_core(query, user_role, _state_sink=sink, **kwargs):
+            if event.get("type") == "complete":
+                data = event.get("data")
+                if isinstance(data, dict):
+                    reached_socratic = "_state" in data
+                    st = sink.get("state")
+                    if not reached_socratic:
+                        data["_state"] = self._state_payload(st) if st is not None else {}
+                    data["_state"]["blocked"] = not reached_socratic
+            yield event
+
+    async def _run_stream_core(self, query: str, user_role: str = 'student',
+                              _state_sink: dict = None, **kwargs):
         import time
         t_start = time.time()
         
@@ -1739,6 +1785,13 @@ class ChainOfThoughtRAGAgent:
             delta_f=current_frustration_delta,
             n_strike=n_strike_val
         )
+
+        # Publish the live state object so run_stream can attach the sensory vector to a
+        # terminal event raised by any of the early-return paths below (Sentinel block,
+        # prerequisite gate, withholding, exam handlers). Same object, not a copy — the
+        # Sentinel mutates traj_risk/traj_acc/traj_peak in place a few lines down.
+        if _state_sink is not None:
+            _state_sink["state"] = state
 
         # A resolved anaphoric follow-up gets its topic + intent pre-set so the
         # Sentinel routes it as a normal CONCEPT question about the anchor topic
@@ -2197,13 +2250,7 @@ class ChainOfThoughtRAGAgent:
                 event["data"]["entities"] = state.entities
                 event["data"]["intent"] = state.intent
                 # Telemetry: carry the full sensory/state vector to the turn logger
-                event["data"]["_state"] = {
-                    "s_goal": state.s_goal, "c_code": state.c_code,
-                    "m_state": state.m_state, "delta_f": state.delta_f,
-                    "n_strike": state.n_strike, "mastery_level": state.mastery_level,
-                    "mastery_weak_tier": state.mastery_weak_tier,
-                    "mastery_detail": state.mastery_detail,
-                }
+                event["data"]["_state"] = self._state_payload(state)
                 
                 topic_name = state.entities[0] if state.entities else "the last topic"
                 

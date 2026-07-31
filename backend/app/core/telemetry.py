@@ -292,7 +292,9 @@ def log_turn(username: str, session_id: str, turn_index: int, query_text: str,
              response_text: str, intent: str, entities, topic: str,
              mastery_level: str, s_goal: float, c_code: int, m_state: str,
              delta_f: float, n_strike: int, n_sources: int, latency_ms: int,
-             was_blocked: bool, block_reason: str = None) -> None:
+             was_blocked: bool, block_reason: str = None,
+             traj_risk: float = None, traj_acc: float = None,
+             traj_peak: float = None) -> None:
     """One row per conversational turn with the full sensory/state vector.
     The richest single artifact — enables re-classification and new angles later."""
     try:
@@ -302,11 +304,13 @@ def log_turn(username: str, session_id: str, turn_index: int, query_text: str,
             "INSERT INTO turn_log "
             "(study_id, username, session_id, turn_index, query_text, response_text, "
             " intent, entities, topic, mastery_level, s_goal, c_code, m_state, delta_f, "
-            " n_strike, n_sources, latency_ms, was_blocked, block_reason, ts_utc) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " n_strike, n_sources, latency_ms, was_blocked, block_reason, "
+            " traj_risk, traj_acc, traj_peak, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (sid, username, session_id, turn_index, query_text, response_text,
              intent, ent, topic, mastery_level, s_goal, c_code, m_state, delta_f,
-             n_strike, n_sources, latency_ms, 1 if was_blocked else 0, block_reason, _now()),
+             n_strike, n_sources, latency_ms, 1 if was_blocked else 0, block_reason,
+             traj_risk, traj_acc, traj_peak, _now()),
         )
     except Exception as e:
         logger.warning(f"[telemetry] log_turn failed: {e}")

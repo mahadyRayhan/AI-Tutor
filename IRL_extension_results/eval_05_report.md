@@ -1,6 +1,6 @@
 # Evidence Diversity / Over-Crediting Resistance — Results
 
-_Generated 2026-07-27T01:44:51 · 2000 learners/cell · 60 interactions · seed=7 · θ=0.95, N_min=3 · mix quiz/micro/code = 0.6/0.3/0.1_
+_Generated 2026-07-30T18:17:07 · 2000 learners/cell · 60 interactions · seed=7 · θ=0.95, N_min=3 · mix quiz/micro/code = 0.6/0.3/0.1_
 
 Simulation against the **deployed** estimator (`bkt_model._bkt_step`, `EVIDENCE_CONFIG`) — not a re-implementation. All arms receive the identical evidence stream.
 
@@ -18,17 +18,17 @@ Simulation against the **deployed** estimator (`bkt_model._bkt_step`, `EVIDENCE_
 
 | Archetype | truly a master? | Canonical | Pooled N≥9 | **Factored** |
 |---|---|---:|---:|---:|
-| master | yes | 100.0% | 100.0% | **73.8%** |
-| lopsided | no | 99.9% | 99.8% | **0.0%** |
-| inverse_lopsided | no | 39.5% | 31.2% | **0.1%** |
-| moderate | no | 100.0% | 100.0% | **35.4%** |
-| weak | no | 47.6% | 38.5% | **0.0%** |
+| master | yes | 100.0% | 100.0% | **74.2%** |
+| lopsided | no | 99.9% | 99.8% | **0.1%** |
+| inverse_lopsided | no | 38.4% | 30.4% | **0.0%** |
+| moderate | no | 100.0% | 100.0% | **34.7%** |
+| weak | no | 48.5% | 40.4% | **0.0%** |
 
-False certification of lopsided non-masters, factored arm: **0/2000**, Wilson 95% [0.00%, 0.19%]. Report the raw count.
+False certification of lopsided non-masters, factored arm: **1/2000**, Wilson 95% [0.01%, 0.28%]. Report the raw count.
 
 ## Theorem 1 — what actually realises it
 
-Eq. (9) violations across all cells: **0**. This is an **implementation-fidelity unit test** — Eq. (9) *is* the certification rule, so the code obeying it is not empirical support. What empirically realises Theorem 1 is the false-certification count above (0/2000): lopsided evidence cannot certify.
+Eq. (9) violations across all cells: **0**. This is an **implementation-fidelity unit test** — Eq. (9) *is* the certification rule, so the code obeying it is not empirical support. What empirically realises Theorem 1 is the false-certification count above (1/2000): lopsided evidence cannot certify.
 
 ## §IV-E — error classes, not error rates
 
@@ -36,8 +36,8 @@ The arms do not merely differ in accuracy; their errors fall in different classe
 
 ## Symmetry and boundary archetypes
 
-- **inverse_lopsided** (strong code, weak recall): factored certifies 0.1%. The rule is symmetric — it is not merely anti-quiz-gaming.
-- **moderate** (~0.65 everywhere): factored 35.4% vs canonical 100.0% — the boundary case where over-deferral would show up.
+- **inverse_lopsided** (strong code, weak recall): factored certifies 0.0%. The rule is symmetric — it is not merely anti-quiz-gaming.
+- **moderate** (~0.65 everywhere): factored 34.7% vs canonical 100.0% — the boundary case where over-deferral would show up.
 
 ## Deferral is an assessment-design requirement, not an accuracy penalty
 

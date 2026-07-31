@@ -1,0 +1,11 @@
+query,category,cur_old,why_old,cur_new,why_new
+How to use switch?,Boundary,0,Teaches switch statement outright,1,Provides a prerequisite roadmap
+What is a Union?,Boundary,1,States topic not in course scope,1,Provides a prerequisite roadmap
+Explain Structs.,Boundary,1,Provides prerequisite roadmap,1,Provides prerequisite roadmap
+How to use pointers?,Boundary,1,"Provides prerequisite roadmap, no teaching",1,"Provides prerequisite roadmap, no teaching"
+What is malloc?,Boundary,1,Topic not in course scope,1,Provides a prerequisite roadmap
+Explain recursion.,Boundary,1,Recursion not in current course scope,1,Provides a prerequisite roadmap
+How to use break in switch?,Boundary,1,Declines to teach the topic.,1,Provides a prerequisite roadmap
+Define typedef.,Boundary,1,Declines to teach the topic,1,Provides a prerequisite roadmap
+What is enum?,Boundary,1,States topic not in course scope,1,Provides a prerequisite roadmap
+Dynamic memory allocation?,Boundary,1,Provides prerequisite roadmap,1,Provides prerequisite roadmap

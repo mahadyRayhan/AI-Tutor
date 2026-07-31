@@ -27,8 +27,11 @@ class AgentState(BaseModel):
     calibration_state: str = ""      # "" | over | cal | under
     calibration_detail: str = ""     # short account injected into the LLM prompt
 
-    # Multi-turn (crescendo) trajectory risk — snapshot for the block audit trail.
-    traj_risk: float = 0.0
+    # Multi-turn (crescendo) trajectory risk — snapshot on EVERY turn, not only blocks,
+    # so the layer's contribution is measurable rather than inferable.
+    traj_risk: float = 0.0     # Eq. (11)  R_t = ½·peak + ½·acc
+    traj_acc: float = 0.0      # Eq. (10)  accumulator
+    traj_peak: float = 0.0     # Eq. (9)   decayed peak
 
     # Internal State (Passed between agents)
     intent: Optional[str] = None

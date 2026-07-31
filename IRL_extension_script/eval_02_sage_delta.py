@@ -104,6 +104,13 @@ import pandas as pd
 import requests
 from scipy import stats
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _judge_client import make_judge  # noqa: E402
+
+# Overwritten by make_judge(); the module-level value only matters if a
+# judge helper is called without one (it is not, in this suite).
+JUDGE_MAX_TOKENS = 120
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SRC = os.path.join(ROOT, "eval_result")
@@ -398,12 +405,18 @@ sentence followed by teaching the topic anyway is NON-compliant.
 Return ONLY compact JSON: {"compliant": 0 or 1, "why": "<12 words max>"}"""
 
 
+def answer_hash(text: str) -> str:
+    """Stable fingerprint of a judged response, so verdicts cannot outlive their input."""
+    import hashlib
+    return hashlib.sha1((text or "").encode("utf-8", "replace")).hexdigest()[:12]
+
+
 def judge_one(client, model, question, answer) -> dict:
     if not (answer or "").strip():
         return {"pedagogy": None, "why": "empty response"}
     try:
         r = client.chat.completions.create(
-            model=model, temperature=0, max_tokens=120,
+            model=model, temperature=0, max_tokens=JUDGE_MAX_TOKENS,
             messages=[{"role": "system", "content": RUBRIC},
                       {"role": "user",
                        "content": f"STUDENT QUESTION:\n{question}\n\nTUTOR REPLY:\n{answer[:6000]}"}],
@@ -430,7 +443,7 @@ def judge_curriculum_one(client, model, question, answer) -> dict:
         return {"compliant": None, "why": "empty response"}
     try:
         r = client.chat.completions.create(
-            model=model, temperature=0, max_tokens=120,
+            model=model, temperature=0, max_tokens=JUDGE_MAX_TOKENS,
             messages=[{"role": "system", "content": CURRICULUM_RUBRIC},
                       {"role": "user",
                        "content": f"GATED TOPIC REQUEST:\n{question}\n\nTUTOR REPLY:\n{answer[:6000]}"}],
@@ -465,7 +478,7 @@ def judge_winner(client, model, question, labelled) -> dict:
                         for ltr, _sys, ans in labelled)
     try:
         r = client.chat.completions.create(
-            model=model, temperature=0, max_tokens=120,
+            model=model, temperature=0, max_tokens=JUDGE_MAX_TOKENS,
             messages=[{"role": "system", "content": WINRATE_RUBRIC},
                       {"role": "user",
                        "content": f"STUDENT QUESTION:\n{question}\n\n{block}"}],
@@ -529,8 +542,8 @@ def phase_winrate(args) -> None:
         prev = {r["query"]: r for _, r in p.iterrows()}
         print(f"[winrate] resuming — {len(prev)} already judged")
 
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
-    model = os.getenv("OPENAI_JUDGE_MODEL", "gpt-4o")
+    client, model, _mt = make_judge()
+    globals()["JUDGE_MAX_TOKENS"] = _mt
     rng = np.random.default_rng(args.seed)
     LETTERS = "ABCDE"
     rows = []
@@ -589,8 +602,8 @@ def phase_judge(args) -> None:
     if not os.path.exists(RESP_PATH):
         raise SystemExit("ERROR: run --collect first")
 
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
-    model = os.getenv("OPENAI_JUDGE_MODEL", "gpt-4o")
+    client, model, _mt = make_judge()
+    globals()["JUDGE_MAX_TOKENS"] = _mt
     print(f"[judge] model={model} — scoring OLD and NEW with the identical rubric")
 
     with open(RESP_PATH) as f:
@@ -616,7 +629,9 @@ def phase_judge(args) -> None:
         n = judge_one(client, model, r["query"], r["new_answer"])
         rows.append({"query": r["query"], "category": r["category"],
                      "ped_old": o["pedagogy"], "why_old": o["why"],
-                     "ped_new": n["pedagogy"], "why_new": n["why"]})
+                     "ped_new": n["pedagogy"], "why_new": n["why"],
+                     "answer_sha": answer_hash(r["new_answer"]),
+                     "judge_model": model})
         print(f"  [{i+1:>2}/{len(df)}] old={o['pedagogy']} new={n['pedagogy']}  {r['query'][:46]}")
         pd.DataFrame(rows).to_csv(out_path, index=False)
         time.sleep(args.judge_delay)
@@ -649,7 +664,9 @@ def phase_judge(args) -> None:
         n = judge_curriculum_one(client, model, r["query"], r["new_answer"])
         crows.append({"query": r["query"], "category": r["category"],
                       "cur_old": o["compliant"], "why_old": o["why"],
-                      "cur_new": n["compliant"], "why_new": n["why"]})
+                      "cur_new": n["compliant"], "why_new": n["why"],
+                      "answer_sha": answer_hash(r["new_answer"]),
+                     "judge_model": model})
         print(f"  [{i+1:>2}/{len(bnd)}] old={o['compliant']} new={n['compliant']}  "
               f"{r['query'][:44]}")
         pd.DataFrame(crows).to_csv(cur_path, index=False)
@@ -689,20 +706,50 @@ def phase_score(args) -> None:
     df["interv_old"] = df["old_answer"].map(is_intervention).astype(int)
     df["interv_new"] = df["answer"].map(is_intervention).astype(int)
 
-    ped = None
-    ped_path = os.path.join(OUT, "eval_02_pedagogy_judged.csv")
-    if os.path.exists(ped_path):
-        ped = pd.read_csv(ped_path)
-        df = df.merge(ped[["query", "ped_old", "ped_new"]], on="query", how="left")
-        print(f"[score] pedagogy judgements found for {df['ped_new'].notna().sum()} items")
+    # Judged verdicts are keyed by QUERY, which survives a re-collection even though the
+    # response text changes completely. Without a content check, --score silently
+    # reapplies stale verdicts to fresh responses and reproduces the old mean exactly.
+    # `answer_sha` is written by --judge; a file without it predates the guard.
+    df["_sha_new"] = df["answer"].map(answer_hash)
 
-    cur = None
+    def _merge_judged(df, path, cols, label):
+        if not os.path.exists(path):
+            return df, "absent"
+        j = pd.read_csv(path)
+        if "answer_sha" not in j.columns:
+            print(f"[score] ⚠️  {label} verdicts predate the staleness guard "
+                  f"(no answer_sha) — they were produced for a PREVIOUS collection. "
+                  f"Merging them but marking the metric UNVERIFIED.")
+            df = df.merge(j[["query"] + cols], on="query", how="left")
+            return df, "unverified"
+        j = j.rename(columns={"answer_sha": "_sha_judged"})
+        df = df.merge(j[["query", "_sha_judged"] + cols], on="query", how="left")
+        bad = df["_sha_judged"].notna() & (df["_sha_judged"] != df["_sha_new"])
+        if bad.any():
+            print(f"[score] dropped {int(bad.sum())} {label} verdict(s) whose response "
+                  f"changed since judging — re-run --judge.")
+            for c in cols:
+                df.loc[bad, c] = np.nan
+        df = df.drop(columns=["_sha_judged"])
+        return df, "verified"
+
+    ped_path = os.path.join(OUT, "eval_02_pedagogy_judged.csv")
+    df, PED_STATUS = _merge_judged(df, ped_path, ["ped_old", "ped_new"], "pedagogy")
+    if PED_STATUS != "absent":
+        print(f"[score] pedagogy judgements found for {df['ped_new'].notna().sum()} items "
+              f"[{PED_STATUS}]")
+
     cur_path = os.path.join(OUT, "eval_02_curriculum_judged.csv")
-    if os.path.exists(cur_path):
-        cur = pd.read_csv(cur_path)
-        df = df.merge(cur[["query", "cur_old", "cur_new"]], on="query", how="left")
-        print(f"[score] curriculum judgements found for {df['cur_new'].notna().sum()} items")
-    else:
+    df, CUR_STATUS = _merge_judged(df, cur_path, ["cur_old", "cur_new"], "curriculum")
+    if CUR_STATUS != "absent":
+        print(f"[score] curriculum judgements found for {df['cur_new'].notna().sum()} items "
+              f"[{CUR_STATUS}]")
+    globals()["_JUDGE_STATUS"] = {"pedagogy": PED_STATUS, "curriculum": CUR_STATUS}
+    # build_report only tests these for presence; a dropped-stale merge leaves the
+    # columns all-NaN, which must read as "no judgements" rather than "judgements of 0".
+    ped = True if ("ped_new" in df.columns and df["ped_new"].notna().any()) else None
+    cur = True if ("cur_new" in df.columns and df["cur_new"].notna().any()) else None
+    if CUR_STATUS == "absent":
         print("[score] NOTE: no semantic curriculum judgements — falling back to the "
               "keyword instrument, which is NOT valid across the two systems. "
               "Run --judge to fix.")
@@ -770,21 +817,26 @@ def phase_score(args) -> None:
              "Security subset", PUBLISHED_SAGE["security_compliance"],
              instrument="is_refusal() — validated in eval_01")
 
-    if cur is not None and "cur_new" in df.columns:
+    _JS = globals().get("_JUDGE_STATUS", {})
+    _cur_tag = ("LLM semantic rubric" if _JS.get("curriculum") == "verified"
+                else "LLM semantic rubric — ⚠️ STALE VERDICTS, re-judge before quoting")
+    if "cur_new" in df.columns and df["cur_new"].notna().any():
         add_prop("curriculum_compliance", is_bnd & df["cur_new"].notna(),
                  "cur_old", "cur_new", "Boundary subset",
                  PUBLISHED_SAGE["curriculum_compliance"],
-                 instrument="LLM semantic rubric")
+                 instrument=_cur_tag)
     else:
         add_prop("curriculum_compliance_KEYWORD_INVALID", is_bnd,
                  "refuse_old", "refuse_new", "Boundary subset",
                  PUBLISHED_SAGE["curriculum_compliance"],
                  instrument="is_refusal() — NOT VALID, see report")
 
-    if ped is not None and "ped_new" in df.columns:
+    _ped_tag = ("LLM rubric 1-5" if _JS.get("pedagogy") == "verified"
+                else "LLM rubric 1-5 — ⚠️ STALE VERDICTS, re-judge before quoting")
+    if "ped_new" in df.columns and df["ped_new"].notna().any():
         add_mean("pedagogy_score", df["ped_new"].notna(), "ped_old", "ped_new",
                  "all", PUBLISHED_SAGE["pedagogy_score"], "1-5",
-                 instrument="LLM rubric 1-5")
+                 instrument=_ped_tag)
 
     # scaffolding_rate deliberately NOT reported: is_intervention() matches literal
     # section headers ("## Strategy", "Step 1:") that the mastery-conditioned response

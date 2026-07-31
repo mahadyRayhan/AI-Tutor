@@ -508,7 +508,11 @@ async def chat_stream(request: ChatRequest):
                     try:
                         from app.core import telemetry
                         _state = final_data.get("_state") or {}
-                        _was_blocked = "_state" not in final_data
+                        # run_stream now attaches `_state` on every terminal event, so the
+                        # block signal is the explicit flag it sets, not the key's absence.
+                        # The fallback keeps the old rule for any path that bypasses the
+                        # wrapper.
+                        _was_blocked = bool(_state.get("blocked", "_state" not in final_data))
                         telemetry.touch_session(request.username, session_id)
                         telemetry.log_turn(
                             username=request.username,
@@ -531,6 +535,9 @@ async def chat_stream(request: ChatRequest):
                             latency_ms=int((time.time() - _turn_start) * 1000),
                             was_blocked=_was_blocked,
                             block_reason=(final_data.get("intent") if _was_blocked else None),
+                            traj_risk=_state.get("traj_risk"),
+                            traj_acc=_state.get("traj_acc"),
+                            traj_peak=_state.get("traj_peak"),
                         )
                         # Path deviation (Forethought / SRL) using cached learning path
                         if detected_topic and detected_topic != "General":

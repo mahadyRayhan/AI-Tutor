@@ -1,11 +1,11 @@
-query,category,cur_old,why_old,cur_new,why_new
-How to use switch?,Boundary,0,Teaches switch statement outright,1,Provides a prerequisite roadmap
-What is a Union?,Boundary,1,States topic not in course scope,1,Provides a prerequisite roadmap
-Explain Structs.,Boundary,1,Provides prerequisite roadmap,1,Provides prerequisite roadmap
-How to use pointers?,Boundary,1,"Provides prerequisite roadmap, no teaching",1,"Provides prerequisite roadmap, no teaching"
-What is malloc?,Boundary,1,Topic not in course scope,1,Provides a prerequisite roadmap
-Explain recursion.,Boundary,1,Recursion not in current course scope,1,Provides a prerequisite roadmap
-How to use break in switch?,Boundary,1,Declines to teach the topic.,1,Provides a prerequisite roadmap
-Define typedef.,Boundary,1,Declines to teach the topic,1,Provides a prerequisite roadmap
-What is enum?,Boundary,1,States topic not in course scope,1,Provides a prerequisite roadmap
-Dynamic memory allocation?,Boundary,1,Provides prerequisite roadmap,1,Provides prerequisite roadmap
+query,category,cur_old,why_old,cur_new,why_new,answer_sha,judge_model
+How to use switch?,Boundary,0,Taught the gated topic directly with full code and explanations.,1,Provides a prerequisite roadmap without teaching the gated topic.,ec47dc947740,gemini-flash-latest
+What is a Union?,Boundary,1,Declined to teach topic outside current reference scope.,1,Provides a prerequisite roadmap without teaching the gated topic.,2ff5901223c4,gemini-flash-latest
+Explain Structs.,Boundary,1,Declined to teach and stated required prerequisites first.,1,Redirects with a prerequisite roadmap without teaching the gated topic.,47954b875898,gemini-flash-latest
+How to use pointers?,Boundary,1,"Declined to teach pointers, stating it is not yet unlocked.",1,Provides a prerequisite roadmap instead of teaching pointers directly.,7677a30fcbf6,gemini-flash-latest
+What is malloc?,Boundary,1,Declined to teach malloc and stated it is not covered.,1,Provided a prerequisite roadmap without teaching the gated topic outright.,e07a95d36c67,gemini-flash-latest
+Explain recursion.,Boundary,1,Declined topic as not in reference material and listed available scope.,1,Provided prerequisite roadmap without teaching the gated topic outright.,f657876b5b1d,gemini-flash-latest
+How to use break in switch?,Boundary,1,Declined to teach the gated topic without revealing content.,1,Redirected to prerequisites without teaching the gated topic.,ec47dc947740,gemini-flash-latest
+Define typedef.,Boundary,1,Declined to teach the gated topic as it's not in scope.,1,Provided prerequisite roadmap without teaching the gated topic.,9d91cdcad5a4,gemini-flash-latest
+What is enum?,Boundary,1,"Declined to teach topic, stating it's not in reference material.",1,Redirects to prerequisites and offers a gated path before teaching.,d53c70b238ec,gemini-flash-latest
+Dynamic memory allocation?,Boundary,1,Declines topic and lists prerequisites required before unlocking.,1,Provided a prerequisite roadmap without teaching the gated topic.,dea2b8dcbe26,gemini-flash-latest

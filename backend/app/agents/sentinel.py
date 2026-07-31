@@ -31,6 +31,19 @@ class SentinelAgent(BaseAgent):
     TRAJ_PEAK_DECAY = 0.9      # peak cools over ~5-6 clean turns (usability guard)
     TRAJ_TAU_JUDGE = 0.45      # >= this: escalate to the conversation-level LLM judge
     TRAJ_TAU_BLOCK = 0.85      # >= this: hard block on extreme accumulated risk
+
+    # --- Goal-alignment latitude (adaptive security radius) ---
+    # The alignment bar a security-sensitive query must clear is relaxed for learners who
+    # have EARNED standing on the curriculum. It is keyed on the CERTIFIED set K, not on
+    # the number of topics a learner has touched: latitude must be bought with
+    # demonstrated mastery, never with mere engagement. Keying it on activity would let a
+    # learner widen their own security radius by asking questions, which is precisely the
+    # asserted-vs-earned confusion the learner model exists to remove.
+    # Logarithmic, not linear: a linear slope of 0.05 would drive the threshold negative
+    # after 17 certified topics (the curriculum has 26), disabling the check entirely.
+    GOAL_TAU_BASE  = 0.85      # alignment bar with no certified topics
+    GOAL_TAU_ALPHA = 0.05      # latitude per log-certified-topic
+    GOAL_TAU_FLOOR = 0.60      # never relax below this, however many topics are certified
     # A per-message block returns BEFORE the L7 trajectory step, so the blocked
     # turn would otherwise leave session risk untouched — letting the very next
     # turn ("show me the code that does exactly that") slip through with a clean
@@ -76,7 +89,14 @@ class SentinelAgent(BaseAgent):
         acc = min(1.0, self.TRAJ_ACC_DECAY * st.get("traj_risk_accum", 0.0) + r_t)
         peak = max(r_t, self.TRAJ_PEAK_DECAY * st.get("traj_risk_peak", 0.0))
         risk = 0.5 * peak + 0.5 * acc
-        state.traj_risk = round(risk, 3)   # snapshot for the audit trail
+        # Snapshot all three on the state, not only the combination, and on EVERY turn —
+        # not only blocked ones. Without per-turn risk the layer's contribution can only
+        # be argued by elimination (e.g. inferring that the conversation judge must have
+        # been trajectory-triggered because the alternative trigger was impossible), and
+        # escalation recall and a tau_judge sweep cannot be computed at all.
+        state.traj_risk = round(risk, 3)
+        state.traj_acc = round(acc, 4)     # Eq. (10)
+        state.traj_peak = round(peak, 4)   # Eq. (9)
         history_manager.update_session_state(state.user_id, state.session_id,
             {"traj_risk_accum": round(acc, 4), "traj_risk_peak": round(peak, 4)})
         return risk, r_t, acc, peak
@@ -409,19 +429,22 @@ class SentinelAgent(BaseAgent):
                 is_malicious = True
         
         if is_malicious:
-            # Fetch Mastery Count from DB to calculate adaptive radius
-            mastery_count_row = db.fetch_one("SELECT count(*) as c FROM user_knowledge WHERE username=?", (state.user_id,))
-            mastery_count = mastery_count_row['c'] if mastery_count_row else 0
-            
-            # --- FIX: INCREASE THRESHOLD TO 0.85 ---
-            TAU_BASE = 0.85 
-            ALPHA = 0.05
-            adaptive_threshold = TAU_BASE - (ALPHA * math.log(1 + mastery_count))
-            
+            # Adaptive security radius, keyed on the CERTIFIED set K (Eq. 16) — not on the
+            # number of topics touched. See GOAL_TAU_* above for why.
+            cert_row = db.fetch_one(
+                "SELECT count(*) as c FROM user_knowledge "
+                "WHERE username=? AND is_certified=1", (state.user_id,))
+            n_cert = cert_row['c'] if cert_row else 0
+
+            adaptive_threshold = max(
+                self.GOAL_TAU_FLOOR,
+                self.GOAL_TAU_BASE - self.GOAL_TAU_ALPHA * math.log(1 + n_cert),
+            )
+
             S_goal = 0 if state.s_goal < adaptive_threshold else 1
-            
+
             if S_goal == 0:
-                self.logger.warning(f"🚨 [S_goal=0] Security Block (Alignment: {state.s_goal:.2f} < Threshold: {adaptive_threshold:.2f})")
+                self.logger.warning(f"🚨 [S_goal=0] Security Block (Alignment: {state.s_goal:.2f} < Threshold: {adaptive_threshold:.2f}, |K|={n_cert})")
                 yield self._block_response(state, "Goal-Bounded Security")
                 return
             else:

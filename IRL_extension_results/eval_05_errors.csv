@@ -1,6 +1,6 @@
 profile,lambda,n,true_master,theorem_violations,canonical_cert_rate,canonical_false_k,canonical_false_n,canonical_false_rate,canonical_defer_k,canonical_defer_n,canonical_defer_rate,canonical_mean_ops,pooled_n9_cert_rate,pooled_n9_false_k,pooled_n9_false_n,pooled_n9_false_rate,pooled_n9_defer_k,pooled_n9_defer_n,pooled_n9_defer_rate,pooled_n9_mean_ops,factored_cert_rate,factored_false_k,factored_false_n,factored_false_rate,factored_defer_k,factored_defer_n,factored_defer_rate,factored_mean_ops
-master,1.0,2000,True,0,1.0,0,0,,0,2000,0.0,4.7,1.0,0,0,,0,2000,0.0,11.1,0.7305,0,0,,539,2000,0.2695,34.8
-lopsided,1.0,2000,False,0,0.9995,1999,2000,0.9995,0,0,,10.1,0.999,1998,2000,0.999,0,0,,16.9,0.0,0,2000,0.0,0,0,,
-inverse_lopsided,1.0,2000,False,0,0.384,768,2000,0.384,0,0,,27.8,0.302,604,2000,0.302,0,0,,36.7,0.0,0,2000,0.0,0,0,,
-moderate,1.0,2000,False,0,0.9995,1999,2000,0.9995,0,0,,9.2,0.9995,1999,2000,0.9995,0,0,,15.6,0.3575,715,2000,0.3575,0,0,,42.6
-weak,1.0,2000,False,0,0.501,1002,2000,0.501,0,0,,27.7,0.408,816,2000,0.408,0,0,,36.1,0.0,0,2000,0.0,0,0,,
+master,1.0,2000,True,0,1.0,0,0,,0,2000,0.0,4.7,1.0,0,0,,0,2000,0.0,11.1,0.749,0,0,,502,2000,0.251,34.9
+lopsided,1.0,2000,False,0,0.999,1998,2000,0.999,0,0,,10.5,0.999,1998,2000,0.999,0,0,,16.9,0.0005,1,2000,0.0005,0,0,,49.0
+inverse_lopsided,1.0,2000,False,0,0.39,780,2000,0.39,0,0,,28.7,0.3155,631,2000,0.3155,0,0,,37.1,0.001,2,2000,0.001,0,0,,39.0
+moderate,1.0,2000,False,0,1.0,2000,2000,1.0,0,0,,9.2,1.0,2000,2000,1.0,0,0,,15.7,0.358,716,2000,0.358,0,0,,42.2
+weak,1.0,2000,False,0,0.4855,971,2000,0.4855,0,0,,26.1,0.3925,785,2000,0.3925,0,0,,34.4,0.0,0,2000,0.0,0,0,,
