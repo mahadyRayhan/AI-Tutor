@@ -4,10 +4,10 @@ The single index for the journal extension. Every other document is linked from 
 Written 2026-07-31 because Phases 3–5 existed only in conversation, and one plan item
 ("item 7") had already been lost that way.
 
-**Confidence markers.** Items marked ✅ are verified against code or written to a file.
-Items marked ⚠️ are reconstructed from a review that was pasted into conversation and is
-no longer available verbatim — the label is right, the detail may not be complete. Treat
-⚠️ items as prompts to re-check against the reviewer's actual text, not as the text itself.
+**Confidence markers.** ✅ verified against code or written to a file. ⚠️ reconstructed
+from a review pasted into conversation and no longer available verbatim — the label is
+right, the detail may not be. ⛔ blocked, with the blocker named. Treat ⚠️ items as prompts
+to re-check against the reviewer's actual text, not as the text itself.
 
 ---
 
@@ -21,7 +21,8 @@ no longer available verbatim — the label is right, the detail may not be compl
 | `IRL_extension_results/PHASE1_REPORT.md` | 1 | what was re-collected, the numbers, what is safe to quote |
 | `IRL_extension_results/PHASE2_REPORT.md` | 2 | the 12 correctness findings, the two open decisions |
 | `IRL_extension_results/PHASE3_REPORT.md` | 3 | §V drafted; proof the trial has not run; Option A/B decision |
-| _(Phase 4–5 reports to follow)_ | 4–5 | — |
+| `IRL_extension_results/PHASE4_REPORT.md` | 4 | M2/M3 paragraphs, SM-2 cite, Fig. 4 bugs, style pass |
+| _(Phase 5 report to follow)_ | 5 | — |
 
 Supporting documents:
 
@@ -40,10 +41,10 @@ Supporting documents:
 | Phase | What | State |
 |---|---|---|
 | 0 | Instrumentation + data audit | ✅ complete |
-| 1 | Re-collect against current code | ✅ complete (judged on Gemini; gpt-4o re-run pending) |
+| 1 | Re-collect against current code | ✅ complete; re-judged on gpt-4o 2026-08-01 (`PHASE1B_GPT4O_REJUDGE.md`) |
 | 2 | Paper correctness pass | ⏳ prepared — 10 items ready to paste, 2 decisions open |
 | 3 | Write the missing sections | ⏳ §V drafted; §IV-H/§IV-I blocked — trial has not run |
-| 4 | Reviewer response + style | ⚠️ partially reconstructed |
+| 4 | Reviewer response + style | ⏳ ready: SM-2, Fig.4, style. M2/M3 partly in `.tex` already. 🔴 `tab:multiturn` holds stale numbers. M4/M6/m1/m2/m5 need review text |
 | 5 | Strengthening experiments | ⚠️ partially reconstructed |
 
 ---
@@ -72,9 +73,11 @@ factored learner model, Theorem 1, and the Phase 1 trajectory attribution result
 *Option B* — hold for a semester and write both sections from real data.
 *Recommendation: A*, unless the trial is imminent. See `PHASE3_REPORT.md` §2.
 
-**D4. Judge model.** All current judged numbers are `gemini-flash-latest` because the
-OpenAI account is out of credit. Re-run on gpt-4o before submission, or name the judge in
-the paper. Commands: PHASE1_REPORT §6.
+**D4. RESOLVED — all judged figures are now `gpt-4o`.** Credits restored 2026-08-01;
+eval_02 and eval_04 re-judged. Gemini results are retained alongside in `PHASE1_REPORT.md`
+for comparison. Publish figures: pedagogy **+1.68 pooled / +2.22 taught**, curriculum
+compliance **100%**, containment **14/15 = 93%**. A defect in the delivery-judge prompt was
+found and fixed in the process — `PHASE1B_GPT4O_REJUDGE.md` §3′.
 
 ---
 
@@ -103,17 +106,27 @@ checked against the reviewer's actual wording before you rely on it.
 
 | ID | Item | Status |
 |---|---|---|
-| M2 | Parameter misspecification sweep | ✅ **already exists** — `eval_05 --jitter`. Results were 0/2000, 1/2000, 0/2000, 0/2000. Do not rebuild it; write the paragraph pointing at it. |
-| M3 | Attribution — which layer does the work | ✅ **answered by Phase 1**. Table 6: all 7 semantic-judge blocks at risk 0.50–0.80, all 18 per-message blocks at 0.000. |
-| M4 | A limitation the paper does not concede | ⚠️ detail not recorded |
-| M6 | A direct question to answer | ⚠️ detail not recorded |
-| m1, m2, m5 | Minor items | ⚠️ detail not recorded |
-| — | Style pass | ✅ "Crucially" ×9, "viz." ×2 — reduce |
-| — | SM-2 citation missing | ✅ verified |
-| — | Fig. 4 should be `figure*` | ✅ verified |
+| M2 | Parameter misspecification sweep | ✅ **paragraph ready** — `eval_05 --jitter` already exists; aggregated, the factored rule false-certifies **2/16000** across 8 parameterizations vs canonical 15813/16000. PHASE4_REPORT §1. |
+| M3 | Attribution — which layer does the work | ✅ **paragraph ready** — Table 6: all 7 semantic-judge blocks at risk 0.50–0.80, all 18 per-message blocks at 0.000. The old elimination argument is superseded by direct measurement. PHASE4_REPORT §2. |
+| M4 | A limitation the paper does not concede | ⛔ detail not recorded — see PHASE4_REPORT §6 |
+| M6 | A direct question to answer | ⛔ detail not recorded |
+| m1, m2, m5 | Minor items | ⛔ detail not recorded |
+| — | Style pass | ✅ **done** — "Crucially" ×9 at lines 153/391/507/570/664/747/803/935/967; "viz." ×2 at 148/464 |
+| — | SM-2 citation missing | ✅ **done** — line 696, bibentry supplied |
+| — | Fig. 4 float | ✅ **done** — two bugs: `[H]` with `float` commented out (line 29), and a two-panel figure at `\columnwidth`. Use `figure*`. |
+
+🔴 **`tab:multiturn` (lines 875–885) reports the 2026-07-26 collection.** Two rows moved
+materially: adversarial turns deflected 60/63 → **62/63**, sessions with no harmful delivery
+12/15 → **14/15**. A third, "gate misses recovered at generation", goes 3/5 → **39/40** but
+also changes meaning. PHASE4_REPORT §6a. This is a results table in the paper carrying
+numbers from a system that has since changed — fix before anything else in Phase 4.
 
 ⚠️ **M4, M6, m1, m2, m5 need their content restored from the original review.** Paste it
 back and I will fold the detail in here.
+
+⚠️ **The `.tex` is ahead of the PDF the verification record was built from.** Phase 2 items
+1, 2, 5, 6 and the D1 guardrail are already fixed in source. The Phase 2 checklist needs
+re-verification against the `.tex` before being worked through.
 
 ---
 
