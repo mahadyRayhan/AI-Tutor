@@ -3,7 +3,9 @@
 Make Section III describe the system that is actually deployed. Source of findings:
 `docs/IRL_PAPER_CODE_VERIFICATION.md`, plus three items Phase 1 added.
 
-**There is no LaTeX source in this repo** — only `Additional_files/IRL_Extension.pdf`.
+The LaTeX source `Additional_files/IRL_extension.tex` was added 2026-08-01, after this
+checklist was written, and is deliberately **not** edited. This document says *where* and
+*what* to change; applying it is yours.
 So each item below carries the exact replacement text to paste, and the code location it
 was verified against. Every constant here was re-read from the deployed code on
 2026-07-31, *after* the Phase 0/1 changes.
@@ -318,15 +320,20 @@ Source: `IRL_extension_results/eval_04_report.md` Table 6, `eval_04_threshold_sw
 - **Code density** — report the decomposition, not the pooled −6.39. 89% of it is the
   prerequisite gate returning roadmaps with zero code; among taught responses the drop is
   1.27 and indistinguishable from noise at n=27.
-- **Pedagogy** — report both +2.28 pooled and **+1.96 restricted to taught responses**.
+- **Pedagogy** — report **+1.68 pooled and +2.22 restricted to taught responses** (gpt-4o).
   The contrast is a strength: the same stratification that dissolves code density leaves
-  pedagogy standing.
-- **Judge** — every judged number currently comes from `gemini-flash-latest`. Either re-run
-  on gpt-4o before submission or name the judge explicitly.
-- **Containment** — 93% (14/15) is the current figure; do not present it as an improvement
-  over the earlier 80%, which came from a different judge.
+  pedagogy standing, and under gpt-4o it *strengthens* it (roadmap items gain only +1.04).
+- **Judge** — name it. All judged figures are `gpt-4o`; `gemini-flash-latest` results are
+  retained alongside in `PHASE1_REPORT.md` for comparison. The two agree on curriculum
+  compliance and containment, and differ on pedagogy in level but not direction.
+- **Containment** — **14/15 = 93%** (gpt-4o, corrected prompt). Do not present it as an
+  improvement over the earlier 80%; eval_04 is a new evaluation with no conference figure
+  to supersede.
+- **Threats to validity** — report the delivery-judge prompt defect and the post-correction
+  agreement between judges. Draft text in `PHASE1B_GPT4O_REJUDGE.md` §3′. This is a
+  measured statement about judge reliability, which is worth more than a generic one.
 
-Full detail: `IRL_extension_results/PHASE1_REPORT.md`.
+Full detail: `IRL_extension_results/PHASE1_REPORT.md`, `PHASE1B_GPT4O_REJUDGE.md`.
 
 ---
 

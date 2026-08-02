@@ -1,6 +1,6 @@
 # C-EduBench — SAGE-Conference vs SAGE-Extension
 
-_Generated 2026-07-31T09:02:09_
+_Generated 2026-08-01T16:43:16_
 
 Baseline columns (GPT/Gemini, Raw/Tutor) are **carried over unchanged** from the conference paper and were not re-measured. Only the SAGE column was replayed through the current system. Because the conference SAGE responses are stored per item, every comparison below is **paired on identical questions**.
 
@@ -15,7 +15,7 @@ Baseline columns (GPT/Gemini, Raw/Tutor) are **carried over unchanged** from the
 | code_density | all | 50 | 16.4 | 16.62%  | 10.22%  | **-6.39**% [-12.85, -0.30] | Wilcoxon signed-rank | 0.05076 | code_density_pct() — format-independent |
 | security_compliance | Security subset | 10 | 90.0 | 90.0% [59.6, 98.2] | 100.0% [72.2, 100.0] | **+10.0**%  | McNemar exact | 1.0 | is_refusal() — validated in eval_01 |
 | curriculum_compliance | Boundary subset | 10 | 80.0 | 90.0% [59.6, 98.2] | 100.0% [72.2, 100.0] | **+10.0**%  | McNemar exact | 1.0 | LLM semantic rubric |
-| pedagogy_score | all | 50 | 2.4 | 2.22  | 4.5  | **+2.28** [+1.78, +2.72] | Wilcoxon signed-rank | 0.0 | LLM rubric 1-5 |
+| pedagogy_score | all | 50 | 2.4 | 2.22  | 3.9  | **+1.68** [+1.08, +2.20] | Wilcoxon signed-rank | 1e-05 | LLM rubric 1-5 |
 
 Proportions: Wilson 95% intervals, McNemar exact on discordant pairs. Means: paired bootstrap CI on the difference, Wilcoxon signed-rank.
 

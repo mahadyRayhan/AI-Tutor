@@ -2,6 +2,14 @@
 
 _Run 2026-07-31. Index: `docs/IRL_EXTENSION_ROADMAP.md`._
 _Working document with paste-ready replacement text: `docs/PHASE2_CHECKLIST.md`._
+_Item 12 figures updated 2026-08-01 for the gpt-4o re-judge; both judges retained._
+
+> **Judged figures for item 12** (§IV wording), gpt-4o as publish, Gemini retained:
+> pedagogy **+1.68 pooled / +2.22 taught** (Gemini +2.28 / +1.96); curriculum compliance
+> **100%** under both; containment **14/15 = 93%** under both, once a defect in the
+> delivery-judge prompt was corrected. Item 12 gains a fifth bullet — the prompt defect and
+> the post-correction judge agreement make a measured threats-to-validity statement.
+> See `PHASE1B_GPT4O_REJUDGE.md`.
 
 Phase 2 makes Section III describe the system that is actually deployed. Every equation,
 constant and numerical claim in §III–IV was re-checked against the code as it stands
@@ -17,7 +25,7 @@ because several constants moved in between.
 | Items identified | **12** (10 from the verification record, 2 added by Phase 1) |
 | Verified against current code | ✅ all 12 |
 | Replacement text written | ✅ 10 prose items |
-| Applied to the manuscript | ❌ **not possible here** — no LaTeX source in this repo |
+| Applied to the manuscript | ❌ not done by design — this report states where and what; you apply it |
 | Open decisions | **2** (items 4 and 7) |
 | Code changed in Phase 2 | **none** — the only code-touching items are the two decisions |
 
@@ -105,7 +113,7 @@ Nothing in the response path reads it.
 | 9 | Table III DEVELOPING under-described | prose | `socratic.py:459-491` |
 | 10 | Theorem 1(i) is definitional → corollary | prose | holds by `N_min` construction |
 | 11 | τ_block never fires | prose | Phase 1, `eval_04_report.md` |
-| 12 | §IV result wording (density, pedagogy, judge) | prose | Phase 1 |
+| 12 | §IV result wording (density, pedagogy, judge, threats) | prose | Phase 1, 1b |
 
 Nothing in items 1–10 is a bug in the system. The learner model verified **exact** — Eqs.
 12–17, all 21 Table II values, Corollary 1 numerics, Lemma 1, Theorem 1(ii). These are

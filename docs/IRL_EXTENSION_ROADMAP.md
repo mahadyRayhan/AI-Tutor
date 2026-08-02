@@ -20,7 +20,8 @@ no longer available verbatim — the label is right, the detail may not be compl
 | `IRL_extension_results/PHASE0_REPORT.md` | 0 | instrumentation + data audit; why §IV-H and §IV-F are blocked |
 | `IRL_extension_results/PHASE1_REPORT.md` | 1 | what was re-collected, the numbers, what is safe to quote |
 | `IRL_extension_results/PHASE2_REPORT.md` | 2 | the 12 correctness findings, the two open decisions |
-| _(Phase 3–5 reports to follow)_ | 3–5 | — |
+| `IRL_extension_results/PHASE3_REPORT.md` | 3 | §V drafted; proof the trial has not run; Option A/B decision |
+| _(Phase 4–5 reports to follow)_ | 4–5 | — |
 
 Supporting documents:
 
@@ -41,7 +42,7 @@ Supporting documents:
 | 0 | Instrumentation + data audit | ✅ complete |
 | 1 | Re-collect against current code | ✅ complete (judged on Gemini; gpt-4o re-run pending) |
 | 2 | Paper correctness pass | ⏳ prepared — 10 items ready to paste, 2 decisions open |
-| 3 | Write the missing sections | ⛔ blocked on beta data |
+| 3 | Write the missing sections | ⏳ §V drafted; §IV-H/§IV-I blocked — trial has not run |
 | 4 | Reviewer response + style | ⚠️ partially reconstructed |
 | 5 | Strengthening experiments | ⚠️ partially reconstructed |
 
@@ -60,10 +61,16 @@ behavioural consequence at all.
 *Recommendation: split the flag* — prerequisites keep `ever_certified`, the REVIEWING
 response level moves to `is_certified`. Two lines, and it makes §III-H true.
 
-**D3. Where is the beta data?** The blocker for the whole of Phase 3. The audit found
-**zero** certification events, **zero** decertification events, and 4 of 1854 turns from
-non-synthetic accounts. Either a deployed instance's database needs merging in, or the
-study has not run. §IV-H and §IV-I cannot be drafted around this.
+**D3. RESOLVED — the class trial has not run.** Phase 3 checked every telemetry table:
+`assessment` 0 rows, decertification events 0, the only 2 certification events from a test
+fixture, `calibration_log` 2, `jol_log` 1. `CLASS_DATA_COLLECTION_PLAN.md` is a pre-trial
+plan with unticked checkboxes. §IV-H and §IV-I cannot be written.
+
+**D3′. Submit before or after the trial?** The decision this forces.
+*Option A* — cut §IV-H/§IV-I, reframe as a systems-and-simulation paper around the
+factored learner model, Theorem 1, and the Phase 1 trajectory attribution result.
+*Option B* — hold for a semester and write both sections from real data.
+*Recommendation: A*, unless the trial is imminent. See `PHASE3_REPORT.md` §2.
 
 **D4. Judge model.** All current judged numbers are `gemini-flash-latest` because the
 OpenAI account is out of credit. Re-run on gpt-4o before submission, or name the judge in
@@ -71,19 +78,21 @@ the paper. Commands: PHASE1_REPORT §6.
 
 ---
 
-## Phase 3 — write the missing sections  ⛔ blocked on D3
+## Phase 3 — write the missing sections  ⏳ partially done
 
-- §IV-H — retention / decertification over the six-week beta. **No data.**
-- §IV-I — usability sessions. **No data.**
-- §V — discussion.
-- Clear all `[PLACEHOLDER: N = …]` — §III intro, §IV-A (usability N, instructor N, IRB #),
-  six-week beta (N = 10). ✅ verified present
-- Fix `Section ??` cross-references — §I, §II, §III-G, §IV-A. ✅ verified present
+Full detail and the §V draft: `IRL_extension_results/PHASE3_REPORT.md`.
 
-If D3 resolves to "the study has not run", Phase 3 becomes: cut §IV-H and §IV-I, and
-rebalance §V around the results that do exist. That is a legitimate paper — Phase 1 gave
-you a genuine attribution result — but it is a different paper from the one currently
-drafted, and the decision should be deliberate.
+- **§V — discussion.** ✅ **drafted**, written for Option A. Five subsections: what the
+  evidence supports, what it does not, design implications, threats to validity, future
+  work.
+- §IV-H — retention / decertification over the six-week beta. ⛔ **trial has not run.**
+- §IV-I — usability sessions. ⛔ **trial has not run.**
+- Numeric placeholders — §III intro, §IV-A (usability N, instructor N, IRB #), six-week
+  beta (N = 10). ⛔ not fillable; removed under Option A.
+- `Section ??` cross-references — §I, §II, §III-G, §IV-A. ✅ **the only placeholders
+  fixable now**; they are LaTeX `\ref` targets, not missing data.
+
+Everything remaining here waits on **D3′**.
 
 ---
 
