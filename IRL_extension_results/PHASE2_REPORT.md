@@ -1,6 +1,10 @@
 # Phase 2 — paper-correctness pass
 
 _Run 2026-07-31. Index: `docs/IRL_EXTENSION_ROADMAP.md`._
+
+> ⚠️ **The `14/15 = 93%` containment figure below is SUPERSEDED (2026-08-02).** Current:
+> **core 100% (3/3 runs), held-out 96% mean [92–100]** after the Phase 5 slow-burn fix.
+> See `PHASE5_REPORT.md` §1a/§2/§3. Curriculum-compliance 100% is unaffected.
 _Working document with paste-ready replacement text: `docs/PHASE2_CHECKLIST.md`._
 _Item 12 figures updated 2026-08-01 for the gpt-4o re-judge; both judges retained._
 

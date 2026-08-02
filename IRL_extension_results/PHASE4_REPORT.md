@@ -2,6 +2,15 @@
 
 _Run 2026-08-01. Index: `docs/IRL_EXTENSION_ROADMAP.md`._
 
+> ⚠️ **THE `tab:multiturn` NUMBERS IN THIS REPORT ARE SUPERSEDED (2026-08-02) — do not
+> paste them into the `.tex`.** This report told you to write `62/63` deflected and
+> `14/15` no-harmful-delivery. Those are pre-fix. After the Phase 5 slow-burn fix the
+> current figures are: **deflected 63/63, containment core 15/15 = 100% (3/3 runs),
+> held-out 25 attacks 96% mean [92–100]**. The M3 layer-attribution paragraph (§2) is also
+> revised — the trajectory layer now has a build-pattern escalation path; see
+> `PHASE5_REPORT.md` §1b/§3c for the corrected ablation attribution. Pull all multi-turn
+> numbers for the paper from `PHASE5_REPORT.md`, not from here.
+
 Phase 4 closes the reporting gaps the external review raised, plus the style and formatting
 items. This document states **where** in `Additional_files/IRL_extension.tex` to change
 things and **what** to write. The `.tex` is not modified.
@@ -250,14 +259,18 @@ Lines **148** and **464**. Archaic and frequently misused for *namely*. Replace 
 The table reports the 2026-07-26 collection. Phase 1 re-collected these sessions and Phase 1b
 re-judged them on gpt-4o with the corrected delivery prompt. Every row moved except two:
 
-| Row | In the `.tex` | **Current** |
-|---|---|---|
-| Adversarial turns deflected ↑ | 60/63 (95.2%) | **62/63 (98.4%)** |
-| Sessions with no harmful delivery ↑ | 12/15 (80.0%) | **14/15 (93.3%)** |
-| Complete artifact delivered ↓ | 0/15 (0.0%) | **0/15 (0.0%)** — unchanged |
-| Restricted-asset containment ↑ | 2/2 (100%) | **2/2 (100%)** — unchanged |
-| Benign sessions never blocked ↑ | 8/9 (88.9%) | **8/9 (88.9%)** — unchanged |
-| Gate misses recovered at generation ↑ | 3/5 (60.0%) | **39/40 (97.5%)** |
+> ⚠️ **The "Current" column below is the 2026-08-01 pre-fix collection — SUPERSEDED.**
+> The Phase 5 slow-burn fix (2026-08-02) moved the top two rows again. Use the **Post-fix**
+> column for the paper.
+
+| Row | In the `.tex` | Pre-fix (2026-08-01) | **Post-fix (2026-08-02, PUBLISH)** |
+|---|---|---|---|
+| Adversarial turns deflected ↑ | 60/63 (95.2%) | 62/63 (98.4%) | **63/63 (100%)** core |
+| Sessions with no harmful delivery ↑ | 12/15 (80.0%) | 14/15 (93.3%) | **15/15 = 100% core (3/3 runs); held-out 96% mean [92–100]** |
+| Complete artifact delivered ↓ | 0/15 (0.0%) | 0/15 (0.0%) | **0/15 core; held-out ASR ~4% (nondeterministic)** |
+| Restricted-asset containment ↑ | 2/2 (100%) | 2/2 (100%) | **2/2 (100%)** — unchanged |
+| Benign sessions never blocked ↑ | 8/9 (88.9%) | 8/9 (88.9%) | **8/9 (88.9%)** — unchanged |
+| Gate misses recovered at generation ↑ | 3/5 (60.0%) | 39/40 (97.5%) | see `PHASE5_REPORT.md` §3 — reframe |
 
 The last row changes meaning as well as value: with per-turn judging over all 63 attack
 turns, 40 turns passed the gate unblocked and 39 of them delivered nothing harmful. The old

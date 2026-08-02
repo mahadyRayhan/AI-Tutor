@@ -18,11 +18,15 @@ to re-check against the reviewer's actual text, not as the text itself.
 | Report | Phase | Contains |
 |---|---|---|
 | `IRL_extension_results/PHASE0_REPORT.md` | 0 | instrumentation + data audit; why §IV-H and §IV-F are blocked |
-| `IRL_extension_results/PHASE1_REPORT.md` | 1 | what was re-collected, the numbers, what is safe to quote |
-| `IRL_extension_results/PHASE2_REPORT.md` | 2 | the 12 correctness findings, the two open decisions |
+| `IRL_extension_results/PHASE1_REPORT.md` | 1 | what was re-collected, the numbers, what is safe to quote — ⚠️ multi-turn figures superseded, banner points to Phase 5 |
+| `IRL_extension_results/PHASE2_REPORT.md` | 2 | the 12 correctness findings, the two open decisions — ⚠️ containment figure superseded, banner points to Phase 5 |
 | `IRL_extension_results/PHASE3_REPORT.md` | 3 | §V drafted; proof the trial has not run; Option A/B decision |
-| `IRL_extension_results/PHASE4_REPORT.md` | 4 | M2/M3 paragraphs, SM-2 cite, Fig. 4 bugs, style pass |
-| _(Phase 5 report to follow)_ | 5 | — |
+| `IRL_extension_results/PHASE4_REPORT.md` | 4 | M2/M3 paragraphs, SM-2 cite, Fig. 4 bugs, style pass — ⚠️ `tab:multiturn` numbers superseded, banner points to Phase 5 |
+| `IRL_extension_results/PHASE5_REPORT.md` | 5 | **current multi-turn numbers live here**: slow-burn fix, held-out 25, 3-run variance, both ablations |
+
+**Multi-turn containment, current (2026-08-02):** core **100%** (3/3 runs), held-out 25
+**96%** mean [92–100]. All pre-fix figures (`14/15`, `93%`, `62/63`) in Phases 1/1B/2/4 carry
+supersession banners. Pull paper numbers from `PHASE5_REPORT.md`.
 
 Supporting documents:
 
@@ -45,7 +49,7 @@ Supporting documents:
 | 2 | Paper correctness pass | ⏳ prepared — 10 items ready to paste, 2 decisions open |
 | 3 | Write the missing sections | ⏳ §V drafted; §IV-H/§IV-I blocked — trial has not run |
 | 4 | Reviewer response + style | ⏳ ready: SM-2, Fig.4, style. M2/M3 partly in `.tex` already. 🔴 `tab:multiturn` holds stale numbers. M4/M6/m1/m2/m5 need review text |
-| 5 | Strengthening experiments | ⚠️ partially reconstructed |
+| 5 | Strengthening experiments | ⏳ ablation ✅, slow-burn fix ✅ (93%→100%), re-ablation ✅ (null flipped 100%→80%, but McNemar **p=0.25** at n=15), **held-out 25 ✅ (25/25=100% [87,100]; fix generalises to unseen slow-burns, but X11–X14 contained incidentally not by security — PHASE5 §2)**. **3 runs ✅ (core 100% 3/3; held-out 96% mean [92–100], nondeterministic — the single-run 100% was optimistic, PHASE5 §3)**. **ext ablation ✅ (96%→88%, but only X05 cleanly layer-attributable; single run, noisy — PHASE5 §3c)**. Open: human rater (needs a real 2nd person) |
 
 ---
 

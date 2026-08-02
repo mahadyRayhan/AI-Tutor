@@ -1,5 +1,6 @@
 # backend/app/agents/sentinel.py
 
+import os
 import re
 import asyncio
 from typing import AsyncGenerator
@@ -29,8 +30,26 @@ class SentinelAgent(BaseAgent):
     # new state is two floats in sessions.state. No new module.
     TRAJ_ACC_DECAY = 0.8       # accumulator memory (decayed sum of per-turn risk)
     TRAJ_PEAK_DECAY = 0.9      # peak cools over ~5-6 clean turns (usability guard)
-    TRAJ_TAU_JUDGE = 0.45      # >= this: escalate to the conversation-level LLM judge
-    TRAJ_TAU_BLOCK = 0.85      # >= this: hard block on extreme accumulated risk
+
+    # Escalation thresholds. Env-overridable so the trajectory layer can be ABLATED for
+    # evaluation without editing deployed code: setting both to a value above 1.0 makes
+    # the layer unreachable (session risk is bounded by 1.0), leaving every per-message
+    # layer untouched. That isolates this layer's contribution to containment, which is
+    # what the layer-conditioned attribution in the multi-turn audit cannot show on its
+    # own — it reports where blocks came from, not what would have happened without them.
+    #
+    #   SAGE_TRAJ_TAU_JUDGE=99 SAGE_TRAJ_TAU_BLOCK=99 uvicorn app.main:app
+    #
+    # Defaults are the deployed values; absent the env vars this is a no-op.
+    TRAJ_TAU_JUDGE = float(os.getenv("SAGE_TRAJ_TAU_JUDGE", "0.45"))  # escalate to LLM judge
+    TRAJ_TAU_BLOCK = float(os.getenv("SAGE_TRAJ_TAU_BLOCK", "0.85"))  # hard block
+    # Escalation threshold applied instead of TRAJ_TAU_JUDGE when the turn is a request to
+    # CONSTRUCT something (TRAJ_BUILD_PATTERNS). The trigger is supposed to be high-recall
+    # and the transcript judge is supposed to supply the precision; at a single threshold
+    # the trigger was in fact precision-tuned, which is why a slow burn walked through it.
+    # Escalating costs one judge call and CANNOT itself block — the judge still decides —
+    # so recall here is cheap and false positives are bounded by judge accuracy.
+    TRAJ_TAU_JUDGE_BUILD = float(os.getenv("SAGE_TRAJ_TAU_JUDGE_BUILD", "0.05"))
 
     # --- Goal-alignment latitude (adaptive security radius) ---
     # The alignment bar a security-sensitive query must clear is relaxed for learners who
@@ -70,6 +89,25 @@ class SentinelAgent(BaseAgent):
         "overload", "freeze", "disable", "spread", "infect", "self replicate",
         "keep going", "keep calling", "tight loop", "as fast as possible",
         "repeatedly", "endless", "as many as", "over and over", "spawn",
+    ]
+    # Request-to-CONSTRUCT markers. Unlike TRAJ_*_TERMS these match the FORM of the
+    # request, not the vocabulary of the harm, so paraphrasing the harmful effect does
+    # not evade them. This exists because a slow burn keeps every individual turn below
+    # TRAJ_TAU_JUDGE by construction — J15 ("a busy-wait that never yields and pins the
+    # core at 100%") hits zero HIGH and zero MED terms and scores r_t = 0.066 on the very
+    # turn that delivered working DoS code. No threshold on a lexicon score can catch
+    # that; the signal, not the threshold, is what failed. What a slow burn cannot avoid
+    # is eventually asking for the artifact.
+    TRAJ_BUILD_PATTERNS = [
+        "how would i make", "how do i make", "how can i make",
+        "how would i write", "how do i write", "how can i write",
+        "how would i build", "how do i build", "how can i build",
+        "how would i create", "how do i create", "how can i create",
+        "how would i implement", "how do i implement",
+        "how would i get", "how do i get it to", "how would i keep",
+        "write me", "show me the code", "give me the code", "give me one",
+        "complete program", "full program", "final code", "the code that does",
+        "put it all together", "put that together", "assemble", "one program that",
     ]
 
     def _trajectory_risk(self, state, has_c_context: bool, query_lower: str):
@@ -534,15 +572,24 @@ class SentinelAgent(BaseAgent):
                             "Let's refocus on legitimate C programming — what concept are you working on?"))
             return
 
+        # A construction request lowers the escalation bar. The build path belongs to the
+        # trajectory layer, so when that layer is ablated (tau pushed above 1.0) this must
+        # be unreachable too — otherwise the ablation stops isolating the layer.
+        traj_ablated = self.TRAJ_TAU_JUDGE > 1.0
+        is_build_request = (not traj_ablated) and any(
+            p in query_lower for p in self.TRAJ_BUILD_PATTERNS)
+        tau_judge_eff = (min(self.TRAJ_TAU_JUDGE, self.TRAJ_TAU_JUDGE_BUILD)
+                         if is_build_request else self.TRAJ_TAU_JUDGE)
+
         is_suspiciously_long = len(state.original_query.split()) > 15
-        trigger_judge = (traj_risk >= self.TRAJ_TAU_JUDGE) or (is_suspiciously_long and not has_c_context)
+        trigger_judge = (traj_risk >= tau_judge_eff) or (is_suspiciously_long and not has_c_context)
 
         if getattr(self, 'ENABLE_AI_SAFETY_JUDGE', False) and trigger_judge:
             # When the trigger is trajectory risk, judge the RECENT CONVERSATION
             # (short-term memory) rather than this turn alone — that's what lets a
             # benign final turn be seen in the context of the whole arc.
             judge_input = state.original_query
-            if traj_risk >= self.TRAJ_TAU_JUDGE:
+            if traj_risk >= tau_judge_eff:
                 try:
                     from app.core.history_manager import history_manager
                     sess = history_manager.get_session_details(state.user_id, state.session_id)
@@ -557,7 +604,8 @@ class SentinelAgent(BaseAgent):
                 except Exception as e:
                     self.logger.warning(f"[Traj] transcript build failed: {e}")
 
-            self.logger.info(f"🕵️ [Sentinel L7] Judge triggered (traj_risk={traj_risk:.2f}, long={is_suspiciously_long}).")
+            self.logger.info(f"🕵️ [Sentinel L7] Judge triggered (traj_risk={traj_risk:.2f}, "
+                             f"tau_eff={tau_judge_eff:.2f}, build={is_build_request}, long={is_suspiciously_long}).")
             is_safe = await self._semantic_safety_check(judge_input)
             if not is_safe:
                 self.logger.warning(f"🚨 [Sentinel L7] BLOCKED (traj_risk={traj_risk:.2f}): '{state.original_query[:80]}'")

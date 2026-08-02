@@ -2,6 +2,12 @@
 
 _Run 2026-08-01. OpenAI credits restored. Supersedes the Gemini verdicts of 2026-07-30._
 
+> ⚠️ **MULTI-TURN CONTAINMENT NUMBERS BELOW ARE SUPERSEDED (2026-08-02).** Every
+> `14/15 = 93%` figure here predates the Phase 5 slow-burn fix. Current: **core 100%
+> (3/3 runs), held-out 96% mean [92–100]**. The `11/15 = 73%` at line 21 is the *stratified*
+> gating figure and is likewise pre-fix. See `PHASE5_REPORT.md` §1a/§2/§3. Pedagogy figures
+> unaffected.
+
 Both judged evaluations were re-run on `gpt-4o`, the publish-quality judge. The staleness
 guard worked as designed: all 63 eval_04 verdicts and all 60 eval_02 verdicts were
 re-requested rather than reused, because `judge_model` no longer matched.

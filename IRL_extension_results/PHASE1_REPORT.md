@@ -2,6 +2,14 @@
 
 _Run 2026-07-30. Supersedes the 2026-07-26 collection for eval_02 and eval_04._
 
+> ⚠️ **MULTI-TURN CONTAINMENT NUMBERS BELOW ARE SUPERSEDED (2026-08-02).** Every
+> `14/15 = 93%` / `62/63` figure in this report predates the slow-burn fix of Phase 5.
+> Current figures: **core suite 100% (3/3 runs), held-out 25 attacks 96% mean [92–100]**.
+> Phase 5 found and fixed the defect (`TRAJ_BUILD_PATTERNS`) that let the one slow-burn
+> attack through. See `PHASE5_REPORT.md` §1a (fix), §2 (held-out), §3 (variance). The
+> pedagogy / curriculum-compliance numbers in this report are **not** affected — only
+> multi-turn (eval_04) containment moved.
+
 _Judged figures updated 2026-08-01 for the gpt-4o re-judge; **both judges retained**._
 _Pre-Phase-1 files preserved in `_pre_phase1_snapshot_20260730/`._
 
