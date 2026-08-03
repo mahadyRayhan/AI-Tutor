@@ -120,6 +120,12 @@ def _apply_decay(p_tilde: float, tier: str, last_at: datetime | None,
     """
     if last_at is None:
         return p_tilde
+    # Stored timestamps are naive local time, but a tz-aware value can reach here from
+    # any writer that used `datetime.now(timezone.utc)`. Subtracting mixed-awareness
+    # datetimes raises TypeError, and every caller of this function swallows exceptions,
+    # so the failure surfaces only as mastery silently reverting to the prior. Normalise.
+    if last_at.tzinfo is not None:
+        last_at = last_at.astimezone().replace(tzinfo=None)
     delta_days = (datetime.now() - last_at).total_seconds() / 86400.0
     if delta_days <= 0:
         return p_tilde
@@ -136,10 +142,67 @@ def _read_row(username: str, concept: str):
         "last_quiz_at, last_micro_at, last_code_at, "
         "n_evidence_quiz, n_evidence_micro, n_evidence_code, "
         "decay_quiz_lam, decay_micro_lam, decay_code_lam, "
-        "ease_factor, is_certified, ever_certified "
+        "ease_factor, is_certified, ever_certified, "
+        "hs_quiz, hs_micro, hs_code "
         "FROM user_knowledge WHERE username=? AND concept=?",
         (username, concept)
     )
+
+
+def _get_user_params(username: str, concept: str, tier: str) -> dict:
+    """Return BKT parameters for this user+concept+tier.
+    Uses adapted P_G from SRL calibration if it exists, otherwise global defaults."""
+    cfg = dict(EVIDENCE_CONFIG[tier])
+    row = db.fetch_one(
+        "SELECT adapted_P_G FROM user_bkt_calibration "
+        "WHERE username=? AND concept=? AND tier=?",
+        (username, concept, tier),
+    )
+    if row and row["adapted_P_G"] is not None:
+        cfg["P_G"] = row["adapted_P_G"]
+    return cfg
+
+
+def get_effective_mastery(username: str, concept: str) -> dict:
+    """Return blended mastery combining BKT posterior with student self-assessment.
+    P_eff = α·P_BKT + (1−α)·P_self. Used for display and response adaptation ONLY,
+    never for certification."""
+    from app.core.srl_calibration import ALPHA
+
+    row = _read_row(username, concept)
+    if not row:
+        return {
+            "quiz": 0.0, "micro": 0.0, "code": 0.0,
+            "composite": 0.0, "source": "no_data",
+        }
+
+    result = {}
+    for tier in ("quiz", "micro", "code"):
+        p_raw = row[EVIDENCE_CONFIG[tier]["col"]] or EVIDENCE_CONFIG[tier]["P_L0"]
+        p_bkt = _apply_decay(
+            p_raw, tier, _parse_ts(row[_TS_COL[tier]]), lam=row[_LAM_COL[tier]]
+        )
+        cal = db.fetch_one(
+            "SELECT self_assessment FROM user_bkt_calibration "
+            "WHERE username=? AND concept=? AND tier=?",
+            (username, concept, tier),
+        )
+        if cal and cal["self_assessment"] is not None:
+            p_self = cal["self_assessment"]
+            p_eff = ALPHA * p_bkt + (1 - ALPHA) * p_self
+        else:
+            p_eff = p_bkt
+
+        result[tier] = round(p_eff, 6)
+
+    result["composite"] = round(
+        result["quiz"] * EVIDENCE_CONFIG["quiz"]["ceiling"]
+        + result["micro"] * EVIDENCE_CONFIG["micro"]["ceiling"]
+        + result["code"] * EVIDENCE_CONFIG["code"]["ceiling"],
+        4,
+    )
+    result["source"] = "blended"
+    return result
 
 
 def update(username: str, concept: str, is_correct: bool, evidence_type: str = "quiz") -> float:
@@ -147,12 +210,13 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
     Updates one evidence tier and returns the new composite display score.
     Applies forgetting decay before the BKT step (Fix #6).
     On correct answers: increments n_evidence counter (Fix #3), adapts λ (Fix #6).
+    Uses per-user adapted P_G from SRL calibration when available.
     """
     if evidence_type not in EVIDENCE_CONFIG:
         logger.warning(f"[BKT] Unknown evidence_type '{evidence_type}', defaulting to quiz")
         evidence_type = "quiz"
 
-    cfg    = EVIDENCE_CONFIG[evidence_type]
+    cfg    = _get_user_params(username, concept, evidence_type)
     col    = cfg["col"]
     ts_col = _TS_COL[evidence_type]
     n_col  = _N_COL[evidence_type]
@@ -160,16 +224,37 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
 
     row = _read_row(username, concept)
     if row is None:
+        # First genuine BKT touch of this topic: seed the starting priors, giving a
+        # small capped head start if any prerequisite is already certified (rule 3).
+        # The head start moves the STARTING line only; certification remains gated on
+        # n_evidence real answers, so a seed can never certify or unlock anything.
+        seed_q = EVIDENCE_CONFIG["quiz"]["P_L0"]
+        seed_m = EVIDENCE_CONFIG["micro"]["P_L0"]
+        seed_c = EVIDENCE_CONFIG["code"]["P_L0"]
+        hs_q = hs_m = hs_c = 0.0
+        hs_at = None
+        try:
+            from app.core import prereq_headstart
+            hs = prereq_headstart.seeds_for_new_row(username, concept)
+            if hs:
+                seed_q, seed_m, seed_c = hs["seeds"]["quiz"], hs["seeds"]["micro"], hs["seeds"]["code"]
+                hs_q, hs_m, hs_c = hs["hs"]["quiz"], hs["hs"]["micro"], hs["hs"]["code"]
+                hs_at = datetime.now()
+        except Exception as e:
+            logger.warning(f"[BKT] head-start seeding skipped for '{concept}': {e}")
+
         db.execute(
             """INSERT OR IGNORE INTO user_knowledge
                (username, concept, timestamp,
-                p_mastery_quiz, p_mastery_micro, p_mastery_code, p_mastery)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                p_mastery_quiz, p_mastery_micro, p_mastery_code, p_mastery,
+                hs_quiz, hs_micro, hs_code, head_start_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (username, concept, datetime.now(),
-             EVIDENCE_CONFIG["quiz"]["P_L0"],
-             EVIDENCE_CONFIG["micro"]["P_L0"],
-             EVIDENCE_CONFIG["code"]["P_L0"],
-             EVIDENCE_CONFIG["quiz"]["P_L0"] * EVIDENCE_CONFIG["quiz"]["ceiling"])
+             seed_q, seed_m, seed_c,
+             round(seed_q * EVIDENCE_CONFIG["quiz"]["ceiling"]
+                   + seed_m * EVIDENCE_CONFIG["micro"]["ceiling"]
+                   + seed_c * EVIDENCE_CONFIG["code"]["ceiling"], 6),
+             hs_q, hs_m, hs_c, hs_at)
         )
         row = _read_row(username, concept)
 
@@ -177,6 +262,22 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
     stored_lam = row[lam_col] if row[lam_col] else DECAY_RATES[evidence_type]
     p_raw     = row[col] if row[col] is not None else cfg["P_L0"]
     p_current = _apply_decay(p_raw, evidence_type, _parse_ts(row[ts_col]), lam=stored_lam)
+
+    # --- Telemetry: prediction BEFORE outcome (p_current is the pre-update prediction) ---
+    # p_eff_pred blends the pre-update posterior with any student self-assessment.
+    try:
+        from app.core.srl_calibration import ALPHA as _ALPHA
+        _cal = db.fetch_one(
+            "SELECT self_assessment FROM user_bkt_calibration "
+            "WHERE username=? AND concept=? AND tier=?",
+            (username, concept, evidence_type),
+        )
+        if _cal and _cal["self_assessment"] is not None:
+            _p_eff_pred = _ALPHA * p_current + (1 - _ALPHA) * _cal["self_assessment"]
+        else:
+            _p_eff_pred = p_current
+    except Exception:
+        _p_eff_pred = p_current
 
     # --- BKT step (Fix #1: P_T only on correct) ---
     p_new = _bkt_step(p_current, is_correct, cfg)
@@ -219,6 +320,22 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
     )
 
     calibrator.record_posterior(concept, evidence_type, p_new)
+
+    # --- Telemetry: evidence + prediction + trajectory snapshot ---
+    try:
+        from app.core import telemetry
+        new_n = (row[n_col] or 0) + (1 if is_correct else 0)
+        telemetry.log_evidence(username, concept, evidence_type, is_correct)
+        telemetry.log_prediction(username, concept, evidence_type,
+                                 round(p_current, 6), round(_p_eff_pred, 6), is_correct)
+        telemetry.log_bkt_snapshot(
+            username, concept, evidence_type, p_new, new_n,
+            int(row["is_certified"] or 0), int(row["ever_certified"] or 0),
+            trigger=f"evidence_{evidence_type}",
+        )
+    except Exception as e:
+        logger.warning(f"[BKT] telemetry hook failed: {e}")
+
     return composite
 
 
@@ -272,6 +389,12 @@ def is_mastered(username: str, concept: str) -> bool:
                 "UPDATE user_knowledge SET is_certified=0 WHERE username=? AND concept=?",
                 (username, concept)
             )
+            try:
+                from app.core import telemetry
+                telemetry.log_event(username, "decertification",
+                                    {"concept": concept, "q": q, "m": m, "c": c})
+            except Exception:
+                pass
         return still_mastered
 
     # --- Not yet certified: check both P̃ threshold AND evidence count ---
@@ -291,11 +414,96 @@ def is_mastered(username: str, concept: str) -> bool:
             "UPDATE user_knowledge SET is_certified=1, ever_certified=1 WHERE username=? AND concept=?",
             (username, concept)
         )
+        try:
+            from app.core import telemetry
+            telemetry.log_event(username, "certification", {
+                "concept": concept, "q": q, "m": m, "c": c,
+                "n_quiz": n_q, "n_micro": n_m, "n_code": n_c,
+            })
+        except Exception:
+            pass
     return newly_mastered
 
 
+def answers_to_certify(p_current: float, n_evidence: int, cfg: dict,
+                       theta: float = THETA_CERTIFY, n_min: int = N_MIN,
+                       max_iter: int = 50) -> int:
+    """
+    Best-case number of consecutive CORRECT answers this tier still needs to
+    certify, given its current raw posterior and evidence count.
+
+    Certification requires BOTH P̃ ≥ theta AND n_evidence ≥ n_min, so the answer is
+    max(steps to cross theta, remaining evidence). Simulates the real BKT step with
+    the user's own parameters. Assumes a single session (no decay between answers)
+    and is a best case — a wrong answer resets the streak. Returns 0 if already met.
+    """
+    steps = 0
+    p = p_current
+    while p < theta and steps < max_iter:
+        p = _bkt_step(p, True, cfg)
+        steps += 1
+    need_for_evidence = max(0, n_min - (n_evidence or 0))
+    return max(steps, need_for_evidence)
+
+
+# How a student earns evidence in each tier — shown in the ledger so they know
+# exactly which action feeds which bar (Module-B F2-05 transparency).
+_TIER_LABEL = {"quiz": "Quiz", "micro": "Micro", "code": "Code"}
+_TIER_HOWTO = {
+    "quiz":  "quizzes & 🎯 Verify Mastery",
+    "micro": '"Your Turn" code challenges',
+    "code":  "submitting code for review",
+}
+
+
+def mastery_ledger(username: str, concept: str) -> str:
+    """Compact per-tier mastery progress block for a concept, as Markdown.
+
+    Shows each tier's progress bar, how many more correct answers it needs to
+    certify, and HOW to earn that evidence — so students understand that quiz,
+    micro, and code answers feed different bars. Returns "" for unknown/General
+    concepts so it can be safely appended to any graded response.
+    """
+    if not concept or concept.strip().lower() in ("", "general", "code submission"):
+        return ""
+
+    row = _read_row(username, concept)
+
+    def _bar(frac: float, cells: int = 4) -> str:
+        filled = max(0, min(cells, round(max(0.0, min(1.0, frac)) * cells)))
+        return "▰" * filled + "▱" * (cells - filled)
+
+    # Cold-start (no evidence yet): show empty ladder from the priors.
+    if not row:
+        lines = [f"### 🎯 {concept} — mastery progress"]
+        for t in ("quiz", "micro", "code"):
+            p0 = EVIDENCE_CONFIG[t]["P_L0"]
+            more = answers_to_certify(p0, 0, EVIDENCE_CONFIG[t],
+                                      theta=calibrator.get_threshold(concept, t))
+            lines.append(f"- **{_TIER_LABEL[t]}** {_bar(p0 / THETA_CERTIFY)} — ~{more} more · earn via {_TIER_HOWTO[t]}")
+        lines.append("\n*Certify this topic by clearing all three bars.*")
+        return "\n\n---\n" + "\n".join(lines)
+
+    if row["ever_certified"]:
+        return f"\n\n---\n✅ **You've mastered {concept}!** (all three tiers verified)"
+
+    lines = [f"### 🎯 {concept} — mastery progress"]
+    for t in ("quiz", "micro", "code"):
+        p_raw = row[EVIDENCE_CONFIG[t]["col"]] or EVIDENCE_CONFIG[t]["P_L0"]
+        p_bkt = _apply_decay(p_raw, t, _parse_ts(row[_TS_COL[t]]), lam=row[_LAM_COL[t]])
+        n_ev = row[f"n_evidence_{t}"] or 0
+        more = answers_to_certify(p_bkt, n_ev, _get_user_params(username, concept, t),
+                                  theta=calibrator.get_threshold(concept, t))
+        status = "✓ certified" if more == 0 else f"~{more} more"
+        lines.append(f"- **{_TIER_LABEL[t]}** {_bar(p_bkt / THETA_CERTIFY)} — {status} · earn via {_TIER_HOWTO[t]}")
+    lines.append("\n*Certify this topic by clearing all three bars.*")
+    return "\n\n---\n" + "\n".join(lines)
+
+
 bkt = type("BKTModel", (), {
-    "update":      staticmethod(update),
-    "get_mastery": staticmethod(get_mastery),
-    "is_mastered": staticmethod(is_mastered),
+    "update":                staticmethod(update),
+    "get_mastery":           staticmethod(get_mastery),
+    "get_effective_mastery": staticmethod(get_effective_mastery),
+    "is_mastered":           staticmethod(is_mastered),
+    "mastery_ledger":        staticmethod(mastery_ledger),
 })()

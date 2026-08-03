@@ -167,9 +167,9 @@ class ScaffoldingAgent(BaseAgent):
             prompt = f"""
             The student was asked to explain the core logic of solving "{active_plan['original_problem']}" before writing any code.
             Student's answer: "{state.query}"
-            
+
             Write a brief, encouraging response (1-2 sentences) affirming their logic (or gently correcting them if they said 'I don't know').
-            Do NOT write code. 
+            Do NOT write code. {self._preference_directive(state.profile)}
             """
             affirmation = await asyncio.to_thread(self.llm.generate_response, prompt)
             
@@ -219,10 +219,10 @@ class ScaffoldingAgent(BaseAgent):
                 You are a C Tutor. The student is stuck on this step: "{current_step['goal']}".
                 Task: "{current_step['description']}"
                 
-                Generate a PARTIAL C code snippet that helps them complete this exact step. 
+                Generate a PARTIAL C code snippet that helps them complete this exact step.
                 Use `___` or `// TODO:` for the parts the student still needs to figure out.
                 Do not give the complete working answer. Add 1 sentence of encouragement.
-                Format the code in standard markdown ```c ... ```.
+                Format the code in standard markdown ```c ... ```. {self._preference_directive(state.profile)}
                 """
                 partial_code_response = await asyncio.to_thread(self.llm.generate_response, prompt)
                 
@@ -284,13 +284,24 @@ class ScaffoldingAgent(BaseAgent):
                 else:
                     topic_credit = active_plan.get('original_problem', 'General')
                     topic_label = state.entities[0] if state.entities else topic_credit[:20]
-                    
-                    knowledge_manager.mark_concept_as_known(state.user_id, f"Solved: {topic_label}")
+
                     history_manager.update_session_state(state.user_id, state.session_id, {"active_plan": {"is_active": False}})
-                    
-                    msg = f"That is an accurate and well-organized summary! 🏆\n\n"
-                    msg += f"You've officially mastered **{topic_label}**. The logic you just derived applies to many other problems in C. "
-                    msg += f"Next time you build something for your goal, you will find this mental model transfers directly."
+
+                    # BKT is the sole mastery authority. Solving one problem is strong
+                    # evidence but not certification — only claim "mastered" (and write it)
+                    # when BKT agrees, otherwise praise the progress without over-claiming
+                    # (previously this wrote a fake "Solved: X" row and asserted mastery,
+                    # contradicting the dashboard — Module-B F3-05/F4-01).
+                    from app.core.bkt_model import bkt
+                    if bkt.is_mastered(state.user_id, topic_label):
+                        knowledge_manager.mark_concept_as_known(state.user_id, topic_label)
+                        msg = f"That is an accurate and well-organized summary! 🏆\n\n"
+                        msg += f"You've officially mastered **{topic_label}**. The logic you just derived applies to many other problems in C. "
+                        msg += f"Next time you build something for your goal, you will find this mental model transfers directly."
+                    else:
+                        msg = f"That is an accurate and well-organized summary! 🎯\n\n"
+                        msg += f"Great work reasoning through **{topic_label}** — that's real progress. Keep practicing it a little more and you'll have it fully mastered. "
+                        msg += f"The mental model you just built will transfer directly to other problems for your goal."
                     
                     yield {"type": "complete", "data": {
                         "answer": msg, 
@@ -317,7 +328,7 @@ class ScaffoldingAgent(BaseAgent):
                 - WHAT-IF: "What would happen to your code if [edge case occurs]?"
                 - WHY: "Why did we use [specific syntax they just wrote] instead of [alternative]?"
                 
-                Then, introduce the next step: "{next_step['description']}".
+                Then, introduce the next step: "{next_step['description']}". {self._preference_directive(state.profile)}
                 """
                 deep_transition = await asyncio.to_thread(self.llm.generate_response, prompt)
                 answer_text += deep_transition

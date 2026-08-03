@@ -121,6 +121,99 @@ def get_video_duration_from_transcript(video_path: str) -> float:
     return 0.0
 
 
+def _window_text(segments: List[Dict], start: float, end: float) -> str:
+    """Concatenate transcript text within [start, end)."""
+    return " ".join(s["text"] for s in segments if start <= s["start"] < end).strip()
+
+
+def _plan_checkpoint_times(duration: float, target_spacing_sec: float,
+                           min_cp: int, max_cp: int) -> List[float]:
+    """
+    Dynamically place checkpoints based on video length.
+
+    The video is split into N equal segments (N scales with duration via
+    target_spacing), and a checkpoint is placed at the END of each segment — so
+    the last checkpoint always lands at the end of the video.
+
+      e.g. 17-min video, spacing ~8.5 min → N=2 → checkpoints at ~8.5 min and ~17 min.
+
+    The final checkpoint is nudged 2s before the very end so it reliably fires
+    during playback (before the 'ended' event).
+    """
+    if duration <= 0:
+        return []
+    n = round(duration / target_spacing_sec)
+    n = max(min_cp, min(n, max_cp))
+    times = [duration * i / n for i in range(1, n + 1)]
+    times[-1] = max(0.0, min(times[-1], duration - 2.0))
+    return [round(t, 1) for t in times]
+
+
+def generate_checkpoints(video_path: str, llm, target_spacing_sec: float = 510.0,
+                         min_checkpoints: int = 1, max_checkpoints: int = 8) -> List[Dict]:
+    """
+    Generate one LLM multiple-choice question per checkpoint. Checkpoint count and
+    placement are DYNAMIC — the video is divided into N equal segments (N scales
+    with length), a checkpoint sits at the end of each, and each MCQ is based on
+    ITS OWN segment of content. The last checkpoint is at the end of the video.
+
+    Returns list of dicts:
+      {checkpoint_time, question, options[4], correct_index, concept, explanation}
+    """
+    segments = transcribe_video(video_path)
+    if not segments:
+        return []
+    duration = segments[-1]["end"]
+
+    cp_times = _plan_checkpoint_times(duration, target_spacing_sec,
+                                      min_checkpoints, max_checkpoints)
+
+    checkpoints = []
+    prev = 0.0
+    for t in cp_times:
+        window = _window_text(segments, prev, t)  # this checkpoint's own segment
+        prev = t
+        if len(window) < 40:  # not enough content to quiz on
+            continue
+
+        prompt = f"""You are creating a comprehension check for a C programming lecture.
+Based ONLY on the transcript excerpt below, write ONE multiple-choice question that
+tests whether the student understood this segment.
+
+TRANSCRIPT EXCERPT (this lecture segment):
+\"\"\"{window[:2500]}\"\"\"
+
+Return STRICT JSON only, no markdown, in exactly this shape:
+{{"question": "...", "options": ["A", "B", "C", "D"], "correct_index": 0,
+  "concept": "<the C concept this tests, e.g. Pointers>", "explanation": "why the answer is correct"}}
+Rules: exactly 4 options, correct_index is 0-3, question must be answerable from the excerpt."""
+
+        try:
+            raw = llm.generate_response(prompt).strip()
+            # Strip code fences if present
+            if raw.startswith("```"):
+                raw = raw.split("```")[1] if "```" in raw[3:] else raw
+                raw = raw.replace("json", "", 1).strip("` \n")
+            mcq = json.loads(raw)
+            opts = mcq.get("options", [])
+            ci = int(mcq.get("correct_index", 0))
+            if isinstance(opts, list) and len(opts) == 4 and 0 <= ci <= 3 and mcq.get("question"):
+                checkpoints.append({
+                    "checkpoint_time": round(t, 1),
+                    "question": mcq["question"].strip(),
+                    "options": opts,
+                    "correct_index": ci,
+                    "concept": (mcq.get("concept") or "").strip(),
+                    "explanation": (mcq.get("explanation") or "").strip(),
+                })
+        except Exception as e:
+            logger.warning(f"[checkpoint] MCQ generation failed at {t}s: {e}")
+
+    logger.info(f"✅ Generated {len(checkpoints)} checkpoint MCQs for {Path(video_path).name} "
+                f"(duration {duration:.0f}s → {len(cp_times)} planned)")
+    return checkpoints
+
+
 _STOP_WORDS = {
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",

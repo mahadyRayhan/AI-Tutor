@@ -5,6 +5,79 @@ let activeChallenge = null;
 let globalPendingChallenges = [];
 let currentTTSAudio = null;
 
+// --- OUTPUT SANITIZATION (XSS defense) ---
+// Any message content — from the LLM, retrieved docs, or another user's stored
+// history — is untrusted. Render markdown, then strip scripts / event handlers /
+// javascript: URIs with DOMPurify before it ever touches innerHTML.
+//
+// S7-04: strip external image sources. A markdown image like
+// ![](http://tracker/pixel.gif) becomes an <img> that silently phones home
+// (tracking pixel / IP + timing leak) the moment it renders. Allow only inline
+// data: images and same-origin/relative paths; drop any absolute external src.
+if (window.DOMPurify && !window.__imgHookInstalled) {
+    window.__imgHookInstalled = true;
+    DOMPurify.addHook('afterSanitizeAttributes', function (node) {
+        if (node.tagName === 'IMG') {
+            const src = node.getAttribute('src') || '';
+            if (/^https?:\/\//i.test(src) || src.startsWith('//')) {
+                node.removeAttribute('src');
+                node.removeAttribute('srcset');
+            }
+        }
+    });
+}
+
+function renderMD(text) {
+    const html = marked.parse(text || "");
+    if (window.DOMPurify) {
+        return DOMPurify.sanitize(html, { ADD_ATTR: ['target'], FORBID_TAGS: ['style'] });
+    }
+    // Fail closed: if the sanitizer didn't load, never inject raw HTML.
+    return escapeHTML(text || "");
+}
+
+// Escape a plain string for safe insertion as text inside innerHTML.
+function escapeHTML(text) {
+    const d = document.createElement('div');
+    d.textContent = (text == null) ? "" : String(text);
+    return d.innerHTML;
+}
+
+// --- TELEMETRY (Productive Struggle — Contribution 2) ---
+let lastAiResponseAt = null;     // timestamp when AI finished responding
+let dwellLoggedForTurn = false;  // ensure one dwell sample per AI turn
+
+function logBehavior(event, value) {
+    if (!currentUser) return;
+    try {
+        fetch(`${API_URL}/api/v1/telemetry/behavior`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: currentUser.username,
+                session_id: currentSessionId,
+                event: event,
+                value: value != null ? String(value) : null
+            }),
+            keepalive: true
+        }).catch(() => {});
+    } catch (e) { /* telemetry must never break the UI */ }
+}
+
+// Dwell time = seconds from AI finishing its message to the student's first keystroke.
+function markAiResponded() {
+    lastAiResponseAt = Date.now();
+    dwellLoggedForTurn = false;
+}
+
+function captureDwellOnFirstKeystroke() {
+    if (lastAiResponseAt && !dwellLoggedForTurn) {
+        const dwellSec = (Date.now() - lastAiResponseAt) / 1000;
+        logBehavior('dwell', dwellSec.toFixed(2));
+        dwellLoggedForTurn = true;
+    }
+}
+
 // --- 1. GLOBAL FUNCTIONS (So buttons can find them) ---
 window.startTopic = function (text) {
     document.getElementById('userInput').value = text;
@@ -54,6 +127,9 @@ function addFeedbackButtons(container, originalQuery) {
 
             // If it's a THUMBS DOWN, show the text box
             if (act.id === 'down') {
+                // Telemetry: capture the dissatisfaction click IMMEDIATELY,
+                // even if the student never submits a written reason.
+                logBehavior('thumbs_down_click', originalQuery);
                 // Prevent duplicate boxes if clicked multiple times
                 if (container.querySelector('.feedback-text-box')) return;
 
@@ -205,6 +281,23 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
 
     if (!rawText) return;
 
+    // Guard message size (keep in sync with backend config.MAX_MESSAGE_CHARS).
+    const MAX_MESSAGE_CHARS = 8000;
+    if (rawText.length > MAX_MESSAGE_CHARS) {
+        alert(`Your message is too long (${rawText.length.toLocaleString()} characters). ` +
+              `Please keep it under ${MAX_MESSAGE_CHARS.toLocaleString()} characters.`);
+        return;
+    }
+
+    // MCN behaviour telemetry: detect genuine help-seeking as a "struggle" signal.
+    // Skip system-tagged messages (they all start with "[").
+    if (!hidden && !rawText.startsWith('[')) {
+        const HINT_RE = /\b(hint|stuck|i'?m lost|confused|too hard|just tell me|give me (the|a) (answer|solution|hint)|i don'?t (get|understand)|help me|explain .*(again|simpler))\b/i;
+        if (HINT_RE.test(rawText)) {
+            logBehavior('hint_request', rawText.slice(0, 80));
+        }
+    }
+
     // Hide Welcome Screen
     const welcome = document.getElementById('welcome-view');
     if (welcome) welcome.style.display = 'none';
@@ -232,11 +325,12 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
         // Parse it with Marked if it has a markdown block, otherwise use basic formatting
         let displayText = displayUserText;
         if (displayUserText.includes('```c')) {
-            displayText = marked.parse(displayUserText);
+            displayText = renderMD(displayUserText);
         } else {
-            displayText = displayUserText.replace(/\n/g, '<br>');
             if (displayUserText.includes('{') || displayUserText.includes(';')) {
-                displayText = `<pre><code class="language-c">${displayUserText.replace(/</g, '&lt;')}</code></pre>`;
+                displayText = `<pre><code class="language-c">${escapeHTML(displayUserText)}</code></pre>`;
+            } else {
+                displayText = escapeHTML(displayUserText).replace(/\n/g, '<br>');
             }
         }
         
@@ -284,11 +378,29 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             session_id: currentSessionId
         };
 
+        // Watchdog: if no bytes arrive for WATCHDOG_MS, abort the fetch so we can
+        // resolve the UI instead of spinning forever on a hung/half-open stream.
+        const controller = new AbortController();
+        const WATCHDOG_MS = 100000;  // > server STREAM_STALL_TIMEOUT (90s) so the server's own terminal event wins first
+        let watchdogTimer = null;
+        function armWatchdog() {
+            if (watchdogTimer) clearTimeout(watchdogTimer);
+            watchdogTimer = setTimeout(() => {
+                console.warn("Stream watchdog fired — aborting stalled response.");
+                try { controller.abort(); } catch (_) {}
+            }, WATCHDOG_MS);
+        }
+        function clearWatchdog() {
+            if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = null; }
+        }
+
         const response = await fetch(`${API_URL}/api/v1/chat/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
         });
+        armWatchdog();
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -301,6 +413,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
         let typewriterTimer = null;
         let streamDone = false;         // has the SSE stream closed?
         let completeEvent = null;       // stash the 'complete' event
+        let finalized = false;          // has the response been finalized (spinner cleared)?
 
         const TICK_MS = 16;             // ~60fps render tick
 
@@ -314,7 +427,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                 renderedLength = Math.min(renderedLength + chunkSize, fullMarkdown.length);
                 const textContainer = document.getElementById(`text-${progId}`);
                 if (textContainer) {
-                    textContainer.innerHTML = marked.parse(fullMarkdown.slice(0, renderedLength));
+                    textContainer.innerHTML = renderMD(fullMarkdown.slice(0, renderedLength));
                 }
                 scrollToBottom();
                 typewriterTimer = setTimeout(renderNextChunk, TICK_MS);
@@ -322,6 +435,10 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                 // Buffer fully drained AND stream is done → do final render
                 finishRender(completeEvent);
                 completeEvent = null;
+            } else if (streamDone && !finalized) {
+                // Stream closed without a terminal 'complete' but we drip-fed some
+                // text — finalize gracefully so the spinner never lingers.
+                finalizeIncomplete('stream closed without completion');
             }
             // else: buffer caught up — typewriterTimer is null,
             //       so startTypewriter() can restart when new tokens arrive
@@ -335,6 +452,9 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
 
         // Final rich render after typewriter finishes
         function finishRender(data) {
+            finalized = true;
+            clearWatchdog();
+            if (typewriterTimer) { clearTimeout(typewriterTimer); typewriterTimer = null; }
             if (data.data.session_id) currentSessionId = data.data.session_id;
 
             // --- Update Pending Challenges UI ---
@@ -342,7 +462,7 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                 updatePendingChallengesUI(data.data.skipped_challenges);
             }
 
-            botDiv.innerHTML = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>` + marked.parse(data.data.answer);
+            botDiv.innerHTML = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>` + renderMD(data.data.answer);
             displaySources(data.data.sources);
 
 
@@ -354,6 +474,9 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             addFeedbackButtons(botDiv, rawText);
             addSpeakButton(botDiv, data.data.answer);
             loadChatHistory();
+
+            // Telemetry: AI finished — start the dwell-time clock for the next reply
+            markAiResponded();
 
             if (data.data.warmup_topic) {
                 const topicSpan = document.getElementById('warmupTopicName');
@@ -372,10 +495,36 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             scrollToBottom();
         }
 
+        // Graceful finalize when the stream ends/aborts WITHOUT a terminal 'complete'.
+        // Renders whatever partial text arrived (or an error) and clears the spinner,
+        // so the UI never stays "stuck on generating".
+        function finalizeIncomplete(reason) {
+            if (finalized) return;
+            finalized = true;
+            clearWatchdog();
+            if (typewriterTimer) { clearTimeout(typewriterTimer); typewriterTimer = null; }
+            const partial = (fullMarkdown || "").trim();
+            const header = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>`;
+            if (partial) {
+                botDiv.innerHTML = header + renderMD(partial) +
+                    `<div style="color:#c98a00;font-size:0.85em;margin-top:8px;">⚠️ This response may be incomplete — please retry if it looks cut off.</div>`;
+                renderDiagrams(botDiv);
+                Prism.highlightAllUnder(botDiv);
+                injectCopyButtons(botDiv);
+                addFeedbackButtons(botDiv, rawText);
+            } else {
+                botDiv.innerHTML = header +
+                    `<span style="color:#ff897d;">⚠️ Sorry — I couldn't finish that response. Please try again.</span>`;
+            }
+            markAiResponded();
+            scrollToBottom();
+        }
+
         // ── SSE Read Loop ──────────────────────────────────────
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            armWatchdog();  // bytes arrived → reset the stall timer
 
             const lines = decoder.decode(value, { stream: true }).split('\n');
             for (const line of lines) {
@@ -383,6 +532,12 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
                     try {
                         const data = JSON.parse(line.slice(6));
 
+                        // 0. ERROR → terminal: finalize gracefully, stop spinning
+                        if (data.type === 'error') {
+                            streamDone = true;
+                            finalizeIncomplete(data.message || 'server error');
+                            continue;
+                        }
                         // 1. STATUS UPDATE
                         if (data.type === 'status') {
                             const statusText = document.getElementById(`status-text-${progId}`);
@@ -417,15 +572,38 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             }
         }
 
-        // Safety: if stream ends without a 'complete' event, clean up typewriter
+        // Stream closed. Guarantee the UI resolves even if no terminal 'complete'
+        // arrived: drain any buffered text, else finalize gracefully.
         streamDone = true;
-        if (!completeEvent && typewriterTimer) {
-            // Let the remaining buffer drain naturally
+        clearWatchdog();
+        if (!finalized) {
+            if (completeEvent) {
+                finishRender(completeEvent);
+                completeEvent = null;
+            } else if (renderedLength >= (fullMarkdown || "").length) {
+                // Nothing left to drip-feed — finalize now.
+                finalizeIncomplete('stream closed without completion');
+            }
+            // else: typewriter is still draining buffered text; renderNextChunk will
+            // call finalizeIncomplete once it empties (streamDone && !completeEvent).
         }
 
     } catch (e) {
+        clearWatchdog();
         console.error(e);
-        botDiv.innerHTML = "<span style='color:#ff897d'>Connection failed.</span>";
+        // Render partial content if we have any; otherwise show a clear error.
+        if (!finalized) {
+            if ((fullMarkdown || "").trim()) {
+                finalizeIncomplete(e && e.name === 'AbortError' ? 'timed out' : 'connection failed');
+            } else {
+                botDiv.innerHTML = `<div class="msg-header"><div class="msg-sender bot">Tutor</div></div>` +
+                    (e && e.name === 'AbortError'
+                        ? "<span style='color:#ff897d;'>⚠️ The response timed out. Please try again.</span>"
+                        : "<span style='color:#ff897d;'>⚠️ Connection failed. Please try again.</span>");
+                finalized = true;
+                markAiResponded();
+            }
+        }
     }
 };
 
@@ -486,8 +664,10 @@ function submitWarmup() {
 
 function skipWarmup() {
     document.getElementById('warmupModal').style.display = 'none';
+    // MCN behaviour telemetry: skipping a challenge is a "struggle" signal.
+    logBehavior('skip_challenge', 'warmup');
     // Send hidden skip to backend so it doesn't clutter chat
-    window.sendMessage(`[WARMUP_ANSWER] skip`, true); 
+    window.sendMessage(`[WARMUP_ANSWER] skip`, true);
 }
 
 // --- 2. SUGGESTION RENDERER (Crucial) ---
@@ -532,7 +712,7 @@ function displaySources(sources) {
     unique.forEach(s => {
         const div = document.createElement('div');
         div.className = 'source-card';
-        div.innerHTML = `<div class="source-title">📄 ${s.document_name}</div><div class="source-content">${marked.parse(s.chunk_text || "")}</div>`;
+        div.innerHTML = `<div class="source-title">📄 ${escapeHTML(s.document_name)}</div><div class="source-content">${renderMD(s.chunk_text || "")}</div>`;
         list.appendChild(div);
     });
     Prism.highlightAllUnder(list);
@@ -552,7 +732,9 @@ async function renderDiagrams(container) {
                 const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
                 const { svg } = await window.mermaid.render(id, txt);
                 const div = document.createElement('div');
-                div.innerHTML = svg;
+                div.innerHTML = window.DOMPurify
+                    ? DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } })
+                    : "";
                 div.style.textAlign = 'center';
 
                 // Replace the <pre> parent if it exists, otherwise just the <code>
@@ -576,6 +758,14 @@ function autoResize(textarea) {
 function toggleAuth(view) {
     document.getElementById('loginForm').classList.toggle('hidden', view === 'signup');
     document.getElementById('signupForm').classList.toggle('hidden', view !== 'signup');
+    // Clear any lingering messages when switching forms
+    ['loginError', 'signupError', 'err-name', 'err-email', 'err-username',
+     'err-password', 'err-password2'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.innerText = ''; el.classList.remove('show'); el.style.display = 'none'; }
+    });
+    const s = document.getElementById('signupSuccess');
+    if (s) s.style.display = 'none';
 }
 
 function handleKeyPress(e) {
@@ -591,9 +781,87 @@ function scrollToBottom() {
 }
 
 // --- 4. AUTH & LOAD ---
+// --- Auth helpers ---------------------------------------------------------
+function showError(id, msg) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerText = msg;
+    el.classList.add('show');
+    el.style.display = 'block';
+}
+function clearError(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerText = '';
+    el.classList.remove('show');
+    el.style.display = 'none';
+}
+function setFieldState(inputId, errId, msg) {
+    const inp = document.getElementById(inputId);
+    if (msg) { if (inp) { inp.classList.add('invalid'); inp.classList.remove('valid'); } showError(errId, msg); }
+    else { if (inp) { inp.classList.remove('invalid'); inp.classList.add('valid'); } clearError(errId); }
+    return !msg;
+}
+
+// Client-side validators (mirror backend app/core/validators.py — UX only; the
+// server re-validates authoritatively).
+const AUTH_RE = {
+    email: /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/,
+    username: /^[A-Za-z0-9_]{3,30}$/,
+};
+function vName(v)  { return (v || '').trim().length >= 2 ? '' : 'Please enter your full name.'; }
+function vEmail(v) { return AUTH_RE.email.test((v || '').trim()) ? '' : 'Please enter a valid email address.'; }
+function vUser(v)  { return AUTH_RE.username.test((v || '').trim()) ? '' : 'Username must be 3–30 letters, numbers, or underscores.'; }
+function vPass(v, user, email) {
+    const p = v || '';
+    if (p.length < 8) return 'Password must be at least 8 characters.';
+    if (!/[a-z]/.test(p)) return 'Add a lowercase letter.';
+    if (!/[A-Z]/.test(p)) return 'Add an uppercase letter.';
+    if (!/\d/.test(p)) return 'Add a number.';
+    if (user && p.toLowerCase().includes(user.toLowerCase())) return 'Password must not contain your username.';
+    return '';
+}
+
+function passwordStrength(p) {
+    p = p || '';
+    let score = 0;
+    if (p.length >= 8) score++;
+    if (p.length >= 12) score++;
+    if (/[a-z]/.test(p) && /[A-Z]/.test(p)) score++;
+    if (/\d/.test(p)) score++;
+    if (/[^A-Za-z0-9]/.test(p)) score++;
+    return Math.min(score, 4); // 0..4
+}
+
+function updatePasswordUI() {
+    const p = document.getElementById('signPass')?.value || '';
+    // requirement checklist
+    const reqs = { len: p.length >= 8, upper: /[A-Z]/.test(p), lower: /[a-z]/.test(p), digit: /\d/.test(p) };
+    document.querySelectorAll('#pwReqs li').forEach(li => {
+        li.classList.toggle('met', !!reqs[li.dataset.req]);
+    });
+    // strength bar
+    const bar = document.getElementById('pwBar');
+    const label = document.getElementById('pwStrength');
+    if (!bar) return;
+    if (!p) { bar.style.width = '0'; if (label) label.innerText = ''; return; }
+    const s = passwordStrength(p);
+    const map = [
+        { w: '25%', c: '#ff8a80', t: 'Weak' },
+        { w: '45%', c: '#fbbf24', t: 'Fair' },
+        { w: '70%', c: '#a8c7fa', t: 'Good' },
+        { w: '100%', c: '#4ade80', t: 'Strong' },
+    ][Math.max(0, s - 1)];
+    bar.style.width = map.w;
+    bar.style.background = map.c;
+    if (label) { label.innerText = 'Password strength: ' + map.t; label.style.color = map.c; }
+}
+
 async function performLogin() {
-    const u = document.getElementById('loginUser').value;
-    const p = document.getElementById('loginPass').value;
+    clearError('loginError');
+    const u = (document.getElementById('loginUser').value || '').trim();
+    const p = document.getElementById('loginPass').value || '';
+    if (!u || !p) { showError('loginError', 'Please enter your username and password.'); return; }
     try {
         const res = await fetch(`${API_URL}/api/v1/auth/login`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -605,50 +873,93 @@ async function performLogin() {
             localStorage.setItem('c_tutor_user', JSON.stringify(currentUser));
             routeUser();
         } else {
-            document.getElementById('loginError').innerText = result.detail;
-            document.getElementById('loginError').style.display = 'block';
+            showError('loginError', result.detail || 'Incorrect username or password.');
         }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); showError('loginError', 'Connection failed. Please try again.'); }
 }
 
 async function performSignup() {
-    // Safe selection: use ?.value to prevent crash if element is missing
+    ['err-name', 'err-email', 'err-username', 'err-password', 'err-password2', 'signupError'].forEach(clearError);
+    const name = (document.getElementById('signName')?.value || '').trim();
+    const email = (document.getElementById('signEmail')?.value || '').trim();
+    const username = (document.getElementById('signUser')?.value || '').trim();
+    const password = document.getElementById('signPass')?.value || '';
+    const password2 = document.getElementById('signPass2')?.value || '';
+
+    // Client-side validation (server re-checks authoritatively)
+    let ok = true;
+    ok = setFieldState('signName', 'err-name', vName(name)) && ok;
+    ok = setFieldState('signEmail', 'err-email', vEmail(email)) && ok;
+    ok = setFieldState('signUser', 'err-username', vUser(username)) && ok;
+    ok = setFieldState('signPass', 'err-password', vPass(password, username, email)) && ok;
+    ok = setFieldState('signPass2', 'err-password2', password2 === password ? '' : 'Passwords do not match.') && ok;
+    if (!ok) return;
+
     const data = {
-        name: document.getElementById('signName')?.value || "",
-        email: document.getElementById('signEmail')?.value || "",
-        username: document.getElementById('signUser')?.value || "",
-        password: document.getElementById('signPass')?.value || "",
-        // Optional fields with safety check
+        name, email, username, password,
         university: document.getElementById('signUni')?.value || "",
         department: document.getElementById('signDept')?.value || "",
         interest: document.getElementById('signInterest')?.value || ""
     };
-
-    // Validation
-    if (!data.username || !data.password || !data.name) {
-        showError('signupError', "Name, Username, and Password are required.");
-        return;
-    }
-
+    const btn = document.querySelector('#signupForm .auth-btn');
+    if (btn) { btn.disabled = true; btn.innerText = 'Creating account…'; }
     try {
         const res = await fetch(`${API_URL}/api/v1/auth/signup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-
+        const result = await res.json().catch(() => ({}));
         if (res.ok) {
-            document.getElementById('signupSuccess').innerText = "Account created! Please login.";
-            document.getElementById('signupSuccess').style.display = 'block';
-            setTimeout(() => toggleAuth('login'), 1500);
+            const s = document.getElementById('signupSuccess');
+            s.innerText = "✓ Account created! Redirecting to log in…";
+            s.style.display = 'block';
+            setTimeout(() => toggleAuth('login'), 1400);
         } else {
-            const result = await res.json();
-            showError('signupError', result.detail || "Signup failed");
+            // Map server field errors back onto the right field when possible
+            const detail = result.detail || 'Signup failed. Please try again.';
+            const dl = detail.toLowerCase();
+            if (dl.includes('email')) setFieldState('signEmail', 'err-email', detail);
+            else if (dl.includes('username')) setFieldState('signUser', 'err-username', detail);
+            else if (dl.includes('password')) setFieldState('signPass', 'err-password', detail);
+            else showError('signupError', detail);
         }
     } catch (e) {
         console.error(e);
-        showError('signupError', "Connection failed");
+        showError('signupError', "Connection failed. Please try again.");
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerText = 'Create account'; }
     }
+}
+
+// Wire show/hide toggles, live password meter, and live field validation.
+function initAuthUI() {
+    document.querySelectorAll('.pw-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const inp = document.getElementById(btn.dataset.target);
+            if (!inp) return;
+            const show = inp.type === 'password';
+            inp.type = show ? 'text' : 'password';
+            btn.innerText = show ? 'Hide' : 'Show';
+            btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        });
+    });
+    const sp = document.getElementById('signPass');
+    if (sp) sp.addEventListener('input', updatePasswordUI);
+    // Live validation on blur for immediate, friendly feedback
+    const live = [
+        ['signName', 'err-name', v => vName(v)],
+        ['signEmail', 'err-email', v => vEmail(v)],
+        ['signUser', 'err-username', v => vUser(v)],
+    ];
+    live.forEach(([id, err, fn]) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('blur', () => { if (el.value) setFieldState(id, err, fn(el.value)); });
+    });
+    const p2 = document.getElementById('signPass2');
+    if (p2) p2.addEventListener('input', () => {
+        const p1 = document.getElementById('signPass')?.value || '';
+        if (p2.value) setFieldState('signPass2', 'err-password2', p2.value === p1 ? '' : 'Passwords do not match.');
+    });
 }
 
 function routeUser() {
@@ -680,7 +991,33 @@ function initializeApp() {
         if (initialSug) initialSug.style.display = 'none';
         document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
 
-        if (initialMsg.startsWith('[START_TOPIC]')) {
+        if (initialMsg.startsWith('[SOLVE_PRELAB]')) {
+            // Handoff from the classroom: solve a prelab problem in guided mode.
+            const problem = initialMsg.replace('[SOLVE_PRELAB]', '').trim();
+
+            // Show the problem as the user's message
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.innerHTML = `<div class="msg-sender">You</div>` + escapeHTML(problem);
+            document.getElementById('messages').appendChild(userDiv);
+            scrollToBottom();
+
+            // Send the clean problem text → classifies as PROBLEM → guided complex-problem mode
+            setTimeout(() => window.sendMessage(problem, true), 50);
+        } else if (initialMsg.startsWith('[VERIFY_MASTERY]')) {
+            // Handoff from the dashboard: earn mastery by taking the verify quiz.
+            const concept = initialMsg.replace('[VERIFY_MASTERY]', '').trim();
+
+            // Friendly user-facing message
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.innerHTML = `<div class="msg-sender">You</div>Verify my mastery of ${escapeHTML(concept)}`;
+            document.getElementById('messages').appendChild(userDiv);
+            scrollToBottom();
+
+            // Send the exam trigger → runs the comprehensive 3-tier Mastery Exam
+            setTimeout(() => window.sendMessage(`[MASTERY_EXAM] ${concept}`, true), 50);
+        } else if (initialMsg.startsWith('[START_TOPIC]')) {
             // Extract concept and goal
             const match = initialMsg.match(/\[START_TOPIC\]\s+(.*?)\s+\[GOAL\]\s+(.*)/);
             if (match) {
@@ -691,7 +1028,7 @@ function initializeApp() {
                 // Visually insert the user's question so the chat doesn't look empty
                 const userDiv = document.createElement('div');
                 userDiv.className = 'message user';
-                userDiv.innerHTML = `<div class="msg-sender">You</div>` + fakeUserMsg;
+                userDiv.innerHTML = `<div class="msg-sender">You</div>` + escapeHTML(fakeUserMsg);
                 document.getElementById('messages').appendChild(userDiv);
                 scrollToBottom();
             }
@@ -815,11 +1152,16 @@ async function loadSession(sessionId) {
             const div = document.createElement('div');
             div.className = `message ${msg.role}`;
             if (msg.role === 'user') {
-                let text = msg.content.replace(/\n/g, '<br>');
-                if (text.includes('{') || text.includes(';')) text = `<pre><code class="language-c">${text.replace(/</g, '&lt;')}</code></pre>`;
+                // User content is untrusted — always escape before insertion.
+                let text;
+                if (msg.content.includes('{') || msg.content.includes(';')) {
+                    text = `<pre><code class="language-c">${escapeHTML(msg.content)}</code></pre>`;
+                } else {
+                    text = escapeHTML(msg.content).replace(/\n/g, '<br>');
+                }
                 div.innerHTML = `<div class="msg-sender">You</div>` + text;
             } else {
-                div.innerHTML = `<div class="msg-sender bot">Tutor</div>` + marked.parse(msg.content);
+                div.innerHTML = `<div class="msg-sender bot">Tutor</div>` + renderMD(msg.content);
                 renderDiagrams(div);
             }
             msgDiv.appendChild(div);
@@ -860,6 +1202,8 @@ function injectCopyButtons(container) {
 
         // 4. Click Event to Copy Text
         copyBtn.onclick = () => {
+            // Telemetry: log copy-code click (productive struggle metric)
+            logBehavior('copy_code', codeBlock.innerText.length);
             // Copy to clipboard
             navigator.clipboard.writeText(codeBlock.innerText).then(() => {
                 // Success UI Update
@@ -1121,6 +1465,73 @@ let classroomVideoData = []; // Cached video list for reference
 let classroomChatMessages = [];
 let classroomSessionId = null; // Persists across Q&A for the same video
 
+// ── Classroom engagement / checkpoint / prelab state ──
+let crCheckpoints = [];
+let crAnswered = new Set();
+let crActiveCheckpoint = null;
+let crDuration = 0;
+let crWatchedSec = 0;
+let crLastTimeUpdate = null;
+let crHiddenSec = 0;
+let crTabHiddenAt = null;
+let crMcqShownAt = null;
+let crMcqAttempts = 0;
+let crIntentionGiven = false;
+let crPrelabProblems = [];
+let crEndSequenceShown = false;
+let crCoverageTimer = null;
+let crCpSelected = null;
+let crCpConfidence = 3;
+let crPrelabChosen = null;
+
+function crUser() { return currentUser ? currentUser.username : 'anonymous'; }
+
+function crLogEngagement(event, position, detail) {
+    if (!currentUser || !classroomVideoFilename) return;
+    fetch('/api/v1/video/engagement', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+        body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename,
+            event: event, position_sec: position, detail: detail || null })
+    }).catch(() => {});
+}
+
+function crPostCoverage() {
+    if (!currentUser || !classroomVideoFilename || !crDuration) return;
+    fetch('/api/v1/video/coverage', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+        body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename,
+            duration_sec: crDuration, watched_sec: crWatchedSec, hidden_sec: crHiddenSec })
+    }).catch(() => {});
+}
+
+async function crLoadCheckpoints(filename) {
+    try {
+        const r = await fetch(`/api/v1/video/checkpoints/${encodeURIComponent(filename)}`);
+        const d = await r.json();
+        crCheckpoints = d.checkpoints || [];
+        console.log(`[classroom] loaded ${crCheckpoints.length} checkpoints`);
+    } catch (e) { console.error('checkpoint load failed', e); crCheckpoints = []; }
+    try {
+        const r2 = await fetch(`/api/v1/video/prelab/${encodeURIComponent(filename)}`);
+        const d2 = await r2.json();
+        crPrelabProblems = d2.problems || [];
+    } catch (e) { crPrelabProblems = []; }
+}
+
+function crPendingCheckpointAt(time) {
+    for (const cp of crCheckpoints) {
+        if (cp.checkpoint_time <= time && !crAnswered.has(cp.checkpoint_time)) return cp;
+    }
+    return null;
+}
+
+function crEnforceCheckpoints() {
+    if (crActiveCheckpoint) return;
+    const videoEl = document.getElementById('classroomVideo');
+    const cp = crPendingCheckpointAt(videoEl.currentTime);
+    if (cp) { videoEl.pause(); crShowCheckpointModal(cp); }
+}
+
 // Topic → emoji mapping for cards
 const TOPIC_ICONS = {
     'Variables': '📦',
@@ -1220,26 +1631,49 @@ function onClassroomVideoSelect(filename, title) {
     classroomIsPaused = false;
     classroomChatMessages = [];
     classroomSessionId = null; // New video = new session
-    
+
+    // Reset engagement / checkpoint state
+    crCheckpoints = [];
+    crAnswered = new Set();
+    crActiveCheckpoint = null;
+    crWatchedSec = 0;
+    crHiddenSec = 0;
+    crLastTimeUpdate = null;
+    crIntentionGiven = false;
+    crPrelabProblems = [];
+    crEndSequenceShown = false;
+    crDuration = 0;
+
     // Show player, hide picker
     document.getElementById('classroomPicker').style.display = 'none';
     document.getElementById('classroomPlayer').style.display = 'flex';
-    
+
     // Set active title
     const displayTitle = title || filename.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
     document.getElementById('classroomActiveTitle').textContent = displayTitle;
-    
+
     const welcome = document.getElementById('classroomWelcome');
     if (welcome) welcome.style.display = 'flex';
     renderClassroomMessages();
     updateClassroomTimeBadge(0);
     updateClassroomTranscriptStatus('ready');
-    
+
     // Bind video events
     videoEl.onpause = onClassroomPause;
     videoEl.onplay = onClassroomPlay;
     videoEl.ontimeupdate = onClassroomTimeUpdate;
-    
+    videoEl.onseeking = onClassroomSeeking;
+    videoEl.onended = onClassroomEnded;
+    videoEl.onvolumechange = onClassroomVolumeChange;
+    videoEl.onloadeddata = () => { crDuration = videoEl.duration || 0; };
+
+    // Attention + coverage flush
+    if (!crCoverageTimer) crCoverageTimer = setInterval(crPostCoverage, 30000);
+    document.addEventListener('visibilitychange', onClassroomVisibility);
+
+    // Load checkpoints + prelab problems for this video
+    crLoadCheckpoints(filename);
+
     // Load synced transcript panel
     loadTranscriptPanel(filename);
 }
@@ -1262,26 +1696,94 @@ function onClassroomPause() {
     const videoEl = document.getElementById('classroomVideo');
     classroomTimestamp = videoEl.currentTime;
     updateClassroomTimeBadge(classroomTimestamp);
-    
+
     const hint = document.getElementById('classroomPausedHint');
     if (hint) hint.classList.add('visible');
-    
+
+    if (!crActiveCheckpoint) crLogEngagement('pause', classroomTimestamp);
+    crPostCoverage();
+
     setTimeout(() => document.getElementById('classroomChatInput').focus(), 100);
 }
 
 function onClassroomPlay() {
+    const videoEl = document.getElementById('classroomVideo');
+    // SRL gate: capture a learning intention before the first play
+    if (!crIntentionGiven) {
+        videoEl.pause();
+        crShowIntentionModal();
+        return;
+    }
+    // Block resuming while a checkpoint is pending
+    if (crActiveCheckpoint) { videoEl.pause(); return; }
+
     classroomIsPaused = false;
+    crLastTimeUpdate = videoEl.currentTime;
     const hint = document.getElementById('classroomPausedHint');
     if (hint) hint.classList.remove('visible');
+    crLogEngagement('play', videoEl.currentTime);
 }
 
 function onClassroomTimeUpdate() {
-    const currentTime = document.getElementById('classroomVideo').currentTime;
+    const videoEl = document.getElementById('classroomVideo');
+    const currentTime = videoEl.currentTime;
     if (!classroomIsPaused) {
         classroomTimestamp = currentTime;
     }
+    // Accumulate genuine watch time (ignore seek jumps)
+    if (!videoEl.paused && crLastTimeUpdate !== null) {
+        const dt = currentTime - crLastTimeUpdate;
+        if (dt > 0 && dt < 1.5) crWatchedSec += dt;
+    }
+    crLastTimeUpdate = currentTime;
+
+    // Enforce pending checkpoints reached by normal playback
+    crEnforceCheckpoints();
+
+    // Robust end-of-video trigger at ~97% (even if scrubbed)
+    if (crDuration && currentTime >= crDuration * 0.97) crTriggerEndSequence();
+
     // Sync transcript highlight
     syncTranscriptHighlight(currentTime);
+}
+
+function onClassroomSeeking() {
+    const videoEl = document.getElementById('classroomVideo');
+    crLogEngagement('seek', videoEl.currentTime);
+    crEnforceCheckpoints();  // force any un-answered checkpoint before the seek target
+}
+
+function onClassroomEnded() {
+    const videoEl = document.getElementById('classroomVideo');
+    crLogEngagement('ended', videoEl.currentTime);
+    crPostCoverage();
+    crTriggerEndSequence();
+}
+
+function onClassroomVolumeChange() {
+    const videoEl = document.getElementById('classroomVideo');
+    crLogEngagement(videoEl.muted || videoEl.volume === 0 ? 'mute' : 'unmute', videoEl.currentTime);
+}
+
+function onClassroomVisibility() {
+    if (currentView !== 'classroom') return;
+    const videoEl = document.getElementById('classroomVideo');
+    if (document.hidden) {
+        crTabHiddenAt = Date.now();
+        if (videoEl && !videoEl.paused) crLogEngagement('tab_hidden', videoEl.currentTime, 'playing');
+    } else {
+        if (crTabHiddenAt) { crHiddenSec += (Date.now() - crTabHiddenAt) / 1000; crTabHiddenAt = null; }
+        if (videoEl) crLogEngagement('tab_visible', videoEl.currentTime);
+    }
+}
+
+function crTriggerEndSequence() {
+    if (crEndSequenceShown || crActiveCheckpoint) return;
+    const videoEl = document.getElementById('classroomVideo');
+    const pending = crPendingCheckpointAt(crDuration || videoEl.duration || 1e9);
+    if (pending) { videoEl.pause(); crShowCheckpointModal(pending); return; }
+    crEndSequenceShown = true;
+    crShowReflectionModal();
 }
 
 function updateClassroomTimeBadge(seconds) {
@@ -1290,6 +1792,183 @@ function updateClassroomTimeBadge(seconds) {
     const str = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     const badge = document.getElementById('classroomTimeBadge');
     if (badge) badge.textContent = `0:00 – ${str}`;
+}
+
+// ═══ CLASSROOM CHECKPOINT MCQ (non-skippable) ═══
+function crShowCheckpointModal(cp) {
+    crActiveCheckpoint = cp;
+    crMcqShownAt = Date.now();
+    crMcqAttempts = 0;
+    crCpSelected = null;
+    crCpConfidence = 3;
+
+    const body = document.getElementById('crCheckpointBody');
+    const mins = Math.floor(cp.checkpoint_time / 60);
+    const optsHtml = cp.options.map((opt, i) =>
+        `<button class="cp-option" data-index="${i}" onclick="crSelectOption(${i})">
+            <span class="cp-letter">${String.fromCharCode(65 + i)}</span> ${escapeHtmlCr(opt)}
+         </button>`).join('');
+
+    body.innerHTML = `
+        <div class="cp-badge">⏸️ Checkpoint · ${mins} min</div>
+        <p class="cp-instruction">Answer to continue — you can't skip this.</p>
+        <div class="cp-confidence"><span>How confident are you?</span>
+            <div class="cp-conf-btns">
+                ${[1,2,3,4,5].map(n => `<button class="cp-conf" data-c="${n}" onclick="crSetConfidence(${n})">${n}</button>`).join('')}
+            </div></div>
+        <div class="cp-question">${escapeHtmlCr(cp.question)}</div>
+        <div class="cp-options">${optsHtml}</div>
+        <div class="cp-feedback" id="crCpFeedback"></div>
+        <button class="cp-submit" id="crCpSubmit" onclick="crSubmitCheckpoint()" disabled>Submit Answer</button>`;
+    document.getElementById('crCheckpointModal').classList.add('visible');
+}
+
+function crSelectOption(i) {
+    crCpSelected = i;
+    document.querySelectorAll('#crCheckpointModal .cp-option').forEach(b =>
+        b.classList.toggle('selected', parseInt(b.dataset.index) === i));
+    document.getElementById('crCpSubmit').disabled = false;
+}
+
+function crSetConfidence(n) {
+    crCpConfidence = n;
+    document.querySelectorAll('#crCheckpointModal .cp-conf').forEach(b =>
+        b.classList.toggle('selected', parseInt(b.dataset.c) === n));
+}
+
+async function crSubmitCheckpoint() {
+    if (crCpSelected === null || !crActiveCheckpoint) return;
+    crMcqAttempts += 1;
+    const submitBtn = document.getElementById('crCpSubmit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Checking...';
+    const tta = crMcqShownAt ? (Date.now() - crMcqShownAt) / 1000 : null;
+    try {
+        const resp = await fetch('/api/v1/video/checkpoint/answer', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: crUser(), video_filename: classroomVideoFilename,
+                checkpoint_time: crActiveCheckpoint.checkpoint_time, selected_index: crCpSelected,
+                confidence: crCpConfidence, time_to_answer_sec: tta, attempts: crMcqAttempts })
+        });
+        const data = await resp.json();
+        const fb = document.getElementById('crCpFeedback');
+        if (data.is_correct) {
+            fb.innerHTML = `<div class="cp-correct">✅ Correct! ${escapeHtmlCr(data.explanation || '')}</div>`;
+            crAnswered.add(crActiveCheckpoint.checkpoint_time);
+            submitBtn.textContent = 'Continue ▶';
+            submitBtn.disabled = false;
+            submitBtn.onclick = crCloseCheckpointAndResume;
+        } else {
+            fb.innerHTML = `<div class="cp-wrong">❌ Not quite — review and try again.</div>`;
+            submitBtn.textContent = 'Submit Answer';
+            submitBtn.disabled = true;
+            crCpSelected = null;
+            document.querySelectorAll('#crCheckpointModal .cp-option').forEach(b => b.classList.remove('selected'));
+        }
+    } catch (e) {
+        console.error('checkpoint submit failed', e);
+        submitBtn.textContent = 'Submit Answer'; submitBtn.disabled = false;
+    }
+}
+
+function crCloseCheckpointAndResume() {
+    document.getElementById('crCheckpointModal').classList.remove('visible');
+    crActiveCheckpoint = null;
+    const videoEl = document.getElementById('classroomVideo');
+    crLastTimeUpdate = videoEl.currentTime;
+    const nearEnd = crDuration && videoEl.currentTime >= crDuration * 0.97;
+    document.getElementById('crCpSubmit') && (document.getElementById('crCpSubmit').onclick = crSubmitCheckpoint);
+    if (videoEl.ended || nearEnd) {
+        crEndSequenceShown = true;
+        crShowReflectionModal();
+    } else {
+        videoEl.play().catch(() => {});
+    }
+}
+
+// ═══ CLASSROOM SRL: intention (pre) + reflection (post) ═══
+function crShowIntentionModal() {
+    const modal = document.getElementById('crIntentionModal');
+    if (!modal) { crIntentionGiven = true; return; }
+    modal.classList.add('visible');
+    setTimeout(() => { const i = document.getElementById('crIntentionInput'); if (i) i.focus(); }, 100);
+}
+
+function crSubmitIntention() {
+    const val = (document.getElementById('crIntentionInput').value || '').trim();
+    if (currentUser && val) {
+        fetch('/api/v1/video/reflection', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename,
+                phase: 'intention', prompt: 'What do you want to learn from this video?', response: val }) }).catch(() => {});
+    }
+    crIntentionGiven = true;
+    document.getElementById('crIntentionModal').classList.remove('visible');
+    document.getElementById('classroomVideo').play().catch(() => {});
+}
+
+function crSkipIntention() {
+    crIntentionGiven = true;
+    document.getElementById('crIntentionModal').classList.remove('visible');
+    document.getElementById('classroomVideo').play().catch(() => {});
+}
+
+function crShowReflectionModal() {
+    const modal = document.getElementById('crReflectionModal');
+    if (!modal) { crShowPrelabModal(); return; }
+    modal.classList.add('visible');
+    setTimeout(() => { const i = document.getElementById('crReflectionInput'); if (i) i.focus(); }, 100);
+}
+
+function crSubmitReflection() {
+    const val = (document.getElementById('crReflectionInput').value || '').trim();
+    if (currentUser && val) {
+        fetch('/api/v1/video/reflection', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename,
+                phase: 'reflection', prompt: 'What was your key takeaway?', response: val }) }).catch(() => {});
+    }
+    document.getElementById('crReflectionModal').classList.remove('visible');
+    crShowPrelabModal();
+}
+
+// ═══ CLASSROOM END-OF-VIDEO COMPLEX PROBLEM (PRELAB) ═══
+function crShowPrelabModal() {
+    if (!crPrelabProblems || crPrelabProblems.length === 0) return;
+    const modal = document.getElementById('crPrelabModal');
+    const body = document.getElementById('crPrelabBody');
+    if (!modal || !body) return;
+    const idx = Math.floor(Math.random() * crPrelabProblems.length);
+    crPrelabChosen = crPrelabProblems[idx];
+    body.innerHTML = `
+        <p class="cp-instruction">You've finished the lecture — ready to apply it? Try this challenge.</p>
+        <div class="cp-question">${escapeHtmlCr(crPrelabChosen)}</div>
+        <div class="prelab-actions">
+            <button class="cp-skip" onclick="crDismissPrelab()">Maybe later</button>
+            <button class="cp-submit-inline" onclick="crSolveInSage()">🚀 Solve in SAGE</button>
+        </div>
+        ${crPrelabProblems.length > 1 ? `<button class="prelab-shuffle" onclick="crShowPrelabModal()">↻ Show a different problem</button>` : ''}`;
+    modal.classList.add('visible');
+}
+
+function crDismissPrelab() {
+    document.getElementById('crPrelabModal').classList.remove('visible');
+}
+
+function crSolveInSage() {
+    const problem = crPrelabChosen;
+    if (!problem) return;
+    if (currentUser) {
+        fetch('/api/v1/video/prelab-start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+            body: JSON.stringify({ username: currentUser.username, video_filename: classroomVideoFilename, problem: problem }) }).catch(() => {});
+    }
+    // Switch to the chat view and send the problem as a guided complex problem
+    document.getElementById('crPrelabModal').classList.remove('visible');
+    switchToChat();
+    const userDiv = document.createElement('div');
+    userDiv.className = 'message user';
+    userDiv.innerHTML = `<div class="msg-sender">You</div>` + problem;
+    document.getElementById('messages').appendChild(userDiv);
+    scrollToBottom();
+    setTimeout(() => window.sendMessage(problem, true), 50);
 }
 
 // ═══ SYNCED TRANSCRIPT PANEL ═══
@@ -1431,9 +2110,15 @@ function toggleTranscriptPanel() {
 (function() {
     let scrollTimeout;
     document.addEventListener('DOMContentLoaded', () => {
+        // Telemetry: capture dwell time on the student's first keystroke after an AI reply
+        const userInputEl = document.getElementById('userInput');
+        if (userInputEl) {
+            userInputEl.addEventListener('input', captureDwellOnFirstKeystroke);
+        }
+
         const segContainer = document.getElementById('transcriptSegments');
         if (!segContainer) return;
-        
+
         segContainer.addEventListener('scroll', () => {
             // User is manually scrolling — pause auto-scroll
             transcriptAutoScroll = false;
@@ -1661,12 +2346,13 @@ function renderMarkdownCr(text) {
     if (!text) return '';
     if (typeof marked !== 'undefined') {
         marked.setOptions({ breaks: true, gfm: true });
-        return marked.parse(text);
+        return renderMD(text);
     }
-    return text.replace(/\n/g, '<br>');
+    return escapeHTML(text).replace(/\n/g, '<br>');
 }
 
 // Init
+initAuthUI();
 const stored = localStorage.getItem('c_tutor_user');
 if (stored) { currentUser = JSON.parse(stored); routeUser(); }
 
@@ -1750,7 +2436,7 @@ function openSolveModal(topic, rawQuestion) {
     document.getElementById('solveModalTopic').innerText = topic;
     
     // Render the question using Markdown safely
-    const questionHtml = rawQuestion ? marked.parse(rawQuestion) : "No question text available.";
+    const questionHtml = rawQuestion ? renderMD(rawQuestion) : "No question text available.";
     document.getElementById('solveModalQuestion').innerHTML = questionHtml;
     
     // Highlight any code blocks in the question

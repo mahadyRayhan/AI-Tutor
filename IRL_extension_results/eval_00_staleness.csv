@@ -1,0 +1,10 @@
+result,collected,status,invalidated_by,mtime_flag
+eval_02_new_responses.json,2026-07-30 02:41,current,,
+eval_03_winrate_faithful.csv,2026-07-26 13:39,STALE,2026-07-27 22:38; 2026-07-28 00:25,
+eval_03_winrate_debiased.csv,2026-07-26 13:41,STALE,2026-07-27 22:38; 2026-07-28 00:25,
+eval_04_sessions.json,2026-07-30 17:45,current,,
+eval_05_archetypes.csv,2026-07-30 18:16,current,,
+eval_05_sweep.csv,2026-07-30 18:16,current,,
+eval_05_robustness.csv,2026-07-30 18:17,current,,
+eval_06_responses.json,2026-07-28 00:38,current,,unlogged edit: cot_rag_agent.py
+eval_06_judge_tier.csv,2026-07-27 22:58,STALE,2026-07-28 00:25,

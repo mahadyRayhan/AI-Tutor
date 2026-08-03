@@ -628,3 +628,95 @@ body {
         display: none;
     }
 }
+
+/* ═══ CLASSROOM CHECKPOINT / SRL MODALS ═══ */
+.cp-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+.cp-modal-overlay.visible { display: flex; }
+
+.cp-modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: var(--shadow-soft);
+    max-width: 560px;
+    width: 100%;
+    padding: 28px;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: cpPop 0.2s ease-out;
+}
+@keyframes cpPop { from { transform: scale(0.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.cp-title { font-size: 1.2rem; margin: 0 0 12px; color: var(--text-primary); font-weight: 600; }
+.cp-badge {
+    display: inline-block; background: var(--accent-glow); color: var(--accent-color);
+    padding: 3px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; margin-bottom: 8px;
+}
+.cp-instruction { color: var(--text-secondary); font-size: 0.85rem; margin: 4px 0 14px; }
+.cp-question {
+    font-size: 1.02rem; font-weight: 500; color: var(--text-primary);
+    line-height: 1.5; margin: 14px 0; padding: 14px; background: var(--bg-tertiary);
+    border-radius: 10px; border-left: 3px solid var(--accent-color);
+}
+.cp-options { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.cp-option {
+    display: flex; align-items: center; gap: 10px; text-align: left;
+    background: var(--bg-tertiary); border: 1px solid var(--border-color);
+    color: var(--text-primary); padding: 12px 14px; border-radius: 10px;
+    cursor: pointer; font-size: 0.9rem; font-family: inherit; transition: all 0.15s;
+}
+.cp-option:hover { border-color: var(--border-hover); }
+.cp-option.selected { border-color: var(--accent-color); background: var(--accent-glow); }
+.cp-letter {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 50%; background: var(--bg-secondary);
+    font-weight: 700; font-size: 0.8rem; flex-shrink: 0; color: var(--accent-color);
+}
+.cp-confidence { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    font-size: 0.82rem; color: var(--text-secondary); margin: 8px 0; }
+.cp-conf-btns { display: flex; gap: 6px; }
+.cp-conf {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border-color);
+    background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; font-weight: 600;
+}
+.cp-conf.selected { border-color: var(--accent-color); background: var(--accent-glow); color: var(--accent-color); }
+.cp-feedback { margin: 10px 0; font-size: 0.88rem; }
+.cp-correct { color: #34d399; padding: 10px; background: rgba(52,211,153,0.08); border-radius: 8px; }
+.cp-wrong { color: #f87171; padding: 10px; background: rgba(248,113,113,0.08); border-radius: 8px; }
+.cp-submit, .cp-submit-inline {
+    width: 100%; margin-top: 10px; background: var(--accent-gradient); color: #0f1117;
+    border: none; padding: 12px; border-radius: 10px; font-weight: 700; font-size: 0.92rem;
+    cursor: pointer; font-family: inherit;
+}
+.cp-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.cp-textarea {
+    width: 100%; box-sizing: border-box; background: var(--bg-tertiary);
+    border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-primary);
+    padding: 12px; font-family: inherit; font-size: 0.9rem; resize: vertical; margin-top: 10px;
+}
+.cp-modal-actions { display: flex; gap: 10px; margin-top: 14px; }
+.cp-modal-actions .cp-submit-inline { flex: 1; margin-top: 0; }
+.cp-skip {
+    background: var(--bg-tertiary); border: 1px solid var(--border-color);
+    color: var(--text-secondary); padding: 12px 20px; border-radius: 10px; cursor: pointer; font-family: inherit;
+}
+
+/* End-of-video prelab complex-problem popup */
+.prelab-actions { display: flex; gap: 10px; margin-top: 16px; }
+.prelab-actions .cp-submit-inline { flex: 1; margin-top: 0; }
+.prelab-shuffle {
+    width: 100%; margin-top: 10px; background: transparent; border: 1px dashed var(--border-color);
+    color: var(--text-secondary); padding: 8px; border-radius: 8px; cursor: pointer;
+    font-family: inherit; font-size: 0.82rem;
+}
+.prelab-shuffle:hover { border-color: var(--border-hover); color: var(--text-primary); }

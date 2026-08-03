@@ -38,10 +38,12 @@ class ExaminerAgent(BaseAgent):
         # =========================================================
         if current_session_state.get("awaiting_confidence_rating"):
             # Turn off the confidence flag, turn ON the grading flag
+            import time as _time
             history_manager.update_session_state(state.user_id, state.session_id, {
                 "awaiting_confidence_rating": False,
                 "awaiting_quiz_answer": True,
-                "student_confidence": state.query # Save their rating for future analytics
+                "student_confidence": state.query, # Save their rating for future analytics
+                "quiz_shown_at": _time.time()  # telemetry: start time-to-answer clock
             })
             
             # Retrieve the question we stored earlier
@@ -253,6 +255,37 @@ class ExaminerAgent(BaseAgent):
 
         p_mastery = bkt.update(state.user_id, check_topic, result['is_correct'], evidence_type="quiz")
 
+        # --- Telemetry: JOL (confidence vs actual outcome) + item-level quiz record ---
+        try:
+            from app.core import telemetry
+            import time as _time
+            telemetry.log_jol(state.user_id, check_topic, confidence_score,
+                              result['is_correct'])
+            _shown_at = session_state.get("quiz_shown_at")
+            _tta = round(_time.time() - _shown_at, 2) if _shown_at else None
+            telemetry.log_quiz_item(
+                username=state.user_id,
+                session_id=state.session_id,
+                concept=check_topic,
+                question_text=session_state.get("pending_quiz_question", ""),
+                correct_answer=correct_text or "",
+                student_answer=state.query,
+                is_correct=result['is_correct'],
+                confidence_1_5=confidence_score,
+                time_to_answer_sec=_tta,
+                is_verification=is_verification_quiz,
+                verification_q_num=verification_q_num,
+            )
+            # SRL signal: distinguish "gave up / skipped" from an honest wrong attempt
+            _surrender = ["i don't know", "idk", "skip", "no idea", "i dont know", "no clue", "pass"]
+            if state.query.lower().strip().rstrip('.!') in _surrender:
+                telemetry.log_event(state.user_id, "quiz_skip", {
+                    "concept": check_topic, "confidence": confidence_score,
+                    "is_verification": is_verification_quiz,
+                }, session_id=state.session_id)
+        except Exception as e:
+            self.logger.warning(f"[Examiner] JOL telemetry failed: {e}")
+
         # If this is an intermediate verification question (Q1 or Q2) and correct,
         # ask the next question instead of showing the full grading response.
         if is_verification_quiz and result['is_correct'] and verification_q_num < 3:
@@ -262,6 +295,7 @@ class ExaminerAgent(BaseAgent):
                 updated_asked = list(asked_so_far)
                 if next_q['q'] not in updated_asked:
                     updated_asked.append(next_q['q'])
+                import time as _time
                 history_manager.update_session_state(state.user_id, state.session_id, {
                     "awaiting_quiz_answer": True,
                     "pending_quiz_question": next_q['q'],
@@ -270,6 +304,7 @@ class ExaminerAgent(BaseAgent):
                     "asked_quiz_questions": updated_asked,
                     "is_verification_quiz": True,
                     "verification_q_num": verification_q_num + 1,
+                    "quiz_shown_at": _time.time(),  # telemetry: start time-to-answer clock
                 })
                 msg = (f"✅ Correct! ({verification_q_num}/3 verified)\n\n"
                        f"**Question {verification_q_num + 1} of 3:**\n\n{next_q['q']}\n\n"
@@ -286,8 +321,11 @@ class ExaminerAgent(BaseAgent):
 
         if result['is_correct']:
             knowledge_manager.resolve_misconception(state.user_id, check_topic)
-            # BKT-gated mastery: mark known only when P(L) crosses 0.95 threshold
-            if bkt.is_mastered(state.user_id, check_topic):
+            # BKT is the sole mastery authority: mark known only when P(L) >= 0.95 across
+            # tiers. Capture the decision so the message can't claim mastery the dashboard
+            # (BKT) disagrees with — Module-B F3-05/F4-01/F4-04.
+            _bkt_mastered = bkt.is_mastered(state.user_id, check_topic)
+            if _bkt_mastered:
                 knowledge_manager.mark_concept_as_known(state.user_id, check_topic)
                 self.logger.info(f"🏆 [BKT] Mastery unlocked: '{check_topic}' P(L)={p_mastery:.3f}")
             else:
@@ -308,16 +346,24 @@ class ExaminerAgent(BaseAgent):
                     msg += "📊 *Knowledge credibility verified — 3 evidence points credited to your mastery record.*\n\n"
             else:
                 msg = f"✅ **{result['feedback']}**\n\n"
-                
-            msg += f"You've officially mastered **{check_topic}**.\n\n"
-            msg += f"🧠 **Feynman Challenge:** To truly lock this into your long-term memory, try explaining **{check_topic}** back to me in your own words, as if I were a 5-year-old!"
-            
-            suggestions = ["I'll try explaining it!", "What should I learn next?"]
+
+            # Only claim mastery when BKT agrees; otherwise affirm the correct answer and
+            # the real progress, and point to the next step (positive feedback + next step).
+            if _bkt_mastered:
+                msg += f"You've officially mastered **{check_topic}**! 🎉\n\n"
+                msg += f"🧠 **Feynman Challenge:** To truly lock this into your long-term memory, try explaining **{check_topic}** back to me in your own words, as if I were a 5-year-old!"
+                suggestions = ["I'll try explaining it!", "What should I learn next?"]
+            else:
+                msg += f"Nice — that's correct! You're making solid progress on **{check_topic}**. A little more practice and you'll have it fully mastered.\n\n"
+                msg += f"Want to keep going and lock it in?"
+                suggestions = ["Try another question", "What should I learn next?"]
+
             if goals_stack:
                 last_goal = goals_stack[-1]
                 msg += f"\n\nOr, if you prefer, shall we go back to your goal: **\"{last_goal}\"**?"
                 suggestions.append(f"Back to: {last_goal}")
-            
+
+            msg += bkt.mastery_ledger(state.user_id, check_topic)  # F2-05: show tier progress
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": suggestions, "intent": "EVALUATION", "entities": state.entities}}
         else:
             # =========================================================
@@ -338,16 +384,17 @@ class ExaminerAgent(BaseAgent):
                 msg = f"❌ **{result['feedback']}**\n\n"
 
             suggestions = [
-                f"Explain {check_topic}",   
+                f"Explain {check_topic}",
                 "Try another question"
             ]
-            
+
+            msg += bkt.mastery_ledger(state.user_id, check_topic)  # F2-05: show tier progress
             yield {"type": "complete", "data": {
-                "answer": msg, 
-                "sources": [], 
-                "suggestions": suggestions, 
+                "answer": msg,
+                "sources": [],
+                "suggestions": suggestions,
                 "intent": "EVALUATION",
-                "entities": state.entities 
+                "entities": state.entities
             }}
 
     async def _smart_grade_answer(self, student_answer: str, vec_google, vec_local, correct_text: str) -> dict:

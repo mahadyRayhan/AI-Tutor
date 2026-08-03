@@ -2157,3 +2157,48 @@ body.hide-resources .resources-section * {
     font-size: 0.75rem;
     padding: 4px 12px;
 }
+/* ═══ CLASSROOM CHECKPOINT / SRL / PRELAB MODALS ═══ */
+.cp-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(4px);
+    display: none; align-items: center; justify-content: center; z-index: 3000; padding: 20px; }
+.cp-modal-overlay.visible { display: flex; }
+.cp-modal { background: #161923; border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5); max-width: 560px; width: 100%; padding: 28px;
+    max-height: 90vh; overflow-y: auto; color: #e8eaed; animation: cpPop 0.2s ease-out; }
+@keyframes cpPop { from { transform: scale(0.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.cp-title { font-size: 1.2rem; margin: 0 0 12px; font-weight: 600; }
+.cp-badge { display: inline-block; background: rgba(138,180,248,0.15); color: #8ab4f8; padding: 3px 12px;
+    border-radius: 999px; font-size: 0.78rem; font-weight: 600; margin-bottom: 8px; }
+.cp-instruction { color: #9aa0a6; font-size: 0.85rem; margin: 4px 0 14px; }
+.cp-question { font-size: 1.02rem; font-weight: 500; line-height: 1.5; margin: 14px 0; padding: 14px;
+    background: #1c1f2e; border-radius: 10px; border-left: 3px solid #8ab4f8; }
+.cp-options { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.cp-option { display: flex; align-items: center; gap: 10px; text-align: left; background: #1c1f2e;
+    border: 1px solid rgba(255,255,255,0.08); color: #e8eaed; padding: 12px 14px; border-radius: 10px;
+    cursor: pointer; font-size: 0.9rem; font-family: inherit; transition: all 0.15s; }
+.cp-option:hover { border-color: rgba(138,180,248,0.4); }
+.cp-option.selected { border-color: #8ab4f8; background: rgba(138,180,248,0.12); }
+.cp-letter { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border-radius: 50%; background: #161923; font-weight: 700; font-size: 0.8rem; flex-shrink: 0; color: #8ab4f8; }
+.cp-confidence { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    font-size: 0.82rem; color: #9aa0a6; margin: 8px 0; }
+.cp-conf-btns { display: flex; gap: 6px; }
+.cp-conf { width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);
+    background: #1c1f2e; color: #9aa0a6; cursor: pointer; font-weight: 600; }
+.cp-conf.selected { border-color: #8ab4f8; background: rgba(138,180,248,0.12); color: #8ab4f8; }
+.cp-feedback { margin: 10px 0; font-size: 0.88rem; }
+.cp-correct { color: #34d399; padding: 10px; background: rgba(52,211,153,0.08); border-radius: 8px; }
+.cp-wrong { color: #f87171; padding: 10px; background: rgba(248,113,113,0.08); border-radius: 8px; }
+.cp-submit, .cp-submit-inline { width: 100%; margin-top: 10px;
+    background: linear-gradient(135deg, #6e9df5, #a78bfa); color: #0f1117; border: none; padding: 12px;
+    border-radius: 10px; font-weight: 700; font-size: 0.92rem; cursor: pointer; font-family: inherit; }
+.cp-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.cp-textarea { width: 100%; box-sizing: border-box; background: #1c1f2e; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px; color: #e8eaed; padding: 12px; font-family: inherit; font-size: 0.9rem; resize: vertical; margin-top: 10px; }
+.cp-modal-actions { display: flex; gap: 10px; margin-top: 14px; }
+.cp-modal-actions .cp-submit-inline { flex: 1; margin-top: 0; }
+.cp-skip { background: #1c1f2e; border: 1px solid rgba(255,255,255,0.08); color: #9aa0a6;
+    padding: 12px 20px; border-radius: 10px; cursor: pointer; font-family: inherit; }
+.prelab-actions { display: flex; gap: 10px; margin-top: 16px; }
+.prelab-actions .cp-submit-inline { flex: 1; margin-top: 0; }
+.prelab-shuffle { width: 100%; margin-top: 10px; background: transparent; border: 1px dashed rgba(255,255,255,0.08);
+    color: #9aa0a6; padding: 8px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 0.82rem; }

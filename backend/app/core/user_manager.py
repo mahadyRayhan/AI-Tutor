@@ -157,6 +157,16 @@ class UserManager:
 
         return None
 
+    def email_taken(self, email: str) -> bool:
+        """True if an account already uses this email (case-insensitive)."""
+        if not email:
+            return False
+        row = db.fetch_one(
+            "SELECT 1 FROM users WHERE LOWER(email) = LOWER(?)",
+            (email.strip(),)
+        )
+        return row is not None
+
     def create_user(self, username, password, role="student", **kwargs) -> bool:
         exists = db.fetch_one(
             "SELECT 1 FROM users WHERE username = ?",

@@ -1,0 +1,10 @@
+{
+    "Variables": true,
+    "Control Flow": true,
+    "Functions": true,
+    "Arrays": true,
+    "Strings": true,
+    "Pointers": true,
+    "Structures": true,
+    "General": true
+}
