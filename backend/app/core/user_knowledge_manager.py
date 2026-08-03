@@ -1,6 +1,7 @@
 # backend/app/core/user_knowledge_manager.py
 
 import json
+import re
 import logging
 from datetime import datetime
 from typing import List, Dict
@@ -25,16 +26,59 @@ class UserKnowledgeManager:
         "potato", "anyway", "accidental", "send", "skip"
     }
 
+    # Filler tokens dropped before comparing concept names.
+    _CONCEPT_FILLER = {
+        "and", "the", "of", "to", "a", "an", "in", "with", "for",
+        "understanding", "concept", "concepts", "basic", "basics",
+        "solved", "intro", "introduction", "overview",
+    }
+
+    @classmethod
+    def _normalize_concept(cls, s: str) -> frozenset:
+        """Normalize a concept name to a set of singularized content tokens.
+        'Arrays' → {'array'}, 'Variables and Types' → {'variable','type'}."""
+        s = re.sub(r"[^a-z0-9 ]", " ", (s or "").lower())
+        toks = []
+        for t in s.split():
+            if t in cls._CONCEPT_FILLER:
+                continue
+            # crude singularization (arrays→array, pointers→pointer), guard short words
+            if t.endswith("s") and len(t) > 3:
+                t = t[:-1]
+            toks.append(t)
+        return frozenset(toks)
+
+    @classmethod
+    def _concepts_match(cls, a: str, b: str) -> bool:
+        """Token-set, plural-aware concept equality. Prevents loose-substring
+        false positives ('char' vs 'character') while still recognizing a stored
+        'Variables' as satisfying a graph prereq named 'Variables and Types'."""
+        ta, tb = cls._normalize_concept(a), cls._normalize_concept(b)
+        if not ta or not tb:
+            return False
+        # Exact set match, or one concept's tokens fully contain the other's
+        # (handles 'Variables' ⊆ 'Variables and Types').
+        return ta == tb or ta.issubset(tb) or tb.issubset(ta)
+
     def get_known_concepts(self, username: str) -> List[str]:
-        """Returns list of concepts the user has mastered, ordered by timestamp, filtered."""
+        """Returns list of concepts the user has mastered, ordered by timestamp, filtered.
+
+        Only BKT-certified concepts should be in this table (see mark_concept_as_known
+        call sites — all are gated on bkt.is_mastered). We additionally drop any legacy
+        'Solved: X' pseudo-rows so they can't fuzzy-match a real concept and trigger a
+        spurious "you already mastered X" message."""
         rows = db.fetch_all(
             "SELECT concept FROM user_knowledge WHERE username = ? ORDER BY timestamp ASC",
             (username,)
         )
         all_concepts = [r['concept'] for r in rows]
 
-        # Filter out any concepts that are now in the garbage blocklist
-        valid = [c for c in all_concepts if c.lower() not in self._garbage_concepts and len(c) >= 3]
+        valid = [
+            c for c in all_concepts
+            if c.lower() not in self._garbage_concepts
+            and len(c) >= 3
+            and not c.lower().startswith("solved:")
+        ]
         return valid
 
     def clear_concepts(self, username: str):
@@ -126,13 +170,13 @@ class UserKnowledgeManager:
             return False
 
         rows = db.fetch_all(
-            "SELECT concept FROM user_knowledge WHERE username=? AND ever_certified=1",
+            "SELECT concept FROM user_knowledge "
+            "WHERE username=? AND ever_certified=1 AND concept NOT LIKE 'Solved:%'",
             (username,)
         )
-        return any(
-            concept_lower in r['concept'].lower() or r['concept'].lower() in concept_lower
-            for r in rows
-        )
+        # Token-set match (not loose substring): 'char' no longer matches 'character',
+        # but a stored 'Variables' still satisfies a prereq named 'Variables and Types'.
+        return any(self._concepts_match(concept, r['concept']) for r in rows)
     
     def set_goal(self, username: str, goal: str):
         """Upsert user goal."""
@@ -241,6 +285,12 @@ class UserKnowledgeManager:
         db.execute("UPDATE users SET learning_profile = ? WHERE username = ?",
                    (json.dumps(profile), username))
         logger.info(f"🔴 [Misconception] EMA updated for '{concept}' — {username} (m_score={new_score:.3f})")
+        try:
+            from app.core import telemetry
+            telemetry.log_misconception(username, concept, "stored",
+                                        detail=student_answer[:200], ema_value=new_score)
+        except Exception:
+            pass
 
     def resolve_misconception(self, username: str, concept: str):
         """Decays the EMA misconception score toward zero on a correct answer.
@@ -265,6 +315,14 @@ class UserKnowledgeManager:
                     logger.info(f"✅ [Misconception] Resolved for '{concept}' — {username} (m_score={decayed:.3f})")
                 else:
                     logger.info(f"🟡 [Misconception] Decaying for '{concept}' — {username} (m_score={decayed:.3f})")
+                try:
+                    from app.core import telemetry
+                    telemetry.log_misconception(
+                        username, concept,
+                        "resolved" if m["resolved"] else "decaying",
+                        ema_value=decayed)
+                except Exception:
+                    pass
         if updated:
             profile["misconceptions"] = misconceptions
             db.execute("UPDATE users SET learning_profile = ? WHERE username = ?",

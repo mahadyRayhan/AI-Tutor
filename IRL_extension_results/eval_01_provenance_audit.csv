@@ -1,0 +1,32 @@
+metric,system,source_file,recomputed,published_table_I,delta
+win_rate,gpt_raw,benchmark_balanced_results.csv (n=49),4.082,4.0,0.082
+win_rate,gpt_tutor,benchmark_balanced_results.csv (n=49),38.776,42.0,-3.224
+win_rate,gemini_raw,benchmark_balanced_results.csv (n=49),0.0,6.0,-6.0
+win_rate,gemini_tutor,benchmark_balanced_results.csv (n=49),10.204,4.0,6.204
+win_rate,ours,benchmark_balanced_results.csv (n=49),46.939,44.0,2.939
+win_rate,gpt_raw,benchmark_5_way_results.csv (n=50),0.0,4.0,-4.0
+win_rate,gpt_tutor,benchmark_5_way_results.csv (n=50),0.0,42.0,-42.0
+win_rate,gemini_raw,benchmark_5_way_results.csv (n=50),0.0,6.0,-6.0
+win_rate,gemini_tutor,benchmark_5_way_results.csv (n=50),0.0,4.0,-4.0
+win_rate,ours,benchmark_5_way_results.csv (n=50),100.0,44.0,56.0
+security_compliance,gpt_raw,benchmark_5_way_results.csv/gpt_raw_sec (Security subset n=10),0.0,20.0,-20.0
+pedagogy_score,gpt_raw,benchmark_5_way_results.csv/gpt_raw_ped (n=50),3.0,3.1,-0.1
+security_compliance,gpt_tutor,benchmark_5_way_results.csv/gpt_tutor_sec (Security subset n=10),0.0,30.0,-30.0
+pedagogy_score,gpt_tutor,benchmark_5_way_results.csv/gpt_tutor_ped (n=50),4.98,4.0,0.98
+security_compliance,gemini_raw,benchmark_5_way_results.csv/gemini_raw_sec (Security subset n=10),0.0,20.0,-20.0
+pedagogy_score,gemini_raw,benchmark_5_way_results.csv/gemini_raw_ped (n=50),3.0,3.4,-0.4
+security_compliance,gemini_tutor,benchmark_5_way_results.csv/gemini_tutor_sec (Security subset n=10),0.0,30.0,-30.0
+pedagogy_score,gemini_tutor,benchmark_5_way_results.csv/gemini_tutor_ped (n=50),4.98,3.8,1.18
+security_compliance,ours,benchmark_5_way_results.csv/ours_sec (Security subset n=10),100.0,90.0,10.0
+pedagogy_score,ours,benchmark_5_way_results.csv/ours_ped (n=50),4.02,2.4,1.62
+code_density,gpt_raw,benchmark_OP_GE_AT_comp.csv + benchmark_tutor_metrics.csv,0.0,10.0,-10.0
+code_density,gpt_tutor,benchmark_OP_GE_AT_comp.csv + benchmark_tutor_metrics.csv,5.331,6.9,-1.569
+code_density,gemini_raw,benchmark_OP_GE_AT_comp.csv + benchmark_tutor_metrics.csv,22.788,23.0,-0.212
+code_density,gemini_tutor,benchmark_OP_GE_AT_comp.csv + benchmark_tutor_metrics.csv,9.411,9.4,0.011
+code_density,ours,benchmark_OP_GE_AT_comp.csv + benchmark_tutor_metrics.csv,13.464,16.4,-2.936
+security_compliance,gpt_raw,"benchmark_base_comp_datagen.json (heuristic is_refusal, n=10)",20.0,20.0,0.0
+security_compliance,gemini_raw,"benchmark_base_comp_datagen.json (heuristic is_refusal, n=10)",60.0,20.0,40.0
+security_compliance,ours,"benchmark_base_comp_datagen.json (heuristic is_refusal, n=10)",90.0,90.0,0.0
+security_compliance,gpt_tutor,"benchmark_tutor_prompt_datagen.json (heuristic is_refusal, n=10)",20.0,30.0,-10.0
+security_compliance,gemini_tutor,"benchmark_tutor_prompt_datagen.json (heuristic is_refusal, n=10)",90.0,30.0,60.0
+security_compliance,ours,"benchmark_tutor_prompt_datagen.json (heuristic is_refusal, n=10)",90.0,90.0,0.0

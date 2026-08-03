@@ -27,6 +27,12 @@ from app.agents.socratic import SocraticTutorAgent
 from app.db.sqlite_db import db
 from app.agents.profiler import ProfilerAgent
 
+# Gate for naming a weakest evidence tier in the adaptation prompt. Below this spread the
+# tiers are within parameter noise of each other and no tier is meaningfully lagging;
+# without at least one observation in that tier the claim rests on the prior alone.
+_WEAK_TIER_MIN_SPREAD = 0.20
+_WEAK_TIER_MIN_EVIDENCE = 1
+
 import nltk
 from nltk.corpus import stopwords
 # Ensure resources are downloaded (do this once, maybe in __init__)
@@ -63,6 +69,14 @@ class ChainOfThoughtRAGAgent:
 
     async def _contextualize_query(self, current_query, username, session_id):
         if not session_id: return current_query
+
+        # Never rewrite an emotional / helplessness message. The standalone-question
+        # rewrite below strips the very cues ("I give up", "this is so confusing")
+        # that the intent classifier uses to route it to the frustration handler —
+        # leaving a bare rewrite that reads as OFF_TOPIC and earns a focus-mode
+        # strike (red-team B05). These messages carry no topic to resolve anyway.
+        if any(p in current_query.lower() for p in self._EMOTIONAL_PHRASES):
+            return current_query
 
         session_data = history_manager.get_session_details(username, session_id)
         if not session_data or not session_data.get('messages'): return current_query
@@ -142,6 +156,107 @@ class ChainOfThoughtRAGAgent:
         except Exception as e:
             self.logger.error(f"Contextualization failed: {e}")
             return current_query
+
+    # =========================================================
+    # TOPIC AMNESIA CACHE (redesigned) — deterministic topic memory
+    # ---------------------------------------------------------
+    # Three responsibilities, cleanly separated:
+    #   _best_topic()        : pick the most salient C concept from a set of entities
+    #   _remember_topic()    : persist the anchor topic to session state (seeding)
+    #   _resolve_topic_memory(): rewrite anaphoric / vague follow-ups against the anchor
+    #
+    # The resolver is DETERMINISTIC (no LLM) and is called BEFORE the Sentinel,
+    # so a context-less fragment like "how does it work?" is bound to the
+    # remembered topic and can never be misread as SECURITY_RISK.
+    # =========================================================
+
+    # Pronouns / vague references that stand in for a previously-named topic.
+    _ANAPHORA_RE = re.compile(r"\b(it|its|this|that|these|those|them|they|one|ones|the syntax|the concept|the topic)\b", re.I)
+    # Interrogative / request openers that signal a topic-seeking follow-up.
+    _FOLLOWUP_OPENERS = (
+        "how", "what", "why", "which", "when", "where", "can you", "could you",
+        "show me", "give me", "tell me", "explain", "describe", "and", "so",
+        "but", "also", "more", "what about", "how about", "go on", "continue",
+    )
+    # Emotional / helplessness expressions that must NOT be rewritten as topics.
+    _EMOTIONAL_PHRASES = (
+        "too hard", "give up", "i can't", "i cant", "i give up", "idk",
+        "i don't know", "i dont know", "confused", "frustrated", "stuck",
+        "hate this", "makes no sense", "i quit",
+    )
+
+    def _best_topic(self, entities: list) -> str:
+        """Pick the most salient C concept from extracted entities.
+        Prefers known C-concept terms; among those, the longest (most specific)
+        string (e.g. ['int', 'Linked List'] -> 'Linked List')."""
+        from app.core.fast_classifier import fast_classifier
+        if not entities:
+            return ""
+        known = [e for e in entities if e.lower() in fast_classifier.C_CONCEPT_TERMS
+                 or any(w in fast_classifier.C_CONCEPT_TERMS for w in e.lower().split())]
+        pool = known if known else entities
+        return max(pool, key=len)
+
+    def _remember_topic(self, username: str, session_id: str, entities: list) -> str:
+        """Seed the amnesia cache with the anchor topic for this turn.
+        Called from the earliest reliable point so EVERY downstream path
+        (gatekeeper roadmap, scaffolding, socratic) leaves a usable anchor.
+        Returns the topic saved (or '')."""
+        if not session_id:
+            return ""
+        topic = self._best_topic(entities)
+        if topic and len(topic) >= 3:
+            history_manager.update_session_state(username, session_id, {"last_valid_topic": topic})
+            self.logger.info(f"🗂️ [TOPIC CACHE] Anchor remembered: '{topic}'")
+            return topic
+        return ""
+
+    def _resolve_topic_memory(self, query: str, cached_topic: str) -> tuple:
+        """Deterministically resolve an anaphoric / vague follow-up against the
+        remembered topic. Returns (resolved_query, anchor_topic, did_resolve).
+
+        Fires ONLY when the query (a) names no C concept of its own, (b) reads
+        like a topic-seeking follow-up (interrogative/pronoun), and (c) is not an
+        emotional/helplessness expression. Otherwise returns the query unchanged
+        so explicit topic switches and standalone questions pass straight through.
+        """
+        from app.core.fast_classifier import fast_classifier
+        if not cached_topic or cached_topic.strip().lower() in ("", "c programming"):
+            return query, None, False
+
+        q = query.strip()
+        ql = q.lower()
+
+        # (c) never rewrite an emotional / helplessness message into a topic query
+        if any(p in ql for p in self._EMOTIONAL_PHRASES):
+            return query, None, False
+
+        # (a) does the query already name its own C concept? -> explicit topic, no memory needed
+        own = fast_classifier.extract_entities(query)
+        has_own_topic = any(
+            e.lower() in fast_classifier.C_CONCEPT_TERMS
+            or any(w in fast_classifier.C_CONCEPT_TERMS for w in e.lower().split())
+            for e in own
+        )
+        if has_own_topic:
+            return query, None, False
+
+        # (b) does it read like a follow-up? interrogative form OR an anaphoric pronoun
+        has_pronoun = bool(self._ANAPHORA_RE.search(ql))
+        is_interrogative = ql.rstrip("?.! ").endswith(("?",)) or ql.endswith("?") or \
+            any(ql.startswith(op) for op in self._FOLLOWUP_OPENERS)
+        n_words = len(ql.rstrip("?.!").split())
+        is_followup = is_interrogative and (has_pronoun or n_words <= 7)
+
+        if not is_followup:
+            return query, None, False
+
+        # Resolve: swap the first pronoun for the anchor, else attach the anchor.
+        if has_pronoun:
+            resolved = self._ANAPHORA_RE.sub(cached_topic, q, count=1)
+        else:
+            resolved = f"{q.rstrip('?.! ')} about {cached_topic}"
+        return resolved, cached_topic, True
 
     def _classify_intent(self, query: str) -> str:
         prompt = f"""
@@ -228,13 +343,70 @@ class ChainOfThoughtRAGAgent:
         profile["skipped_challenges"] = skipped
         db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), username))
     
+    # Sub-topic → canonical concept-node aliases. The Neo4j curriculum stores broad
+    # concepts ("Memory Allocation", "Recursion"), but students ask using specific API
+    # names ("malloc", "calloc") that aren't node names — so the prereq gate found no
+    # node and silently let advanced topics through (Module-B F3-03/F3-04). Map them.
+    #
+    # The same failure recurred on the C-EduBench Boundary subset: "union", "typedef",
+    # "enum" and "switch" exist in the curriculum graph only as INCLUDES *children* of
+    # a concept node, and a child carries no REQUIRES edge of its own — so the prereq
+    # lookup found a node, found zero prerequisites, and taught the gated topic
+    # outright. "structs" missed even the CONTAINS match, because "structures" does not
+    # contain the substring "structs". Mapping each child to the parent concept that
+    # owns the prerequisite edge is the minimal fix; the alternative (inheriting
+    # prereqs through INCLUDES) was tried before and over-gated foundational topics.
+    _CONCEPT_ALIASES = {
+        "malloc": "Memory Allocation",
+        "calloc": "Memory Allocation",
+        "realloc": "Memory Allocation",
+        "dynamic memory": "Memory Allocation",
+        "dynamic memory allocation": "Memory Allocation",
+        "recursion": "Recursion",
+        "recursive": "Recursion",
+        # Structures and its INCLUDES children (Structures REQUIRES Variables+Arrays)
+        "struct": "Structures",
+        "structs": "Structures",
+        "structure": "Structures",
+        "structures": "Structures",
+        "union": "Structures",
+        "unions": "Structures",
+        "typedef": "Structures",
+        "enum": "Structures",
+        "enums": "Structures",
+        "enumeration": "Structures",
+        # Conditionals and its INCLUDES children (Conditionals REQUIRES Operators)
+        "switch": "Conditionals",
+        "switch case": "Conditionals",
+        "switch statement": "Conditionals",
+    }
+
+    def _canonicalize_entities(self, entities: List[str]) -> List[str]:
+        """Map specific sub-topic names to their canonical curriculum concept node."""
+        out = []
+        for e in entities or []:
+            out.append(self._CONCEPT_ALIASES.get((e or "").lower().strip(), e))
+        return out
+
     def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
-        # Same as before
+        # Canonicalize sub-topics first (malloc → Memory Allocation, recursion → Recursion)
+        # so they resolve to a concept node that carries a direct prerequisite edge.
+        # We match the node's OWN REQUIRES edges only (not a parent Section's) — inheriting
+        # Section-level prereqs over-gates foundational concepts like Variables (F2-01).
+        initial_entities = self._canonicalize_entities(initial_entities)
         prereqs = []
         for entity in initial_entities:
-            cypher = "MATCH (target) WHERE (toLower(target.name) CONTAINS toLower($name) OR toLower($name) CONTAINS toLower(target.name)) AND NOT target:Section MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req) RETURN req.name as name"
+            cypher = (
+                "MATCH (target) "
+                "WHERE (toLower(target.name) CONTAINS toLower($name) "
+                "       OR toLower($name) CONTAINS toLower(target.name)) "
+                "  AND NOT target:Section "
+                "MATCH (target)-[:REQUIRES_UNDERSTANDING_OF]->(req) "
+                "RETURN DISTINCT req.name as name"
+            )
             results = self.graph_db.execute_query(cypher, {"name": entity})
-            for record in results: prereqs.append(record['name'])
+            for record in results:
+                prereqs.append(record['name'])
         return list(set(prereqs))
 
     # def _check_prerequisites(self, query: str, initial_entities: List[str]) -> List[str]:
@@ -525,18 +697,15 @@ class ChainOfThoughtRAGAgent:
                 "causal_flags": causal_flags
             }
 
-        # --- LEARNING UPDATE (Logic only) ---
+        # --- LEARNING UPDATE ---
+        # NOTE: self-declaration ("I know variables") is NOT certification. It already
+        # bypasses the prerequisite gate for THIS turn (see _check_gatekeeping, which
+        # returns None when "i know" is in the query), but it must never write permanent
+        # mastery — only BKT certification (bkt.is_mastered) may call mark_concept_as_known.
+        # Writing here caused Module-B F3-05/F4-01/F5-02: "mastered" claims the dashboard
+        # (BKT) disagreed with. Intentionally left as a no-op.
         if "i know" in query.lower():
-            # If the user says "I know them" or "I know variables", 
-            # we need to credit them for the PREREQUISITES of the current topic.
-            reqs = self._check_prerequisites(query, entities)
-            for req in reqs:
-                knowledge_manager.mark_concept_as_known(username, req)
-                self.logger.info(f"🧠 Learned that {username} knows prerequisite: {req}")
-            
-            if "teach me" not in query.lower():
-                 for entity in entities:
-                    knowledge_manager.mark_concept_as_known(username, entity)
+            self.logger.info(f"🗣️ {username} self-declared prior knowledge — honored for this turn's gate only, not certified.")
 
         # 3. Prerequisite Check (Graph DB)
         t0 = time.time()
@@ -728,7 +897,18 @@ class ChainOfThoughtRAGAgent:
         
         # Don't check prereqs for simple greetings or non-concept intents
         if intent not in ["CONCEPT", "PROBLEM"]: return None
-        
+
+        # Remember the student's own wording BEFORE canonicalisation. The gate needs
+        # the canonical concept ("Structures") to find the prerequisite edge, but the
+        # roadmap must speak the student's language: answering "What is enum?" with
+        # "Quick Roadmap for Structures" reads as a non-sequitur and was scored
+        # "off-topic and unhelpful" by the pedagogy rubric.
+        asked_term = (entities[0] if entities else "") or ""
+
+        # Resolve sub-topic aliases (malloc → Memory Allocation, recursion → Recursion)
+        # so both the prereq lookup and the graph-node validation below succeed.
+        entities = self._canonicalize_entities(entities)
+
         # Do the Graph Check
         all_prereqs = self._check_prerequisites(query, entities)
         
@@ -815,13 +995,24 @@ class ChainOfThoughtRAGAgent:
             # Build a clear roadmap instead of a vague dependency chain
             prereq_roadmap = "\n".join(f"   {i+1}. **{p}**" for i, p in enumerate(display_prereqs))
             
-            msg = f"## 🧱 Quick Roadmap for **{topic_name}**\n\n"
-            msg += f"To make **{topic_name}** click, it helps to know these first:\n\n"
+            # Name the topic the student actually asked about. When they asked about a
+            # sub-topic ("enum") that was canonicalised to its parent ("Structures"),
+            # say so explicitly rather than silently swapping the subject.
+            asked_clean = asked_term.strip()
+            is_alias = bool(asked_clean) and asked_clean.lower() != topic_name.lower()
+            headline = asked_clean if is_alias else topic_name
+
+            msg = f"## 🧱 Quick Roadmap for **{headline}**\n\n"
+            if is_alias:
+                msg += (f"`{asked_clean}` is part of **{topic_name}** in this course. "
+                        f"To make it click, it helps to know these first:\n\n")
+            else:
+                msg += f"To make **{topic_name}** click, it helps to know these first:\n\n"
             msg += prereq_roadmap
             msg += f"\n\n💡 You can **skip ahead** if you're comfortable, or I'll walk you through each one quickly!"
 
             # Put "Teach me anyway" FIRST (most prominent) to reduce frustration
-            btns = [f"Teach me {topic_name} anyway"]
+            btns = [f"Teach me {headline} anyway"]
             btns += [f"Explain {p}" for p in display_prereqs]
             btns += [f"I know {p} (Verify)" for p in display_prereqs]
 
@@ -832,6 +1023,179 @@ class ChainOfThoughtRAGAgent:
                 "intent": "GUIDANCE"
             }
         return None
+
+    # =========================================================
+    # Mastery Classification (for response adaptation)
+    # =========================================================
+    def _classify_mastery_level(self, username: str, entities: list) -> tuple:
+        """
+        Resolve entities to a knowledge-graph concept, read BKT state,
+        and classify the student's mastery level for this topic.
+
+        Returns (mastery_level, mastery_detail, resolved_concept_or_None, weakest_tier_or_None).
+
+        Classification is CONJUNCTIVE over the three evidence tiers, mirroring the
+        certification rule: no tier may compensate for another. A learner who aces
+        quizzes but cannot write code is NOT proficient, and must not be handed
+        reduced scaffolding on the strength of the quiz tier alone.
+        """
+        from app.core.bkt_model import (
+            _read_row, _apply_decay, _parse_ts, _TS_COL, _LAM_COL, EVIDENCE_CONFIG,
+        )
+
+        # Step 1: Get candidate concept names from the knowledge graph, with out-degree.
+        # Out-degree separates a curriculum node (which INCLUDES children / REQUIRES
+        # prerequisites) from a leaf child, and is the tiebreaker when several node names
+        # contain the same word.
+        try:
+            cypher = (
+                "MATCH (n) WHERE n.name IS NOT NULL "
+                "OPTIONAL MATCH (n)-[r]->() "
+                "RETURN n.name AS name, count(r) AS out_deg"
+            )
+            deg = {}
+            for r in self.graph_db.execute_query(cypher, {}):
+                if r.get("name"):
+                    # The same name can exist as two distinct nodes: ingestion MERGEs
+                    # relationship targets as `:Concept`, which creates a duplicate when a
+                    # `:Section` of that name already exists. Collapse them by name.
+                    deg[r["name"]] = max(deg.get(r["name"], 0), r.get("out_deg") or 0)
+            graph_concepts = list(deg)
+        except Exception:
+            deg, graph_concepts = {}, []
+
+        if not graph_concepts:
+            return ("novice", "No knowledge graph available", None, None)
+
+        # Step 2: Entity-to-concept resolution.
+        #
+        # This SCORES every candidate rather than taking the first fuzzy hit. First-match
+        # resolution is order-dependent, and Neo4j returns nodes in arbitrary order: the
+        # entity "pointer" fuzzy-matches `Memory and Pointers`, `Pointers` AND
+        # `FILE Pointer`, so whichever the driver happened to return first decided the
+        # student's adaptation level. In practice `Memory and Pointers` (a Section with no
+        # BKT row) came back first, its parent lookup reached the graph root, and every
+        # student was silently classified NOVICE regardless of their actual mastery.
+        def _sing(w: str) -> str:
+            return w[:-1] if len(w) > 3 and w.endswith("s") else w
+
+        # Extractors emit multi-word entities ("void pointer", "dangling pointer") that
+        # match no node name as a whole string. Score the tokens too, at a small penalty,
+        # so "void pointer" still reaches `Pointers` instead of resolving to nothing.
+        probes = []
+        for idx, entity in enumerate(entities):
+            e_lower = entity.lower().strip()
+            if len(e_lower) >= 3:
+                probes.append((idx, e_lower, 0))
+            for tok in e_lower.split():
+                if len(tok) >= 3 and tok != e_lower:
+                    probes.append((idx, tok, 8))
+
+        best, best_score = None, 0
+        for idx, e_lower, tok_penalty in probes:
+            ne = _sing(e_lower)
+            for gc in graph_concepts:
+                gcl = gc.lower()
+                gw = gcl.split()
+                if gcl == e_lower or _sing(gcl) == ne:
+                    score = 100                       # whole name is the concept
+                elif any(_sing(w) == ne for w in gw):
+                    score = 50                        # one word IS the concept
+                elif any(w.startswith(e_lower) or e_lower.startswith(w)
+                         for w in gw if len(w) >= 3):
+                    score = 20                        # prefix overlap only
+                else:
+                    continue
+                score -= 5 * (len(gw) - 1)            # prefer the most specific name
+                score -= tok_penalty                  # a token is weaker than the entity
+                if deg.get(gc, 0) > 0:
+                    score += 10                       # curriculum node, not a leaf
+                if _read_row(username, gc):
+                    score += 25                       # the student is tracked on it
+                score += (len(entities) - idx)        # earlier entities break ties
+                if score > best_score:
+                    best, best_score = gc, score
+
+        resolved = best
+        if resolved:
+            self.logger.info(f"🎯 [MCRA] Resolved {entities} → '{resolved}' (score {best_score})")
+
+        if not resolved:
+            return ("novice", f"No matching concept for entities: {entities}", None, None)
+
+        # Step 3: Read BKT row (try resolved node, then its parent concept)
+        row = _read_row(username, resolved)
+        if not row:
+            # Entity may match a graph sub-node (e.g., "printf") while BKT is
+            # stored under the parent concept ("Input Output"). Resolve one level up.
+            try:
+                parent_q = (
+                    "MATCH (parent)-[:INCLUDES]->(n) "
+                    "WHERE toLower(n.name) = toLower($name) "
+                    "RETURN parent.name AS name LIMIT 1"
+                )
+                parents = self.graph_db.execute_query(parent_q, {"name": resolved})
+                if parents and parents[0].get("name"):
+                    parent_name = parents[0]["name"]
+                    row = _read_row(username, parent_name)
+                    if row:
+                        self.logger.info(f"🎯 [MCRA] Resolved via parent: '{resolved}' → '{parent_name}'")
+                        resolved = parent_name
+            except Exception:
+                pass
+        if not row:
+            return ("novice", f"No prior interactions with '{resolved}'", resolved, None)
+
+        # Step 4: ever_certified takes priority → reviewing
+        if row["ever_certified"]:
+            return ("reviewing", f"Previously certified on '{resolved}'", resolved, None)
+
+        # Step 5: Per-tier OBJECTIVE BKT posteriors (decay-adjusted).
+        # Deliberately NOT get_effective_mastery(): P_eff blends in the student's own
+        # self-assessment, which would let the SRL confidence slider move the amount of
+        # scaffolding they are given. Adaptation reads observed performance only.
+        p = {}
+        for tier in ("quiz", "micro", "code"):
+            p_raw = row[EVIDENCE_CONFIG[tier]["col"]] or EVIDENCE_CONFIG[tier]["P_L0"]
+            p[tier] = _apply_decay(
+                p_raw, tier, _parse_ts(row[_TS_COL[tier]]), lam=row[_LAM_COL[tier]]
+            )
+        p_q, p_m, p_c = p["quiz"], p["micro"], p["code"]
+
+        n_q = row["n_evidence_quiz"] or 0
+        n_m = row["n_evidence_micro"] or 0
+        n_c = row["n_evidence_code"] or 0
+
+        p_min = min(p_q, p_m, p_c)          # conjunctive: no tier compensates another
+        n_all = min(n_q, n_m, n_c)
+        n_any = max(n_q, n_m, n_c)
+
+        # The weakest tier is only reported when the evidence actually supports naming
+        # one. The three tiers carry different Cromwell priors (quiz 0.30, micro 0.05,
+        # code 0.01) and different guess/slip parameters, so an unconditional argmin
+        # returns `code` for any learner with little evidence and still returns *some*
+        # tier for a genuinely balanced one — reporting parameter asymmetry as if it were
+        # a diagnosis. Median spread between strongest and weakest tier is 0.03 for a
+        # balanced learner versus 0.96 for a genuinely lopsided one, so a modest spread
+        # floor separates the two cleanly.
+        n_by_tier = {"quiz": n_q, "micro": n_m, "code": n_c}
+        cand = min(p, key=p.get)
+        spread = max(p.values()) - min(p.values())
+        weak_tier = cand if (spread >= _WEAK_TIER_MIN_SPREAD
+                             and n_by_tier[cand] >= _WEAK_TIER_MIN_EVIDENCE) else None
+
+        detail = (
+            f"'{resolved}': min_P={p_min:.2f} "
+            f"(weakest tier: {weak_tier or 'none — tiers within ' + f'{spread:.2f}'}) "
+            f"[quiz={p_q:.2f}(n={n_q}), micro={p_m:.2f}(n={n_m}), code={p_c:.2f}(n={n_c})]"
+        )
+
+        # Step 6: Conjunctive classification — same non-compensatory form as certification.
+        if p_min >= 0.75 and n_all >= 2:
+            return ("proficient", detail, resolved, weak_tier)
+        if p_min >= 0.35 or n_any >= 2:
+            return ("developing", detail, resolved, weak_tier)
+        return ("novice", detail, resolved, weak_tier)
 
     async def _execute_standard_rag(self, query, intent, entities, user_role, username, user_goal, session_id):
         yield {"type": "status", "message": "Searching knowledge base...", "percent": 60}
@@ -883,7 +1247,170 @@ class ChainOfThoughtRAGAgent:
             }
         }
     
+    def _recent_quizzable_concept(self, username: str):
+        """Most recent concept the student has studied that has a quiz available.
+
+        Prefers NOT-yet-certified concepts so surprise quizzes trickle quiz-tier
+        evidence for what the student is actively learning (Module-B F2-05, task 2);
+        falls back to certified concepts for review. Returns None if none quizzable.
+        """
+        from app.db.sqlite_db import db
+        rows = db.fetch_all(
+            "SELECT concept, ever_certified FROM user_knowledge WHERE username=? ORDER BY timestamp DESC",
+            (username,)) or []
+        # In-progress first (trickle while learning), then certified (review).
+        ordered = [r["concept"] for r in rows if not r["ever_certified"]] + \
+                  [r["concept"] for r in rows if r["ever_certified"]]
+        for c in ordered:
+            if c and not c.lower().startswith("solved:") and self.examiner._fetch_quiz_question(c, []):
+                return c
+        return None
+
+    async def _process_mastery_exam(self, state, current_state, username, session_id):
+        """Comprehensive 3-stage Mastery Exam (Module-B F2-05, Option A).
+
+        Walks the student quiz → micro → code in one sitting, feeding ALL three BKT
+        tiers so acing it advances real certification. Repeatable: each run adds one
+        evidence point per tier. State lives in session as `mastery_exam`.
+        """
+        from app.core.bkt_model import bkt
+        q = (state.original_query or "").strip()
+        exam = (current_state or {}).get("mastery_exam")
+        CODE_CHARS = [";", "{", "}", "=", "(", ")"]
+
+        # --- START (dashboard tag or a "Retake exam: X" button) ---
+        is_start = q.startswith("[MASTERY_EXAM]") or q.lower().startswith("retake exam")
+        if is_start:
+            if q.startswith("[MASTERY_EXAM]"):
+                concept = q.replace("[MASTERY_EXAM]", "").strip()
+            else:
+                concept = q.split(":", 1)[1].strip() if ":" in q else ""
+            if not concept:
+                concept = state.entities[0] if state.entities else "this concept"
+
+            qa = self.examiner._fetch_quiz_question(concept, [])
+            if not qa:
+                yield {"type": "complete", "data": {
+                    "answer": f"I don't have exam questions for **{concept}** yet — try learning it first, or pick another topic.",
+                    "sources": [], "intent": "GUIDANCE", "suggestions": [f"Explain {concept}"]}}
+                return
+            exam = {"concept": concept, "stage": "quiz", "score": {},
+                    "quiz_a": qa["a"], "quiz_vg": qa["a_vector"], "quiz_vl": qa.get("a_vector_local")}
+            history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
+            msg = (f"## 🎓 Mastery Exam — {concept}\n\n"
+                   f"Three quick steps, one per skill tier — each adds real evidence toward certification. "
+                   f"(Type *stop* anytime to cancel.)\n\n"
+                   f"**Step 1 of 3 · Quiz**\n\n{qa['q']}\n\n👉 *Type your answer below.*")
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM",
+                                                "suggestions": ["I don't know (Skip)"]}}
+            return
+
+        if not exam:
+            return
+        concept = exam["concept"]
+        stage = exam.get("stage")
+
+        # --- Escape hatch ---
+        if q.lower() in ("stop", "quit", "cancel", "exit", "stop exam", "cancel exam"):
+            history_manager.update_session_state(username, session_id, {"mastery_exam": None})
+            yield {"type": "complete", "data": {
+                "answer": "No problem — exam cancelled. The evidence you earned so far is saved.",
+                "sources": [], "intent": "GUIDANCE", "suggestions": []}}
+            return
+
+        # --- STAGE 1: QUIZ (real embedding grade) ---
+        if stage == "quiz":
+            res = await self.examiner._smart_grade_answer(q, exam.get("quiz_vg"), exam.get("quiz_vl"), exam.get("quiz_a"))
+            bkt.update(username, concept, bool(res["is_correct"]), evidence_type="quiz")
+            exam["score"]["quiz"] = bool(res["is_correct"])
+            exam["stage"] = "micro"
+            history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
+            fb = "✅ **Correct!**" if res["is_correct"] else f"❌ {res.get('feedback', 'Not quite.')}"
+            msg = (f"{fb}\n\n**Step 2 of 3 · Micro-Challenge**\n\n"
+                   f"Write **one line of C** that uses **{concept}**.\n\n👉 *Type your code.*")
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM", "suggestions": []}}
+            return
+
+        # --- STAGE 2: MICRO (attempt-with-code = evidence) ---
+        if stage == "micro":
+            has_code = any(c in q for c in CODE_CHARS)
+            bkt.update(username, concept, has_code, evidence_type="micro")
+            exam["score"]["micro"] = has_code
+            exam["stage"] = "code"
+            history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
+            fb = "✅ **Nice — that's valid C.**" if has_code else "⚠️ That didn't look like code, but let's finish."
+            msg = (f"{fb}\n\n**Step 3 of 3 · Code**\n\n"
+                   f"Write a short C snippet (2–4 lines) that demonstrates **{concept}** in action.\n\n👉 *Type your code.*")
+            yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM", "suggestions": []}}
+            return
+
+        # --- STAGE 3: CODE (final) ---
+        if stage == "code":
+            has_code = any(c in q for c in [";", "{", "}"])
+            bkt.update(username, concept, has_code, evidence_type="code")
+            exam["score"]["code"] = has_code
+            history_manager.update_session_state(username, session_id, {"mastery_exam": None})
+            passed = sum(1 for v in exam["score"].values() if v)
+            certified = bkt.is_mastered(username, concept)
+            head = (f"## 🎓 Mastery Exam Complete — {concept}\n\n"
+                    f"You cleared **{passed}/3** steps this round.\n")
+            if certified:
+                head += f"\n🏆 **{concept} is now certified!** Outstanding work.\n"
+            else:
+                head += ("\nEach step added evidence to its tier. **Retake the exam** to add more — "
+                         "certification needs sustained correct performance across all three tiers.\n")
+            head += bkt.mastery_ledger(username, concept)
+            yield {"type": "complete", "data": {"answer": head, "sources": [], "intent": "EXAM",
+                                                "suggestions": [f"Retake exam: {concept}", "What should I learn next?"]}}
+            return
+
+    @staticmethod
+    def _state_payload(state) -> dict:
+        """The sensory/state vector carried to the turn logger.
+
+        Shared by the Socratic completion path and by run_stream's injector, so a turn
+        that ends early records the same fields as one that runs to completion.
+        """
+        return {
+            "s_goal": state.s_goal, "c_code": state.c_code,
+            "m_state": state.m_state, "delta_f": state.delta_f,
+            "n_strike": state.n_strike, "mastery_level": state.mastery_level,
+            "mastery_weak_tier": state.mastery_weak_tier,
+            "mastery_detail": state.mastery_detail,
+            "traj_risk": state.traj_risk,
+            "traj_acc": state.traj_acc,
+            "traj_peak": state.traj_peak,
+        }
+
     async def run_stream(self, query: str, user_role: str = 'student', **kwargs):
+        """Public entry point. Wraps the orchestrator so that EVERY terminal event
+        carries the state vector.
+
+        The orchestrator has nineteen early-return paths (Sentinel block, prerequisite
+        gate, Socratic withholding, exam handlers, …) and only the Socratic path used to
+        attach `_state`. Turn telemetry therefore recorded nothing for 885 of 1854 stored
+        turns — 48%, and precisely the blocked ones. That makes the trajectory defense
+        unmeasurable on the turns where it fires, which is the only place it matters.
+
+        `blocked` is set from whether the orchestrator attached `_state` itself, which is
+        the same signal `main.py` previously derived from the key's absence. Injecting the
+        payload unconditionally would otherwise have silently reclassified every block as
+        a normal turn.
+        """
+        sink: Dict[str, Any] = {}
+        async for event in self._run_stream_core(query, user_role, _state_sink=sink, **kwargs):
+            if event.get("type") == "complete":
+                data = event.get("data")
+                if isinstance(data, dict):
+                    reached_socratic = "_state" in data
+                    st = sink.get("state")
+                    if not reached_socratic:
+                        data["_state"] = self._state_payload(st) if st is not None else {}
+                    data["_state"]["blocked"] = not reached_socratic
+            yield event
+
+    async def _run_stream_core(self, query: str, user_role: str = 'student',
+                              _state_sink: dict = None, **kwargs):
         import time
         t_start = time.time()
         
@@ -1107,24 +1634,33 @@ class ChainOfThoughtRAGAgent:
         # --- 1B: WARM-UP GRADER (STRICT TAG) ---
         # =========================================================
         if query.strip().startswith("[WARMUP_ANSWER]"):
-            user_ans = query.replace("[WARMUP_ANSWER]", "").strip()
-            warmup_topic = current_state.get("awaiting_warmup_topic", "a previous concept")
-            history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": None})
+            # Trust gate: only honour this tag if the server actually issued a warm-up.
+            # A user typing [WARMUP_ANSWER] with no pending warm-up is treated as plain text.
+            pending_warmup = current_state.get("awaiting_warmup_topic")
+            if not pending_warmup:
+                self.logger.warning(f"[SECURITY] Forged [WARMUP_ANSWER] from {username} with no pending warm-up — treating as plain text.")
+                query = query.replace("[WARMUP_ANSWER]", "").strip()
+                state.query = query
+                # fall through to normal processing (do NOT run the grader, do NOT return)
+            else:
+                user_ans = query.replace("[WARMUP_ANSWER]", "").strip()
+                warmup_topic = pending_warmup
+                history_manager.update_session_state(username, session_id, {"awaiting_warmup_topic": None})
 
-            if "skip" in user_ans.lower() or not user_ans:
-                yield {"type": "complete", "data": {"answer": f"No problem! We'll skip the warm-up for now. What would you like to work on?", "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new"]}}
+                if "skip" in user_ans.lower() or not user_ans:
+                    yield {"type": "complete", "data": {"answer": f"No problem! We'll skip the warm-up for now. What would you like to work on?", "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new"]}}
+                    return
+
+                yield {"type": "status", "message": "Evaluating your memory...", "percent": 50}
+                prompt = f"The student was asked to briefly explain '{warmup_topic}' as a brain warm-up. Their answer: '{user_ans}'. Evaluate it in 1-2 friendly, conversational sentences. If correct, praise them. If wrong, gently correct them. End by asking what they want to learn today."
+
+                eval_ans = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
+
+                yield {"type": "complete", "data": {
+                    "answer": f"**🧠 Warm-Up Review ({warmup_topic}):**\n\n{eval_ans}",
+                    "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new", "I have a specific question"]
+                }}
                 return
-
-            yield {"type": "status", "message": "Evaluating your memory...", "percent": 50}
-            prompt = f"The student was asked to briefly explain '{warmup_topic}' as a brain warm-up. Their answer: '{user_ans}'. Evaluate it in 1-2 friendly, conversational sentences. If correct, praise them. If wrong, gently correct them. End by asking what they want to learn today."
-            
-            eval_ans = await asyncio.to_thread(self.llm_fast.generate_response, prompt)
-            
-            yield {"type": "complete", "data": {
-                "answer": f"**🧠 Warm-Up Review ({warmup_topic}):**\n\n{eval_ans}", 
-                "sources": [], "intent": "GREETING", "suggestions": ["Teach me something new", "I have a specific question"]
-            }}
-            return
         # =========================================================
 
         # =========================================================
@@ -1193,9 +1729,51 @@ class ChainOfThoughtRAGAgent:
 
         self.logger.info(f"📊 [PHASE 1] C_code: {c_code_val} | M_state: {m_state_val} | s_goal: {s_goal_val:.2f} | N_strike: {n_strike_val}")
 
+        # --- Telemetry: affect trajectory (per-turn frustration snapshot) ---
+        try:
+            from app.core import telemetry
+            academic_emotion = getattr(self.profiler, "_last_academic_emotion", None)
+            telemetry.log_affect(username, session_id, current_frustration_delta,
+                                 str(current_frustration), False, academic_emotion)
+        except Exception as e:
+            self.logger.warning(f"[Affect] telemetry failed: {e}")
+
+        # =========================================================
+        # TOPIC AMNESIA CACHE — deterministic resolution (BEFORE Sentinel)
+        # ---------------------------------------------------------
+        # 1. If this turn names its own concept, remember it as the anchor.
+        # 2. Otherwise, if it's an anaphoric/vague follow-up ("how does it
+        #    work?", "how do I declare it?", "what about a nested one?"),
+        #    bind it to the remembered anchor so the topic survives and the
+        #    Sentinel can't misread the bare fragment as SECURITY_RISK.
+        # =========================================================
+        anchor_topic = None
+        did_resolve = False
+        try:
+            cached_topic = current_state.get("last_valid_topic") if current_state else None
+            own_entities = fast_classifier.extract_entities(query) if config.INTENT_CLASSIFIER_MODE == "fast" else []
+            # "Own topic" must be a GENUINE C concept — a stray noun like "works"
+            # or "one" must NOT count, or the anaphora resolver would be skipped.
+            own_is_concept = any(
+                e.lower() in fast_classifier.C_CONCEPT_TERMS
+                or any(w in fast_classifier.C_CONCEPT_TERMS for w in e.lower().split())
+                for e in own_entities
+            )
+            if own_is_concept:
+                # This turn names its own concept -> refresh the anchor immediately.
+                self._remember_topic(username, session_id, own_entities)
+            else:
+                # No real concept this turn -> resolve against the remembered anchor.
+                resolved_q, anchor_topic, did_resolve = self._resolve_topic_memory(query, cached_topic)
+                if did_resolve:
+                    search_query = resolved_q
+                    self.logger.info(f"🧠 [TOPIC MEMORY] '{query}' + cache('{cached_topic}') -> '{resolved_q}'")
+        except Exception as e:
+            self.logger.warning(f"[TOPIC MEMORY] resolution failed: {e}")
+
         state = AgentState(
             query=search_query,
-            original_query=query, 
+            original_query=query,
             user_id=username,
             session_id=session_id,
             user_role=user_role,
@@ -1208,6 +1786,20 @@ class ChainOfThoughtRAGAgent:
             n_strike=n_strike_val
         )
 
+        # Publish the live state object so run_stream can attach the sensory vector to a
+        # terminal event raised by any of the early-return paths below (Sentinel block,
+        # prerequisite gate, withholding, exam handlers). Same object, not a copy — the
+        # Sentinel mutates traj_risk/traj_acc/traj_peak in place a few lines down.
+        if _state_sink is not None:
+            _state_sink["state"] = state
+
+        # A resolved anaphoric follow-up gets its topic + intent pre-set so the
+        # Sentinel routes it as a normal CONCEPT question about the anchor topic
+        # instead of security-blocking a context-less fragment.
+        if did_resolve and anchor_topic:
+            state.intent = "CONCEPT"
+            state.entities = [anchor_topic]
+
         # =========================================================
         # --- NEW: PENDING CHALLENGE SOLVER INTERCEPTOR ---
         # =========================================================
@@ -1216,26 +1808,47 @@ class ChainOfThoughtRAGAgent:
             parts = query.replace("[SOLVE_CHALLENGE]", "").split("|", 1)
             solve_topic = parts[0].strip() if len(parts) > 0 else "Concept"
             solve_ans = parts[1].strip() if len(parts) > 1 else ""
-            
-            # 1. Remove from GLOBAL pending queue
+
+            # Trust gate: the topic must actually be a pending challenge for THIS user.
+            # A forged/stale [SOLVE_CHALLENGE] must never mark a challenge complete or
+            # be routed as a challenge submission.
             skipped = self._get_global_skipped_challenges(username)
-            new_skipped = []
-            for c in skipped:
-                if isinstance(c, dict) and c.get("topic") == solve_topic: continue
-                if isinstance(c, str) and c == solve_topic: continue
-                new_skipped.append(c)
-                
-            self._update_global_skipped_challenges(username, new_skipped)
-            
-            # 2. Force the pipeline state to route to the Code Reviewer
-            state.original_query = solve_ans
-            state.query = f"[CONTEXT: Evaluating pending micro-challenge for '{solve_topic}'].\n\n{solve_ans}"
-            state.intent = "REVIEW"
-            state.entities = [solve_topic]
-            is_pending_solve = True
-            
-            should_skip_context = True # Skip LLM rewrites
+            def _is_this_challenge(c):
+                return ((isinstance(c, dict) and c.get("topic") == solve_topic)
+                        or (isinstance(c, str) and c == solve_topic))
+            is_genuinely_pending = any(_is_this_challenge(c) for c in skipped)
+
+            if not is_genuinely_pending:
+                self.logger.warning(f"[SECURITY] Forged/stale [SOLVE_CHALLENGE] for '{solve_topic}' from {username} — no such pending challenge. Treating as plain text.")
+                query = solve_ans if solve_ans else query.replace("[SOLVE_CHALLENGE]", "").strip()
+                state.query = query
+                state.original_query = query
+                # fall through to normal processing (no completion, no forced REVIEW)
+            else:
+                # 1. Remove from GLOBAL pending queue (it was genuinely assigned)
+                new_skipped = [c for c in skipped if not _is_this_challenge(c)]
+                self._update_global_skipped_challenges(username, new_skipped)
+
+                # 2. Force the pipeline state to route to the Code Reviewer
+                state.original_query = solve_ans
+                state.query = f"[CONTEXT: Evaluating pending micro-challenge for '{solve_topic}'].\n\n{solve_ans}"
+                state.intent = "REVIEW"
+                state.entities = [solve_topic]
+                is_pending_solve = True
+
+                should_skip_context = True # Skip LLM rewrites
         # =========================================================
+
+        # --- MASTERY EXAM (comprehensive 3-tier: quiz → micro → code) ---
+        # Intercept the dashboard exam trigger and any in-progress exam before the
+        # normal pipeline so each step routes to the exam state machine.
+        _exam_active = current_state.get("mastery_exam") if current_state else None
+        _exam_start = (state.original_query or "").strip().startswith("[MASTERY_EXAM]") \
+            or (state.original_query or "").strip().lower().startswith("retake exam")
+        if _exam_active or _exam_start:
+            async for _ev in self._process_mastery_exam(state, current_state, username, session_id):
+                yield _ev
+            return
 
         # --- 5. PROACTIVE POP QUIZZES ---
         msg_list = current_state.get("messages", []) if current_state else []
@@ -1274,14 +1887,12 @@ class ChainOfThoughtRAGAgent:
         if should_trigger_quiz:
             self.logger.info("🎯 Triggering Proactive Pop Quiz!")
             
-            # FIX: Use ACTUAL mastered concepts from the DB, not bot message metadata.
-            # This ensures the quiz is about something the student actually learned.
-            known_concepts = knowledge_manager.get_known_concepts(username)
-            
-            if known_concepts:
-                # Pick the most recently mastered concept (last in the list)
-                recent_topic = known_concepts[-1]
-                
+            # Prefer a concept the student is actively LEARNING (has evidence but not
+            # yet certified) so quiz-tier evidence trickles in during normal study;
+            # fall back to a mastered concept for review. Guaranteed to have a quiz.
+            recent_topic = self._recent_quizzable_concept(username)
+
+            if recent_topic:
                 # Push the current query onto the goals stack
                 goals_stack = current_state.get("pending_goals", []) if current_state else []
                 if state.query not in goals_stack:
@@ -1291,26 +1902,31 @@ class ChainOfThoughtRAGAgent:
                 state.intent = "QUIZ"
                 state.entities = [recent_topic]
                 state.profile['is_surprise_quiz'] = True
-                self.logger.info(f"🎯 Quiz topic from mastery DB: '{recent_topic}'")
+                self.logger.info(f"🎯 Surprise quiz topic: '{recent_topic}'")
             else:
-                # No mastered concepts — skip the quiz entirely instead of defaulting to 'Variables'
-                self.logger.info("⏭️ Skipping pop quiz: no mastered concepts to quiz on")
+                # Nothing quizzable yet (no studied concept has a quiz) — skip.
+                self.logger.info("⏭️ Skipping pop quiz: no quizzable studied concept")
         # --------------------------------------------
 
         # ---------------------------------------------------------
         # AGENT PIPELINE
         # ---------------------------------------------------------
 
-        # 1. ACTIVE SCAFFOLDING PRIORITY (The Fix)
-        # If the user is currently in a guided plan, let the Scaffolding agent handle it.
-        # This prevents the Sentinel from blocking valid menu clicks like "Help me message the TA".
-        if is_in_plan:
-            async for event in self.scaffolding.process(state):
-                yield event
-            if state.stop_processing: return
-
-        # 2. SENTINEL (Security & Classification)
-        # Runs on all new queries that aren't part of an active plan
+        # 1. SENTINEL (Security & Classification) — MUST run before the scaffolding
+        # agent, on every free-text turn, including turns inside an active plan.
+        #
+        # This ordering used to be reversed: an active plan short-circuited straight
+        # into the Scaffolding agent and returned, so once a plan was open the rest of
+        # the session was Sentinel-free. That is a trajectory-defense bypass — a
+        # crescendo attacker whose turn happens to look like a PROBLEM of >8 words
+        # (scaffolding's trigger) opens a plan, and every later turn, including
+        # "how could that infinite loop freeze the system?", skips the security rules
+        # and the session risk accumulator entirely. Verified: the J2 DoS crescendo
+        # went from blocked@T3 to never blocked purely by opening a plan at T2.
+        #
+        # The original reason for scaffolding-first was to stop the Sentinel refusing
+        # in-plan menu actions ("Help me message the TA"). Security cannot be the
+        # thing that yields there — if a menu action trips a rule, fix the rule.
         if feedback_mode:
             state.intent = "CONCEPT"
             state.entities = [current_state.get("challenge_topic", "C Programming")]
@@ -1320,47 +1936,53 @@ class ChainOfThoughtRAGAgent:
             async for event in self.sentinel.process(state):
                 yield event
             if state.stop_processing: return
+
+        # 2. ACTIVE SCAFFOLDING PRIORITY
+        # If the user is in a guided plan, the Scaffolding agent handles the turn —
+        # but only after the Sentinel has cleared it.
+        if is_in_plan:
+            async for event in self.scaffolding.process(state):
+                yield event
+            if state.stop_processing: return
         
         # =========================================================
-        # THE FIX: TOPIC AMNESIA CACHE
+        # TOPIC AMNESIA CACHE — post-Sentinel reconcile & reinforce
+        # ---------------------------------------------------------
+        # Anaphora was already resolved deterministically before the Sentinel
+        # (see "TOPIC MEMORY" above). Here we only:
+        #   (1) reinforce the anchor from the Sentinel's (possibly refined)
+        #       entities when this turn carried a real concept, and
+        #   (2) as a last-resort safety net, fall back to the remembered anchor
+        #       if the pipeline produced no usable topic at all.
         # =========================================================
-        # 1. Determine if the user provided a real C-concept this turn
-        # We ensure it's not just an exact echo of their raw query
-        is_real_topic = len(state.entities) > 0 and state.entities[0].lower() != state.original_query.lower()
+        is_real_topic = (
+            len(state.entities) > 0
+            and state.entities[0].lower() != state.original_query.lower()
+            and self._best_topic(state.entities)  # must contain a genuine C concept
+        )
 
         if is_real_topic:
-            # =========================================================
-            # SAGE PDF PAGE 6: TOPIC CACHE ARGMAX
-            # Select the most specific/salient entity (proxy: longest string) 
-            # rather than just the first one found.
-            # e.g., ["int", "Linked List"] -> "Linked List"
-            # =========================================================
-            best_entity = max(state.entities, key=len)
-            
-            # Save it to the SQLite session cache!
+            best_entity = self._best_topic(state.entities)
             history_manager.update_session_state(username, session_id, {"last_valid_topic": best_entity})
             cached_topic = best_entity
-            self.logger.info(f"🗂️ [TOPIC CACHE] Saved new anchor topic: {cached_topic}")
-            
+            self.logger.info(f"🗂️ [TOPIC CACHE] Anchor reinforced: {cached_topic}")
         else:
             cached_topic = current_state.get("last_valid_topic", "C Programming")
-            
-            # --- FIX: ONLY OVERRIDE IF VAGUE OR FRUSTRATED ---
-            is_vague = len(state.original_query.split()) <= 4
-            is_frustrated = learning_profile.get("frustration_level") in ["high", "rage"]
-            
-            if is_vague or is_frustrated or "confused" in state.original_query.lower():
+            # Safety net: an empty/garbage topic on a non-emotional turn falls
+            # back to the remembered anchor so RAG has something to work with.
+            no_usable_topic = (not state.entities) or (not self._best_topic(state.entities))
+            is_emotional = learning_profile.get("frustration_level") in ["high", "rage"] \
+                or "confused" in state.original_query.lower()
+            if did_resolve:
+                # already bound to the anchor before the Sentinel — keep it
+                self.logger.info(f"🧠 [TOPIC CACHE] Follow-up bound to anchor: {cached_topic}")
+            elif no_usable_topic and cached_topic != "C Programming":
                 state.entities = [cached_topic]
-                self.logger.info(f"🧠 [TOPIC CACHE] Overriding vague/emotional query with cached topic: {cached_topic}")
-                
-                # If they are actively raging/confused, override the RAG search entirely
-                if is_frustrated or "confused" in state.original_query.lower():
+                if is_emotional:
                     state.query = cached_topic
+                self.logger.info(f"🧠 [TOPIC CACHE] No usable topic — falling back to anchor: {cached_topic}")
             else:
-                # Let specific, long queries (like "Show me how to write a virus") pass through 
-                # so the RAG agent fails naturally and doesn't hallucinate previous topics.
-                self.logger.info(f"⏭️ [TOPIC CACHE] Query is specific. Bypassing amnesia cache.")
-        # =========================================================
+                self.logger.info(f"⏭️ [TOPIC CACHE] Query is specific/standalone. No override.")
         # =========================================================
 
         # =========================================================
@@ -1477,6 +2099,10 @@ class ChainOfThoughtRAGAgent:
                 if has_code:
                     state.intent = "REVIEW"
                     state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this code. Keep it brief."
+                    # Attribute the upcoming code review to the real concept (not the
+                    # generic "code submission"), so code-tier evidence AND the mastery
+                    # ledger land on this topic (Module-B F2-05).
+                    state.entities = [challenge_topic]
                     # BKT micro evidence: student attempted procedural code → always counts as attempt
                     from app.core.bkt_model import bkt as _bkt_micro
                     _bkt_micro.update(username, challenge_topic, True, evidence_type="micro")
@@ -1510,13 +2136,60 @@ class ChainOfThoughtRAGAgent:
         # FINAL FALLBACK: CONCEPT TUTORING
         # ---------------------------------------------------------
 
-        # 7. GATEKEEPER CHECK
-        gatekeeper_result = self._check_gatekeeping(
-            state.query, state.intent, state.entities, state.user_id, state.session_id, force_gatekeeper_bypass
-        )
-        if gatekeeper_result:
-            yield {"type": "complete", "data": gatekeeper_result}
-            return
+        # =========================================================
+        # Mastery Classification for response adaptation (must run BEFORE gatekeeper)
+        # =========================================================
+        if state.intent in ["CONCEPT", "PROBLEM"] and state.entities and username:
+            try:
+                level, detail, _, weak_tier = self._classify_mastery_level(username, state.entities)
+                state.mastery_level = level
+                state.mastery_detail = detail
+                state.mastery_weak_tier = weak_tier or ""
+                self.logger.info(f"🎯 [MCRA] {username}: {level.upper()} | {detail}")
+            except Exception as e:
+                self.logger.warning(f"[MCRA] Classification failed: {e}")
+
+            # --- MCN: metacognitive calibration (flag-gated; None when off/insufficient) ---
+            try:
+                from app.core import mcn_service
+                concept = state.entities[0] if state.entities else ""
+                verdict = mcn_service.get_calibration(username, concept)
+                if verdict:
+                    state.calibration_state = verdict.get("map_C", "")
+                    state.calibration_detail = verdict.get("explanation", "")
+                    self.logger.info(
+                        f"🧭 [MCN] {username}/{concept}: {verdict.get('label')} "
+                        f"(p={verdict.get('confidence'):.2f})"
+                    )
+            except Exception as e:
+                self.logger.warning(f"[MCN] calibration step failed: {e}")
+
+        # --- Telemetry: response adaptation (mastery level applied to this turn) ---
+        if username and state.intent in ["CONCEPT", "PROBLEM"]:
+            try:
+                from app.core import telemetry
+                concept = state.entities[0] if state.entities else ""
+                telemetry.log_response(username, session_id, concept,
+                                       state.intent, state.mastery_level,
+                                       weak_tier=state.mastery_weak_tier)
+            except Exception as e:
+                self.logger.warning(f"[MCRA] response telemetry failed: {e}")
+
+        # 7. GATEKEEPER CHECK (reviewing students bypass — they proved mastery)
+        if state.mastery_level != "reviewing":
+            gatekeeper_result = self._check_gatekeeping(
+                state.query, state.intent, state.entities, state.user_id, state.session_id, force_gatekeeper_bypass
+            )
+            if gatekeeper_result:
+                try:
+                    from app.core import telemetry
+                    telemetry.log_event(username, "gatekeeper_block", {
+                        "entities": state.entities, "intent": state.intent,
+                    }, session_id=session_id)
+                except Exception:
+                    pass
+                yield {"type": "complete", "data": gatekeeper_result}
+                return
 
         # =========================================================
         # --- FEATURE 4: SOCRATIC WITHHOLDING ---
@@ -1547,16 +2220,23 @@ class ChainOfThoughtRAGAgent:
             has_bypassed = current_state.get("bypassed_withholding", False)
             is_asking_for_reminder = any(w in state.original_query.lower() for w in ["remind", "forgot", "explain", "don't remember", "help", "how"])
             
-            if is_known and not has_bypassed and not is_asking_for_reminder:
+            if is_known and not has_bypassed and not is_asking_for_reminder and state.mastery_level != "reviewing":
                 msg = f"Wait a minute... my records show you already mastered **{matched_concept}**! 😉\n\n"
                 msg += "Before I just give you the answer, look back at your code or notes. Based on what we learned before, how do *you* think we should approach this?"
                 
                 history_manager.update_session_state(username, session_id, {"bypassed_withholding": True})
-                
+
+                try:
+                    from app.core import telemetry
+                    telemetry.log_event(username, "withholding_fired",
+                                        {"concept": matched_concept}, session_id=session_id)
+                except Exception:
+                    pass
+
                 yield {"type": "complete", "data": {
-                    "answer": msg, 
-                    "sources": [], 
-                    "intent": "GUIDANCE", 
+                    "answer": msg,
+                    "sources": [],
+                    "intent": "GUIDANCE",
                     "suggestions": [f"I completely forgot {matched_concept}, please remind me.", "Oh right, let me try!"]
                 }}
                 return
@@ -1567,8 +2247,10 @@ class ChainOfThoughtRAGAgent:
         # 8. SOCRATIC TUTOR (Standard RAG)
         async for event in self.socratic.process(state):
             if event["type"] == "complete":
-                event["data"]["entities"] = state.entities 
+                event["data"]["entities"] = state.entities
                 event["data"]["intent"] = state.intent
+                # Telemetry: carry the full sensory/state vector to the turn logger
+                event["data"]["_state"] = self._state_payload(state)
                 
                 topic_name = state.entities[0] if state.entities else "the last topic"
                 
@@ -1582,7 +2264,7 @@ class ChainOfThoughtRAGAgent:
                 full_text = event["data"].get("answer", "")
                 import re
                 # Extract challenge question after the "Your Turn!" header
-                match = re.search(r"## Your Turn!.*?\n(.*)", full_text, re.IGNORECASE | re.DOTALL)
+                match = re.search(r"##\s*(?:Your Turn!|Challenge|Quick Check).*?\n(.*)", full_text, re.IGNORECASE | re.DOTALL)
                 extracted_question = match.group(1).strip() if match else ""
                 # Fallback covers both: no match AND match with empty capture (LLM stopped early)
                 if not extracted_question:

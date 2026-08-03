@@ -54,6 +54,28 @@ class ProfilerAgent(BaseAgent):
             "go on": re.compile(r"\bgo on\b", re.IGNORECASE),
         }
 
+        # Tier 3: confusion / boredom academic-emotion heuristics
+        self._confusion_patterns = [re.compile(p, re.IGNORECASE) for p in (
+            r"\bconfus", r"\bi (?:don'?t|do not) (?:get|understand)\b", r"\bnot sure\b",
+            r"\bwhat do you mean\b", r"\bhow does .* work\b", r"\blost\b", r"\bunclear\b",
+            r"\bmakes no sense\b", r"\bhuh\b", r"\bwhy (?:is|does|doesn'?t)\b",
+        )]
+        self._boredom_patterns = [re.compile(p, re.IGNORECASE) for p in (
+            r"\bbor(?:ed|ing)\b", r"\btoo easy\b", r"\bi (?:already )?know (?:this|that)\b",
+            r"\bskip\b", r"\bnext\b", r"\bmove on\b", r"\bcan we (?:hurry|speed)\b",
+            r"\bthis is (?:easy|basic)\b",
+        )]
+
+    def _detect_academic_emotion(self, text: str) -> str | None:
+        """Cheap keyword detection for confusion / boredom (Tier 3)."""
+        for p in self._confusion_patterns:
+            if p.search(text):
+                return "confusion"
+        for p in self._boredom_patterns:
+            if p.search(text):
+                return "boredom"
+        return None
+
     async def process(self, state: AgentState) -> AsyncGenerator[dict, None]:
         """Satisfies BaseAgent interface."""
         yield {}
@@ -95,10 +117,14 @@ class ProfilerAgent(BaseAgent):
             detected_emotion = "neutral"
             f_score = 0.2 # Base baseline for normal
 
+            # Tier 3: academic emotion (confusion / boredom / frustration / flow)
+            academic_emotion = self._detect_academic_emotion(last_message) or "neutral"
+
             if fast_signal.is_rage:
                 self.logger.warning(f"⚠️ [Tier 1] RAGE Detected for {user_id}: {fast_signal.negative_hits}")
                 frustration_level = "rage"
                 detected_emotion = "anger"
+                academic_emotion = "frustration"
                 f_score = 1.0 # Max frustration
             else:
                 result = self.emotion_classifier(last_message)[0][0]
@@ -108,10 +134,14 @@ class ProfilerAgent(BaseAgent):
                 if detected_emotion in ['anger', 'disgust', 'sadness', 'fear'] and score > 0.6:
                     self.logger.warning(f"⚠️ [Tier 2] Academic Frustration Detected for {user_id}: {detected_emotion} ({score:.2f})")
                     frustration_level = "high"
+                    academic_emotion = "frustration"
                     f_score = 0.7 # High frustration
                 elif detected_emotion == 'joy' and score > 0.7:
-                    frustration_level = "delighted" 
+                    frustration_level = "delighted"
+                    academic_emotion = "flow"
                     f_score = 0.0 # Zero frustration (flow state)
+                elif detected_emotion == 'surprise' and score > 0.6 and academic_emotion == "neutral":
+                    academic_emotion = "confusion"
 
             # ---------------------------------------------------------
             # UPDATE SQLITE STATE & CALCULATE ΔF
@@ -135,12 +165,21 @@ class ProfilerAgent(BaseAgent):
             profile["frustration_level"] = frustration_level
             profile["frustration_history"] = f_history
             profile["delta_f"] = delta_f
-            
+            profile["academic_emotion"] = academic_emotion
+
+            # Tier 3: running tally of academic emotions (for the affective learner dimension)
+            tally = profile.get("emotion_counts", {})
+            tally[academic_emotion] = tally.get(academic_emotion, 0) + 1
+            profile["emotion_counts"] = tally
+
             # Initialize Strike Counter if it doesn't exist (For Sentinel)
             if "off_topic_strikes" not in profile:
                 profile["off_topic_strikes"] = 0
 
             db.execute("UPDATE users SET learning_profile = ? WHERE username = ?", (json.dumps(profile), user_id))
+
+            # Expose the academic emotion so the caller can log it into affect_log
+            self._last_academic_emotion = academic_emotion
 
             print(f"\n🧠 [PROFILER] Emotion: {detected_emotion.upper()} | Level: {frustration_level.upper()} | F_t: {f_score} | ΔF: {delta_f:.2f}\n")
             return frustration_level

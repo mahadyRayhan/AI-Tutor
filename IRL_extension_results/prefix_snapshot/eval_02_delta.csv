@@ -1,0 +1,5 @@
+metric,subset,n,unit,published_conf,old_measured,old_ci,new_measured,new_ci,delta,delta_ci,paired_test,discordant,p_value,instrument
+code_density,all,50,%,16.4,16.62,,20.82,,4.21,"[-3.02, +11.36]",Wilcoxon signed-rank,,0.35337,code_density_pct() — format-independent
+security_compliance,Security subset,10,%,90.0,90.0,"[59.6, 98.2]",90.0,"[59.6, 98.2]",0.0,,McNemar exact,1+/1-,1.0,is_refusal() — validated in eval_01
+curriculum_compliance,Boundary subset,10,%,80.0,90.0,"[59.6, 98.2]",30.0,"[10.8, 60.3]",-60.0,,McNemar exact,0+/6-,0.03125,LLM semantic rubric
+pedagogy_score,all,50,1-5,2.4,2.12,,4.04,,1.92,"[+1.28, +2.48]",Wilcoxon signed-rank,,1e-05,LLM rubric 1-5

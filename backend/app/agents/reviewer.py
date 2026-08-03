@@ -80,6 +80,12 @@ class CodeReviewerAgent(BaseAgent):
                     f"📐 [BKT/CODE] '{review_topic}' for {state.user_id}: "
                     f"{'PASS' if not has_errors else 'FAIL'}"
                 )
+                # F2-05: show updated per-tier mastery progress after the review.
+                # Append to full_response (not a separate token) so it survives in the
+                # final 'complete' event's answer field below.
+                ledger = _bkt_code.mastery_ledger(state.user_id, review_topic)
+                if ledger:
+                    full_response += ledger
 
         # Store code submission for Rigorous Analysis retrieval
         if state.session_id and state.user_id:

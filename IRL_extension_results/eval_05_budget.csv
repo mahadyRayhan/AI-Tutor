@@ -1,0 +1,5 @@
+ops,canonical_lopsided,pooled_n9_lopsided,factored_lopsided,factored_master_defer
+15,0.789,0.5885,0.0,0.968
+30,0.9705,0.949,0.0,0.6785
+60,0.999,0.998,0.0,0.2605
+120,1.0,1.0,0.0005,0.025

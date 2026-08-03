@@ -17,7 +17,22 @@ class AgentState(BaseModel):
     delta_f: float = 0.0         # Frustration Trajectory
     n_strike: int = 0            # Off-topic strikes
     # --------------------------------------
-    
+
+    # Mastery-Conditioned Response Adaptation
+    mastery_level: str = "novice"    # novice | developing | proficient | reviewing
+    mastery_detail: str = ""         # BKT summary injected into LLM prompt
+    mastery_weak_tier: str = ""      # "" | quiz | micro | code — lowest-posterior tier
+
+    # Metacognitive Calibration (MCN) — inferred, flag-gated. "" when unknown/disabled.
+    calibration_state: str = ""      # "" | over | cal | under
+    calibration_detail: str = ""     # short account injected into the LLM prompt
+
+    # Multi-turn (crescendo) trajectory risk — snapshot on EVERY turn, not only blocks,
+    # so the layer's contribution is measurable rather than inferable.
+    traj_risk: float = 0.0     # Eq. (11)  R_t = ½·peak + ½·acc
+    traj_acc: float = 0.0      # Eq. (10)  accumulator
+    traj_peak: float = 0.0     # Eq. (9)   decayed peak
+
     # Internal State (Passed between agents)
     intent: Optional[str] = None
     entities: List[str] = []

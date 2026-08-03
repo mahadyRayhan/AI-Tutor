@@ -399,6 +399,42 @@
         </div>
     </div>
 
+    <!-- 3.5 RISK MATRIX (frustration + low mastery) -->
+    <div class="grid-container">
+        <div class="card full-width">
+            <h2>
+                🚨 Risk Matrix
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">
+                    — students flagged by frustration + low mastery
+                </span>
+                <select id="riskWindowSelector" onchange="loadRiskMatrix(this.value)"
+                        style="float:right; padding:4px; font-size:0.8rem; border-radius:4px; border:1px solid #ccc;">
+                    <option value="7">Last 7 Days</option>
+                    <option value="14" selected>Last 14 Days</option>
+                    <option value="30">Last 30 Days</option>
+                </select>
+            </h2>
+            <div id="riskMatrixSummary" style="display:flex; gap:12px; margin:10px 0; flex-wrap:wrap;"></div>
+            <div class="table-responsive">
+                <table id="riskMatrixTable">
+                    <thead>
+                        <tr>
+                            <th>Student ID</th>
+                            <th>Risk</th>
+                            <th>Reason</th>
+                            <th>Avg Frustration</th>
+                            <th>Rage Events</th>
+                            <th>Mastery</th>
+                            <th>Certified</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody><!-- Loaded via JS --></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- 4. STUDENT PERFORMANCE -->
     <div class="grid-container">
         <div class="card full-width">
@@ -580,9 +616,72 @@
         // 1. Load the first page of the tables (Paginated)
         loadUsersTable(1);
         loadRiskTable(1);
-        
+        loadRiskMatrix(14);
+
         // 2. Load the stuff that doesn't change (Charts, Topics, Inbox)
         loadStaticData();
+    }
+
+    // --- RISK MATRIX (frustration + low mastery) ---
+    async function loadRiskMatrix(days) {
+        const tbody = document.querySelector('#riskMatrixTable tbody');
+        const summaryDiv = document.getElementById('riskMatrixSummary');
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#777;">Loading...</td></tr>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/risk_matrix?days=${days}`);
+            const data = await res.json();
+
+            // Summary pills
+            const s = data.summary || {};
+            summaryDiv.innerHTML = `
+                <span style="background:#e74c3c; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">Critical: ${s.critical || 0}</span>
+                <span style="background:#f39c12; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">High: ${s.high || 0}</span>
+                <span style="background:#3498db; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">Watch: ${s.watch || 0}</span>`;
+
+            tbody.innerHTML = '';
+            if (!data.items || data.items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#777;">No student data yet.</td></tr>';
+                return;
+            }
+
+            const tierColor = { Critical: '#e74c3c', High: '#f39c12', Watch: '#3498db', OK: '#27ae60', 'No Data': '#95a5a6' };
+            data.items.forEach(m => {
+                const color = tierColor[m.risk_tier] || '#95a5a6';
+                const badge = `<span style="background:${color}; color:#fff; padding:2px 10px; border-radius:12px; font-weight:bold; font-size:0.8rem;">${m.risk_tier}</span>`;
+                const actionBtn = (m.risk_tier === 'Critical' || m.risk_tier === 'High')
+                    ? `<button onclick="pushQuickChallenge('${m.hidden_username}', '${m.display_id}')" style="background:#8e44ad; color:#fff; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem;">Push Challenge</button>`
+                    : '<span style="color:#aaa;">—</span>';
+                tbody.innerHTML += `
+                    <tr>
+                        <td><b>${m.display_id}</b></td>
+                        <td>${badge}</td>
+                        <td style="font-size:0.85rem; color:#555;">${m.risk_reason}</td>
+                        <td>${m.avg_frustration} <span style="color:#aaa; font-size:0.75rem;">(${m.turns} turns)</span></td>
+                        <td>${m.rage_events > 0 ? '🔥 ' + m.rage_events : '0'}</td>
+                        <td>${m.avg_mastery_pct}% <span style="color:#aaa; font-size:0.75rem;">(${m.concepts_touched})</span></td>
+                        <td>${m.concepts_certified}</td>
+                        <td>${actionBtn}</td>
+                    </tr>`;
+            });
+        } catch (e) {
+            console.error("Risk matrix load failed:", e);
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#e74c3c;">Failed to load.</td></tr>';
+        }
+    }
+
+    async function pushQuickChallenge(username, displayId) {
+        const question = prompt(`Send a custom micro-challenge to ${displayId}:`);
+        if (!question || !question.trim()) return;
+        try {
+            await fetch(`${API_URL}/api/v1/assignments/create`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ teacher: currentUser.username, student: username, question: question })
+            });
+            alert(`✅ Challenge sent to ${displayId}`);
+        } catch (e) {
+            alert("❌ Failed to send challenge.");
+        }
     }
 
     async function loadStaticData() {

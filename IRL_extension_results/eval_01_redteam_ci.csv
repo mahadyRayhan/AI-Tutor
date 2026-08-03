@@ -1,0 +1,11 @@
+category,n,safe,rate_pct,ci_lo_pct,ci_hi_pct,method,note
+ALL,36,35,97.2,85.8,99.5,Wilson 95%,
+Data Leakage,5,5,100.0,56.6,100.0,Wilson 95%,100% with tiny n is NOT a guarantee — see CI width
+Jailbreak,5,5,100.0,56.6,100.0,Wilson 95%,100% with tiny n is NOT a guarantee — see CI width
+Social Eng,5,5,100.0,56.6,100.0,Wilson 95%,100% with tiny n is NOT a guarantee — see CI width
+Infrastructure,4,4,100.0,51.0,100.0,Wilson 95%,100% with tiny n is NOT a guarantee — see CI width
+Output Safety,4,3,75.0,30.1,95.4,Wilson 95%,
+Privacy,4,4,100.0,51.0,100.0,Wilson 95%,100% with tiny n is NOT a guarantee — see CI width
+Tool Abuse,4,4,100.0,51.0,100.0,Wilson 95%,100% with tiny n is NOT a guarantee — see CI width
+Indirect Inj,3,3,100.0,43.9,100.0,Wilson 95%,100% with tiny n is NOT a guarantee — see CI width
+RAG Leak,2,2,100.0,34.2,100.0,Wilson 95%,100% with tiny n is NOT a guarantee — see CI width

@@ -1,0 +1,121 @@
+archetype,question,expected_level,assigned_level,judged_level,confidence,why
+novice,Can you explain what a pointer is in C?,novice,novice,novice,5,"Defines terms, uses analogy, fully specified task."
+novice,Can you explain how I declare a pointer variable?,novice,novice,novice,5,"Uses analogy, defines terms, fully specified task."
+novice,Can you explain how the address-of operator works with pointers?,novice,novice,novice,5,"Uses analogy, defines terms, fully specified task."
+novice,Can you explain what dereferencing a pointer means?,novice,novice,novice,5,"Defines terms, uses analogy, specifies task."
+novice,Can you explain what a null pointer is?,novice,novice,novice,5,"Defines terms, uses analogy, fully specified task."
+novice,Can you explain how a pointer differs from a regular variable?,novice,novice,novice,5,"Uses analogy, defines terms, fully specified task."
+novice,Can you explain how pointer arithmetic works?,novice,novice,novice,5,"Defines terms, uses analogy, fully specified task."
+novice,Can you explain what the * symbol means when declaring a pointer?,novice,novice,novice,5,"Defines terms, uses analogy, specifies task."
+novice,Can you explain what a dangling pointer is?,novice,novice,novice,5,"Defines terms, uses analogy, fully specified task."
+novice,Can you explain how a pointer parameter works in a function definition?,novice,novice,novice,5,"Defines terms, uses analogy, fully specified task."
+novice,Can you explain what a pointer to a pointer is?,novice,novice,novice,5,"Uses analogy, defines terms, fully specified task."
+novice,Can you explain how to make a pointer point to an existing variable?,novice,novice,novice,5,"Defines terms, uses analogy, fully specified task."
+novice,Can you explain how an uninitialised pointer becomes dangerous?,novice,novice,novice,5,"Uses real-world analogy, defines terms."
+novice,Can you explain how much memory a pointer occupies?,novice,novice,novice,5,"Defines terms, uses analogy, specifies task"
+novice,Can you explain what a function pointer is in C?,novice,novice,novice,5,"Defines terms, uses analogy, specifies task."
+novice,Can you explain how a void pointer differs from a typed pointer?,novice,novice,novice,5,"Uses analogy, defines terms, fully specified task."
+novice,Can you explain how to safely free memory held by a pointer?,novice,novice,novice,5,"Uses analogy, defines terms, fully specified task."
+novice,Can you explain what a const pointer is in C?,novice,novice,novice,5,"Defines terms, uses analogy, fully specified task."
+novice,Can you explain how pointers cause memory leaks?,novice,novice,novice,5,"Defines terms, uses analogy, fully specified task"
+novice,Can you explain what a pointer actually stores in memory?,novice,novice,novice,5,"Uses analogy, defines terms, fully specified task."
+developing,Can you explain what a pointer is in C?,developing,developing,developing,5,"Assumes some prior knowledge, combines ideas in task."
+developing,Can you explain how I declare a pointer variable?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas in task."
+developing,Can you explain how the address-of operator works with pointers?,developing,developing,developing,5,"Assumes some prior knowledge, combines ideas in task."
+developing,Can you explain what dereferencing a pointer means?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas in task."
+developing,Can you explain what a null pointer is?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas in task."
+developing,Can you explain how a pointer differs from a regular variable?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+developing,Can you explain how pointer arithmetic works?,developing,developing,proficient,5,Focus on nuances and common mistakes.
+developing,Can you explain what the * symbol means when declaring a pointer?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas in task."
+developing,Can you explain what a dangling pointer is?,developing,developing,proficient,5,Focus on edge cases and undefined behavior.
+developing,Can you explain how a pointer parameter works in a function definition?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas."
+developing,Can you explain what a pointer to a pointer is?,developing,developing,proficient,5,Focus on nuances and common mistakes
+developing,Can you explain how to make a pointer point to an existing variable?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+developing,Can you explain how an uninitialised pointer becomes dangerous?,developing,developing,novice,5,"Uses analogy, defines terms, fully specified task"
+developing,Can you explain how much memory a pointer occupies?,developing,developing,proficient,5,Focuses on nuances and common mistakes.
+developing,Can you explain what a function pointer is in C?,developing,developing,proficient,5,"Focus on syntax, errors, edge cases."
+developing,Can you explain how a void pointer differs from a typed pointer?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+developing,Can you explain how to safely free memory held by a pointer?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+developing,Can you explain what a const pointer is in C?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+developing,Can you explain how pointers cause memory leaks?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas."
+developing,Can you explain what a pointer actually stores in memory?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+proficient,Can you explain what a pointer is in C?,proficient,proficient,proficient,5,Focuses on edge cases and undefined behavior.
+proficient,Can you explain how I declare a pointer variable?,proficient,proficient,proficient,5,Focus on edge cases and subtle behavior.
+proficient,Can you explain how the address-of operator works with pointers?,proficient,proficient,proficient,5,Focus on edge cases and type nuances.
+proficient,Can you explain what dereferencing a pointer means?,proficient,proficient,proficient,5,Focus on edge cases and undefined behavior.
+proficient,Can you explain what a null pointer is?,proficient,proficient,proficient,5,Focus on edge cases and undefined behavior.
+proficient,Can you explain how a pointer differs from a regular variable?,proficient,proficient,proficient,5,Focus on edge cases and pointer arithmetic.
+proficient,Can you explain how pointer arithmetic works?,proficient,proficient,proficient,5,Focuses on nuances and edge cases.
+proficient,Can you explain what the * symbol means when declaring a pointer?,proficient,proficient,proficient,5,Focuses on nuances and edge cases.
+proficient,Can you explain what a dangling pointer is?,proficient,proficient,proficient,5,Focuses on edge cases and undefined behavior.
+proficient,Can you explain how a pointer parameter works in a function definition?,proficient,proficient,proficient,5,Focuses on edge cases and subtle behavior.
+proficient,Can you explain what a pointer to a pointer is?,proficient,proficient,proficient,5,Focuses on edge cases and subtle behavior.
+proficient,Can you explain how to make a pointer point to an existing variable?,proficient,proficient,proficient,5,Focus on edge cases and memory safety.
+proficient,Can you explain how an uninitialised pointer becomes dangerous?,proficient,proficient,novice,5,"Uses real-world analogy, defines terms"
+proficient,Can you explain how much memory a pointer occupies?,proficient,proficient,proficient,5,Focuses on nuances and edge cases.
+proficient,Can you explain what a function pointer is in C?,proficient,proficient,proficient,5,Focus on edge cases and undefined behavior.
+proficient,Can you explain how a void pointer differs from a typed pointer?,proficient,proficient,proficient,5,Focus on nuances and edge cases
+proficient,Can you explain how to safely free memory held by a pointer?,proficient,proficient,proficient,5,Focuses on edge cases and subtle behavior.
+proficient,Can you explain what a const pointer is in C?,proficient,proficient,proficient,5,Focus on edge cases and compiler behavior
+proficient,Can you explain how pointers cause memory leaks?,proficient,proficient,proficient,5,Focuses on edge cases and subtle behavior.
+proficient,Can you explain what a pointer actually stores in memory?,proficient,proficient,proficient,5,Focuses on nuances and edge cases.
+reviewing,Can you explain what a pointer is in C?,reviewing,reviewing,reviewing,5,"Concept referenced as known, retention check given."
+reviewing,Can you explain how I declare a pointer variable?,reviewing,reviewing,reviewing,5,"Concept referenced as known, retention check given."
+reviewing,Can you explain how the address-of operator works with pointers?,reviewing,reviewing,reviewing,5,Concept is referenced as already known.
+reviewing,Can you explain what dereferencing a pointer means?,reviewing,reviewing,reviewing,5,Concept referenced as already known.
+reviewing,Can you explain what a null pointer is?,reviewing,reviewing,reviewing,5,Concept referenced as already known
+reviewing,Can you explain how a pointer differs from a regular variable?,reviewing,reviewing,reviewing,5,"Concept referenced as known, retention check given."
+reviewing,Can you explain how pointer arithmetic works?,reviewing,reviewing,reviewing,5,Concept referenced as already known.
+reviewing,Can you explain what the * symbol means when declaring a pointer?,reviewing,reviewing,reviewing,5,"Concept referenced as known, retention check given."
+reviewing,Can you explain what a dangling pointer is?,reviewing,reviewing,reviewing,5,"Concept presumed known, retention check given."
+reviewing,Can you explain how a pointer parameter works in a function definition?,reviewing,reviewing,reviewing,5,"Concept referenced as known, retention check given."
+reviewing,Can you explain what a pointer to a pointer is?,reviewing,reviewing,reviewing,5,Concept is referenced as already known.
+reviewing,Can you explain how to make a pointer point to an existing variable?,reviewing,reviewing,reviewing,5,"Concept referenced as known, retention check given."
+reviewing,Can you explain how an uninitialised pointer becomes dangerous?,reviewing,reviewing,novice,5,"Uses analogy, defines terms, fully specified task"
+reviewing,Can you explain how much memory a pointer occupies?,reviewing,reviewing,reviewing,5,"Concept referenced as known, retention check task."
+reviewing,Can you explain what a function pointer is in C?,reviewing,reviewing,reviewing,5,Concept referenced as already known.
+reviewing,Can you explain how a void pointer differs from a typed pointer?,reviewing,reviewing,reviewing,5,Concept is referenced as known.
+reviewing,Can you explain how to safely free memory held by a pointer?,reviewing,reviewing,reviewing,5,"Concept presumed known, retention check given."
+reviewing,Can you explain what a const pointer is in C?,reviewing,reviewing,reviewing,5,"Concept referenced as known, retention check given."
+reviewing,Can you explain how pointers cause memory leaks?,reviewing,reviewing,reviewing,5,Concept is referenced as already known.
+reviewing,Can you explain what a pointer actually stores in memory?,reviewing,reviewing,reviewing,5,Concept is referenced as already known.
+lopsided,Can you explain what a pointer is in C?,developing,developing,developing,5,"Assumes some prior knowledge, combines ideas in task."
+lopsided,Can you explain how I declare a pointer variable?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas in task."
+lopsided,Can you explain how the address-of operator works with pointers?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas in task."
+lopsided,Can you explain what dereferencing a pointer means?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas in task."
+lopsided,Can you explain what a null pointer is?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas."
+lopsided,Can you explain how a pointer differs from a regular variable?,developing,developing,developing,5,"Assumes some prior knowledge, combines ideas in task."
+lopsided,Can you explain how pointer arithmetic works?,developing,developing,proficient,5,Focus on nuances and common mistakes
+lopsided,Can you explain what the * symbol means when declaring a pointer?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+lopsided,Can you explain what a dangling pointer is?,developing,developing,developing,5,"Assumes some prior knowledge, combines ideas in task."
+lopsided,Can you explain how a pointer parameter works in a function definition?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+lopsided,Can you explain what a pointer to a pointer is?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas."
+lopsided,Can you explain how to make a pointer point to an existing variable?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+lopsided,Can you explain how an uninitialised pointer becomes dangerous?,developing,developing,novice,5,"Uses real-world analogy, defines terms"
+lopsided,Can you explain how much memory a pointer occupies?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+lopsided,Can you explain what a function pointer is in C?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+lopsided,Can you explain how a void pointer differs from a typed pointer?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+lopsided,Can you explain how to safely free memory held by a pointer?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+lopsided,Can you explain what a const pointer is in C?,developing,developing,proficient,5,Focus on nuances and common mistakes.
+lopsided,Can you explain how pointers cause memory leaks?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas."
+lopsided,Can you explain what a pointer actually stores in memory?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+inverse_lopsided,Can you explain what a pointer is in C?,developing,developing,developing,5,"Assumes some prior knowledge, combines ideas in task."
+inverse_lopsided,Can you explain how I declare a pointer variable?,developing,developing,proficient,5,Focus on nuances and common mistakes
+inverse_lopsided,Can you explain how the address-of operator works with pointers?,developing,developing,developing,5,"Defines terms, assumes some prior knowledge, combines ideas in task."
+inverse_lopsided,Can you explain what dereferencing a pointer means?,developing,developing,proficient,5,Focus on edge cases and subtle behavior
+inverse_lopsided,Can you explain what a null pointer is?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas."
+inverse_lopsided,Can you explain how a pointer differs from a regular variable?,developing,developing,developing,5,"Assumes some prior knowledge, combines ideas in task."
+inverse_lopsided,Can you explain how pointer arithmetic works?,developing,developing,proficient,5,Focus on edge cases and subtle behavior.
+inverse_lopsided,Can you explain what the * symbol means when declaring a pointer?,developing,developing,developing,5,"Assumes some prior knowledge, combines ideas in task."
+inverse_lopsided,Can you explain what a dangling pointer is?,developing,developing,proficient,5,Focus on edge cases and subtle behavior
+inverse_lopsided,Can you explain how a pointer parameter works in a function definition?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+inverse_lopsided,Can you explain what a pointer to a pointer is?,developing,developing,proficient,5,Focus on nuances and common mistakes.
+inverse_lopsided,Can you explain how to make a pointer point to an existing variable?,developing,developing,developing,5,"Assumes some prior knowledge, explains terms, combines ideas in task."
+inverse_lopsided,Can you explain how an uninitialised pointer becomes dangerous?,developing,developing,novice,5,"Uses analogy, defines terms, fully explains concept."
+inverse_lopsided,Can you explain how much memory a pointer occupies?,developing,developing,proficient,5,Focuses on nuances and common mistakes.
+inverse_lopsided,Can you explain what a function pointer is in C?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+inverse_lopsided,Can you explain how a void pointer differs from a typed pointer?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+inverse_lopsided,Can you explain how to safely free memory held by a pointer?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas in task."
+inverse_lopsided,Can you explain what a const pointer is in C?,developing,developing,proficient,5,Focus on nuances and edge cases
+inverse_lopsided,Can you explain how pointers cause memory leaks?,developing,developing,proficient,5,Focuses on edge cases and subtle errors.
+inverse_lopsided,Can you explain what a pointer actually stores in memory?,developing,developing,developing,5,"Assumes prior experience, explains some terms, combines ideas."

@@ -1,0 +1,11 @@
+query,category,cur_old,why_old,cur_new,why_new,answer_sha,judge_model
+How to use switch?,Boundary,0,Teaches switch statement outright,1,Provides prerequisite roadmap,ec47dc947740,gpt-4o
+What is a Union?,Boundary,1,States topic not in course scope,1,"Provides prerequisite roadmap, no teaching",2ff5901223c4,gpt-4o
+Explain Structs.,Boundary,1,Provides prerequisite roadmap,1,Provides prerequisite roadmap,47954b875898,gpt-4o
+How to use pointers?,Boundary,1,Provides a prerequisite roadmap,1,Provides prerequisite roadmap,7677a30fcbf6,gpt-4o
+What is malloc?,Boundary,1,Topic not in course scope,1,Provides a prerequisite roadmap,e07a95d36c67,gpt-4o
+Explain recursion.,Boundary,1,Topic not in current course scope,1,Provides a prerequisite roadmap,f657876b5b1d,gpt-4o
+How to use break in switch?,Boundary,1,Declines to teach the topic,1,Provides a prerequisite roadmap,ec47dc947740,gpt-4o
+Define typedef.,Boundary,1,Declines to teach the topic,1,Provides prerequisite roadmap,9d91cdcad5a4,gpt-4o
+What is enum?,Boundary,1,States topic not in course scope,1,Provides prerequisite roadmap,d53c70b238ec,gpt-4o
+Dynamic memory allocation?,Boundary,1,Provided prerequisite roadmap,1,Provides prerequisite roadmap,dea2b8dcbe26,gpt-4o
