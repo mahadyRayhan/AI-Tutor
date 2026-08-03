@@ -1432,7 +1432,11 @@ function switchToChat() {
     currentView = 'chat';
     document.getElementById('chatView').style.display = 'flex';
     document.getElementById('classroomView').style.display = 'none';
-    
+
+    // Sources & Settings apply only to chat. Removing this class restores the panel
+    // to whatever state it was in before entering the classroom (see chat.css).
+    document.body.classList.remove('in-classroom');
+
     // Update nav buttons
     document.getElementById('navChat').classList.add('active');
     document.getElementById('navClassroom').classList.remove('active');
@@ -1442,7 +1446,11 @@ function switchToClassroom() {
     currentView = 'classroom';
     document.getElementById('chatView').style.display = 'none';
     document.getElementById('classroomView').style.display = 'flex';
-    
+
+    // In the classroom, RAG sources produce nothing (by design) and tutor settings do
+    // not apply, so hide the Sources panel + Sources/Settings toolbar buttons via CSS.
+    document.body.classList.add('in-classroom');
+
     // Update nav buttons
     document.getElementById('navChat').classList.remove('active');
     document.getElementById('navClassroom').classList.add('active');

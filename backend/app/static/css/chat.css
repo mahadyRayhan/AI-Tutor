@@ -1688,6 +1688,27 @@ body.hide-resources .resources-section * {
     pointer-events: none;
 }
 
+/* ─── Classroom view: Sources & Settings do not apply here ───
+   RAG sources produce nothing in the classroom (by design) and the tutor settings are
+   chat-only, so collapse the Sources panel and hide the Sources/Settings toolbar
+   buttons. Toggled by body.in-classroom (chat.js switchToClassroom / switchToChat);
+   removing the class restores the panel to its previous chat state. */
+body.in-classroom .resources-section {
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    border-left: none !important;
+    overflow: hidden !important;
+}
+body.in-classroom .resources-section * {
+    display: none !important;
+    pointer-events: none;
+}
+body.in-classroom #navSources,
+body.in-classroom #navSettings {
+    display: none !important;
+}
+
 /* Top Bar Toggle Button (visible on all screen sizes) */
 .top-toggle {
     background: transparent;
