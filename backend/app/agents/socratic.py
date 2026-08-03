@@ -79,9 +79,13 @@ class SocraticTutorAgent(BaseAgent):
         suggest_task = asyncio.create_task(asyncio.to_thread(self._generate_suggestions, state.query, context_text))
 
         # 4. Select Prompt based on Intent
-        if state.intent == "DEBUG":
-            # Reuse Socratic Plan prompt for debugging logic as it encourages step-by-step thinking
-            prompt = self._build_socratic_plan_prompt(state.query, context_text, state.user_goal)
+        if state.intent in ("DEBUG", "REVIEW"):
+            # Diagnostic mode. The learner has a specific artifact and a specific problem,
+            # so the goal is diagnosis and repair, not exposition: what's wrong -> why
+            # (targeted) -> how to fix (a hint, not the solution) -> optional apply-the-fix.
+            # Deliberately NOT the concept scaffold: use-cases and diagrams serve acquisition,
+            # not debugging, and only dilute the fix.
+            prompt = self._build_diagnostic_prompt(state.query, context_text, state.user_goal, state.profile)
             style_used = None
         elif state.intent == "COMPLEX_PROBLEM":
             # Provide a high-level architectural plan without scaffolding
@@ -353,6 +357,57 @@ class SocraticTutorAgent(BaseAgent):
         
         {format_rules}
         """, best_style
+
+    def _build_diagnostic_prompt(self, query: str, context: str, user_goal: str = None,
+                                 profile: Dict[str, Any] = {}) -> str:
+        """DEBUG / REVIEW mode. The learner has a concrete artifact and a concrete problem;
+        the job is to diagnose and guide repair, not to teach the topic from scratch.
+
+        Structure: What's Wrong -> Why (targeted) -> How to Fix (a hint, not a full solution)
+        -> optional Apply the Fix. It intentionally OMITS the concept scaffold — Use Cases,
+        Visual Model / Mermaid diagram, and the generic Micro-Challenge — because those serve
+        concept acquisition, not debugging, and only dilute the fix. Sections are gated
+        through `tutor_preferences`, mirroring `_build_concept_prompt`, so an instructor can
+        turn the targeted 'Why' or the 'Apply the Fix' step on or off.
+        """
+        prefs = profile.get("tutor_preferences", {}) if profile else {}
+        frustration_level = profile.get("frustration_level", "normal") if profile else "normal"
+
+        tone = "Supportive, precise, and focused. Speak directly to the student using 'you'."
+        if frustration_level in ["high", "rage"]:
+            tone = ("Extra patient — the student is frustrated. Normalise the mistake (this bug "
+                    "catches everyone) before the diagnosis, and keep it calm and concrete.")
+
+        goal_line = f"\n        Student's Goal: '{user_goal}'" if user_goal else ""
+
+        fmt = ["**STRICT RESPONSE FORMAT — use ONLY the exact Markdown headers (##) below, in this order:**",
+               "## What's Wrong\n[Identify the specific error(s) in the student's code. Quote the exact token, line, or construct at fault. If there are several, use a short bulleted list. This is a diagnosis — do not dwell on what the code does correctly.]"]
+        if prefs.get("show_explanation", True):
+            fmt.append("## Why\n[Explain the reason THIS specific error is wrong — only the concept behind this bug. Keep it targeted: 2-4 sentences. Do NOT give a general tutorial on the topic, and include no use-cases and no diagram.]")
+        fmt.append("## How to Fix\n[Guide the student to the correction: state what must change and why it resolves the error. Do NOT rewrite their whole program or hand over a complete corrected solution — give the rule and a targeted hint so they make the edit themselves.]")
+        if prefs.get("show_apply_fix", True):
+            fmt.append("## Your Turn: Apply the Fix\n[Ask the student to write the single corrected line or construct themselves. One specific instruction. End the response here — do not add the corrected answer after it.]")
+        format_rules = "\n\n".join(fmt)
+
+        return f"""
+        You are an expert C debugging tutor reviewing a student's own code.
+
+        Student's Emotional State: {frustration_level.upper()}
+        Student's Message: "{query}"{goal_line}
+
+        Reference Material: {context}
+
+        **TONE:** {tone}
+
+        **MANDATORY RULES:**
+        1. This is a DEBUG/REVIEW request, not a concept lesson. Diagnose the student's actual code; do not pivot into a general explanation of the topic.
+        2. NO "Use Cases" section. NO flowchart / Mermaid diagram. NO generic micro-challenge unrelated to their bug.
+        3. Do NOT provide a full corrected program. Guide the fix and let the student apply it.
+        4. If the code is actually correct, say so plainly under "## What's Wrong" (e.g., "Nothing — this compiles and behaves as intended") and note anything risky. Do NOT invent errors.
+        5. The student's own code is the primary subject; use the Reference Material only where it helps ground the fix.
+
+        {format_rules}
+        """
 
     def _build_socratic_plan_prompt(self, query: str, context: str, user_goal: str = None) -> str:
         goal_instruction = ""

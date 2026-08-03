@@ -143,12 +143,17 @@ class SentinelAgent(BaseAgent):
         # IRL EXTRACTION: Determine Intent & Entities (If not already set)
         # =========================================================
         if not state.intent:
-            has_braces = "{" in state.query and "}" in state.query
+            has_open_brace = "{" in state.query   # broken code (missing '}') IS the common debug case
             has_semicolon = ";" in state.query
-            has_return_or_type = any(kw in query_lower for kw in ["return", "int ", "float ", "void ", "char "])
-            
-            # Code Review Heuristic
-            if (has_braces and has_return_or_type) or (has_braces and has_semicolon):
+
+            # Code review / debug heuristic. Detect a submission by the PRESENCE of code
+            # punctuation, not by well-formedness — the old rule required a matched
+            # '{' ... '}', which mislabelled exactly the broken code that needs review
+            # (e.g. a for-header with a missing brace routed into the concept scaffold).
+            # A '{' or a ';' is enough, and real code submissions essentially always carry
+            # one; we deliberately do NOT trigger on a bare call like "what does printf() do?"
+            # (empty parens, no statement punctuation) — that is a concept question.
+            if has_open_brace or has_semicolon:
                 state.intent = "REVIEW"
                 state.entities = ["code submission"]
             else:
