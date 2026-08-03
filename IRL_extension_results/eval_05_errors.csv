@@ -1,6 +1,6 @@
-profile,lambda,n,true_master,theorem_violations,canonical_cert_rate,canonical_false_k,canonical_false_n,canonical_false_rate,canonical_defer_k,canonical_defer_n,canonical_defer_rate,canonical_mean_ops,pooled_n9_cert_rate,pooled_n9_false_k,pooled_n9_false_n,pooled_n9_false_rate,pooled_n9_defer_k,pooled_n9_defer_n,pooled_n9_defer_rate,pooled_n9_mean_ops,factored_cert_rate,factored_false_k,factored_false_n,factored_false_rate,factored_defer_k,factored_defer_n,factored_defer_rate,factored_mean_ops
-master,1.0,2000,True,0,1.0,0,0,,0,2000,0.0,4.7,1.0,0,0,,0,2000,0.0,11.1,0.749,0,0,,502,2000,0.251,34.9
-lopsided,1.0,2000,False,0,0.999,1998,2000,0.999,0,0,,10.5,0.999,1998,2000,0.999,0,0,,16.9,0.0005,1,2000,0.0005,0,0,,49.0
-inverse_lopsided,1.0,2000,False,0,0.39,780,2000,0.39,0,0,,28.7,0.3155,631,2000,0.3155,0,0,,37.1,0.001,2,2000,0.001,0,0,,39.0
-moderate,1.0,2000,False,0,1.0,2000,2000,1.0,0,0,,9.2,1.0,2000,2000,1.0,0,0,,15.7,0.358,716,2000,0.358,0,0,,42.2
-weak,1.0,2000,False,0,0.4855,971,2000,0.4855,0,0,,26.1,0.3925,785,2000,0.3925,0,0,,34.4,0.0,0,2000,0.0,0,0,,
+profile,lambda,n,true_master,theorem_violations,canonical_cert_rate,canonical_false_k,canonical_false_n,canonical_false_rate,canonical_defer_k,canonical_defer_n,canonical_defer_rate,canonical_mean_ops,pooled_n9_cert_rate,pooled_n9_false_k,pooled_n9_false_n,pooled_n9_false_rate,pooled_n9_defer_k,pooled_n9_defer_n,pooled_n9_defer_rate,pooled_n9_mean_ops,conjunctive_cert_rate,conjunctive_false_k,conjunctive_false_n,conjunctive_false_rate,conjunctive_defer_k,conjunctive_defer_n,conjunctive_defer_rate,conjunctive_mean_ops,factored_cert_rate,factored_false_k,factored_false_n,factored_false_rate,factored_defer_k,factored_defer_n,factored_defer_rate,factored_mean_ops
+master,1.0,2000,True,0,1.0,0,0,,0,2000,0.0,4.6,1.0,0,0,,0,2000,0.0,11.0,0.7985,0,0,,403,2000,0.2015,33.9,0.7555,0,0,,489,2000,0.2445,35.1
+lopsided,1.0,2000,False,0,0.9985,1997,2000,0.9985,0,0,,10.7,0.9985,1997,2000,0.9985,0,0,,17.3,0.0005,1,2000,0.0005,0,0,,44.0,0.0005,1,2000,0.0005,0,0,,44.0
+inverse_lopsided,1.0,2000,False,0,0.4,800,2000,0.4,0,0,,27.6,0.3095,619,2000,0.3095,0,0,,36.2,0.004,8,2000,0.004,0,0,,43.5,0.001,2,2000,0.001,0,0,,46.5
+moderate,1.0,2000,False,0,0.9995,1999,2000,0.9995,0,0,,9.1,0.9985,1997,2000,0.9985,0,0,,15.8,0.447,894,2000,0.447,0,0,,41.5,0.358,716,2000,0.358,0,0,,42.9
+weak,1.0,2000,False,0,0.465,930,2000,0.465,0,0,,27.9,0.383,766,2000,0.383,0,0,,35.8,0.0,0,2000,0.0,0,0,,,0.0,0,2000,0.0,0,0,,
