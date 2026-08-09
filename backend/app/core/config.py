@@ -33,6 +33,14 @@ DEFAULT_GOOGLE_MODEL_ID = "gemini-3.1-flash-lite"
 DEFAULT_GOOGLE_EMBEDDING_MODEL = "gemini-embedding-001"
 DEFAULT_OPENAI_CHAT_MODEL = "gpt-4-turbo"
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+
+# --- Text-to-Speech (TTS) ---
+# Which provider serves /api/v1/tts/speak. "google" (default) uses Gemini TTS on the
+# existing GOOGLE_API_KEY; set TTS_PROVIDER=openai to fall back to the legacy tts-1 path.
+DEFAULT_TTS_PROVIDER = os.getenv("TTS_PROVIDER", "google")
+DEFAULT_GOOGLE_TTS_MODEL = os.getenv("GOOGLE_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+DEFAULT_GOOGLE_TTS_VOICE = os.getenv("GOOGLE_TTS_VOICE", "Kore")
+
 SYSTEM_TYPE = os.getenv("SYSTEM_TYPE", "math-system")
 
 # --- Default Paths (Now built from PROJECT_ROOT) ---

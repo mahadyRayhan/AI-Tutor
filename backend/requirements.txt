@@ -6,6 +6,7 @@ uvicorn[standard]
 
 # --- LLM and AI Libraries ---
 google-generativeai
+google-genai
 
 # LangChain has become modular. We need to install the specific components.
 langchain-core

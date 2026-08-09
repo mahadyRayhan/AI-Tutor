@@ -2259,18 +2259,85 @@ async def log_prelab_start(req: PrelabStartRequest):
     return {"status": "ok"}
 
 
+# ── TTS helpers ─────────────────────────────────────────────────────────────
+# Gemini TTS returns raw 24 kHz, 16-bit, mono PCM. Browsers need a container, so wrap it
+# in a minimal WAV header before streaming (avoids an mp3 transcode / ffmpeg dependency).
+def _pcm_to_wav(pcm: bytes, sample_rate: int = 24000, channels: int = 1, bits: int = 16) -> bytes:
+    import struct
+    byte_rate = sample_rate * channels * bits // 8
+    block_align = channels * bits // 8
+    header = b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVE"
+    header += b"fmt " + struct.pack("<IHHIIHH", 16, 1, channels, sample_rate, byte_rate, block_align, bits)
+    header += b"data" + struct.pack("<I", len(pcm))
+    return header + pcm
+
+# The frontend sends OpenAI voice names (e.g. "nova"). Map the common ones to a comparable
+# Gemini voice; anything unrecognized falls back to the configured default.
+_OPENAI_TO_GOOGLE_VOICE = {
+    "nova": "Kore", "shimmer": "Aoede", "alloy": "Puck",
+    "echo": "Charon", "fable": "Fenrir", "onyx": "Orus",
+}
+
+def _google_voice_for(requested: str) -> str:
+    if not requested:
+        return config.DEFAULT_GOOGLE_TTS_VOICE
+    if requested[:1].isupper():        # already a Gemini voice name → pass through
+        return requested
+    return _OPENAI_TO_GOOGLE_VOICE.get(requested.lower(), config.DEFAULT_GOOGLE_TTS_VOICE)
+
+def _synthesize_google(text: str, voice: str) -> bytes:
+    """Gemini TTS → WAV bytes, using the existing GOOGLE_API_KEY (AI Studio key).
+    Local import so a missing google-genai install only fails the request, not startup."""
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=config.GOOGLE_API_KEY)
+    resp = client.models.generate_content(
+        model=config.DEFAULT_GOOGLE_TTS_MODEL,
+        contents=text,
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=_google_voice_for(voice)
+                    )
+                )
+            ),
+        ),
+    )
+    pcm = resp.candidates[0].content.parts[0].inline_data.data
+    return _pcm_to_wav(pcm)
+
+
 @app.post("/api/v1/tts/speak")
 async def tts_speak(req: TTSSpeakRequest):
-    """Converts text to speech using OpenAI TTS (nova voice). Strips markdown first."""
-    if not config.OPENAI_API_KEY:
-        raise HTTPException(status_code=503, detail="TTS unavailable: OPENAI_API_KEY not configured.")
-
+    """Text-to-speech for the "Listen" button. Default provider is Google (Gemini TTS on
+    the existing GOOGLE_API_KEY); set TTS_PROVIDER=openai to use the legacy tts-1 path."""
     cleaned = _clean_text_for_tts(req.text)
     if len(cleaned) > 4096:
         cleaned = cleaned[:4093] + "..."
     if not cleaned.strip():
         raise HTTPException(status_code=400, detail="No speakable text after cleaning.")
 
+    # ── Google (Gemini TTS) — default ──
+    if config.DEFAULT_TTS_PROVIDER == "google":
+        if not config.GOOGLE_API_KEY:
+            raise HTTPException(status_code=503, detail="TTS unavailable: GOOGLE_API_KEY not configured.")
+        try:
+            wav = _synthesize_google(cleaned, req.voice)
+            from io import BytesIO
+            return StreamingResponse(
+                BytesIO(wav),
+                media_type="audio/wav",
+                headers={"Content-Disposition": "inline; filename=speech.wav"},
+            )
+        except Exception as e:
+            logger.error(f"Google TTS error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
+
+    # ── OpenAI (legacy fallback, TTS_PROVIDER=openai) ──
+    if not config.OPENAI_API_KEY:
+        raise HTTPException(status_code=503, detail="TTS unavailable: OPENAI_API_KEY not configured.")
     try:
         import openai as _openai  # local import — avoids interfering with langchain-openai at module level
         client = _openai.OpenAI(api_key=config.OPENAI_API_KEY)
