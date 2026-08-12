@@ -975,6 +975,7 @@ function initializeApp() {
 
     loadChatHistory();
     loadInitialPreferences();
+    loadAssignmentBanner();   // surface any instructor-assigned material at the top of chat
 
     // Check for deep-link initial message from Dashboard
     const urlParams = new URLSearchParams(window.location.search);
@@ -1060,6 +1061,44 @@ function initializeApp() {
 
 function logout() { localStorage.removeItem('c_tutor_user'); location.reload(); }
 function openDashboard() { window.location.href = currentUser.role === 'teacher' ? 'teacher_dashboard.html' : 'student_dashboard.html'; }
+
+// --- Instructor-assigned material: a dismissable banner at the top of the chat ---
+async function loadAssignmentBanner() {
+    if (!currentUser) return;
+    const host = document.getElementById('assignmentBanner');
+    if (!host) return;
+    try {
+        const res = await fetch(`${API_URL}/api/v1/assignments/student/${currentUser.username}`);
+        const items = (await res.json()).filter(a => a.kind === 'material' && a.status !== 'DONE');
+        if (!items.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
+        const chips = items.map(it => {
+            const icon = it.material_kind === 'code' ? '💻' : (it.material_kind === 'file' ? '📎' : '📄');
+            const label = (it.material || 'resource')
+                .replace(/^\d+_/, '').replace(/^demo_/, '').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+            const dl = `${API_URL}/api/v1/materials/download?kind=${encodeURIComponent(it.material_kind || 'reading')}&name=${encodeURIComponent(it.material || '')}`;
+            return `<span style="display:inline-flex; align-items:center; gap:8px; background:rgba(167,139,250,0.12); border:1px solid rgba(167,139,250,0.35); border-radius:10px; padding:6px 11px; margin:4px 6px 0 0;">
+                <span>${icon} ${it.topic ? escapeHTML(it.topic) + ' — ' : ''}${escapeHTML(label)}</span>
+                <a href="${dl}" target="_blank" rel="noopener" style="color:#a78bfa; font-weight:600; text-decoration:none;">Open</a>
+                <button onclick="dismissAssignment('${it.id}')" title="Mark as done" style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:1rem; line-height:1;">✕</button>
+            </span>`;
+        }).join('');
+        host.innerHTML = `<div style="display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap; padding:12px 14px; margin:10px auto 0; max-width:760px; width:100%; box-sizing:border-box; background:rgba(167,139,250,0.06); border:1px solid rgba(167,139,250,0.25); border-radius:12px;">
+            <div style="font-weight:600; white-space:nowrap;">📚 From your instructor:</div>
+            <div style="flex:1;">${chips}</div>
+        </div>`;
+        host.style.display = 'block';
+    } catch (e) { console.error('assignment banner failed:', e); host.style.display = 'none'; }
+}
+
+async function dismissAssignment(id) {
+    try {
+        await fetch(`${API_URL}/api/v1/assignments/material_done`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assignment_id: id })
+        });
+    } catch (e) { console.error('dismiss assignment failed:', e); }
+    loadAssignmentBanner();
+}
 
 // --- 5. HISTORY & SIDEBAR ---
 function toggleSidebar() {

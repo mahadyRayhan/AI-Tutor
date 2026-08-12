@@ -654,6 +654,31 @@ async function loadAssignments() {
             let statusBadge = '';
             let contentHtml = '';
 
+            // 0. MATERIAL STATE — reading / code / uploaded file assigned by the teacher.
+            if (item.kind === 'material') {
+                const done = item.status === 'DONE';
+                const kindIcon = item.material_kind === 'code' ? '💻'
+                    : (item.material_kind === 'file' ? '📎' : '📄');
+                const label = (item.material || 'resource')
+                    .replace(/^\d+_/, '').replace(/^demo_/, '').replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+                const dl = `${API_URL}/api/v1/materials/download?kind=${encodeURIComponent(item.material_kind || 'reading')}&name=${encodeURIComponent(item.material || '')}`;
+                statusBadge = done
+                    ? '<span class="challenge-status st-graded">Done</span>'
+                    : '<span class="challenge-status st-pending">New</span>';
+                list.innerHTML += `
+                <div class="challenge-item" style="border-left:3px solid #34d399;">
+                    <div class="challenge-header">
+                        <span style="color:#777; font-size:0.8rem;">📅 ${new Date(item.timestamp).toLocaleDateString()}</span>
+                        ${statusBadge}
+                    </div>
+                    <p style="font-size:1.02rem; font-weight:600; margin:6px 0;">📚 Your instructor assigned you${item.topic ? ` — <span style="color:#34d399;">${item.topic}</span>` : ''}</p>
+                    ${item.question ? `<p style="color:#94a3b8; font-size:0.9rem; margin-bottom:10px;">${item.question}</p>` : ''}
+                    <a href="${dl}" target="_blank" rel="noopener" style="display:inline-block; background:#a78bfa; color:#0f1115; padding:8px 16px; border-radius:8px; font-weight:600; text-decoration:none;">${kindIcon} Open ${label}</a>
+                    ${done ? '' : `<button onclick="markMaterialDone('${item.id}')" style="margin-left:10px; background:transparent; color:#94a3b8; border:1px solid rgba(255,255,255,0.15); padding:8px 14px; border-radius:8px; cursor:pointer; font-family:Inter,sans-serif;">Mark as done</button>`}
+                </div>`;
+                return;
+            }
+
             // 1. PENDING STATE (Input Box)
             if (item.status === 'PENDING') {
                 statusBadge = '<span class="challenge-status st-pending">Wait for Reply</span>'; // Actually 'Action Required'
@@ -721,6 +746,17 @@ async function submitChallenge(id) {
             alert("Submission failed.");
         }
     } catch (e) { console.error(e); }
+}
+
+async function markMaterialDone(id) {
+    try {
+        const res = await fetch(`${API_URL}/api/v1/assignments/material_done`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assignment_id: id })
+        });
+        if (res.ok) loadAssignments();
+    } catch (e) { console.error("Mark done failed", e); }
 }
 
 // Start!

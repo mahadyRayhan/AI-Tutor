@@ -425,6 +425,66 @@ def is_mastered(username: str, concept: str) -> bool:
     return newly_mastered
 
 
+def reconcile_certifications(username: str | None = None) -> dict:
+    """Clear stale is_certified flags that time-decay has silently lapsed.
+
+    Certification posteriors decay with elapsed time (Eq. 18), but the stored
+    is_certified flag is only corrected lazily inside is_mastered() — which runs
+    during active practice, never while a learner is idle. So a certified learner
+    who stops practising keeps is_certified=1 even after their decayed posterior
+    has fallen below THETA_DECERTIFY. Teacher-facing reads (Triage, Model Health)
+    trust the stored flag, so they miss — or mislabel — these lapsed learners.
+
+    This sweep applies the SAME hysteresis check as is_mastered() to every
+    currently-certified row and clears the flag where any tier has decayed below
+    THETA_DECERTIFY. Decay only ever lowers a posterior, so this can only
+    DECERTIFY — it never re-certifies (that requires fresh evidence through the
+    normal update path). ever_certified is left untouched (Fix #5). Idempotent:
+    a second run over already-reconciled data decertifies nothing.
+
+    Pass a username to scope the sweep to one learner, else it covers everyone.
+    Returns {"checked": int, "decertified": int, "rows": [(username, concept), …]}.
+    """
+    where = "WHERE is_certified=1"
+    params: tuple = ()
+    if username is not None:
+        where += " AND username=?"
+        params = (username,)
+
+    rows = db.fetch_all(
+        "SELECT username, concept, "
+        "p_mastery_quiz, p_mastery_micro, p_mastery_code, "
+        "last_quiz_at, last_micro_at, last_code_at, "
+        "decay_quiz_lam, decay_micro_lam, decay_code_lam "
+        f"FROM user_knowledge {where}",
+        params,
+    )
+
+    lapsed = []
+    for r in rows:
+        q = _apply_decay(r["p_mastery_quiz"]  or 0.0, "quiz",  _parse_ts(r["last_quiz_at"]),  lam=r["decay_quiz_lam"])
+        m = _apply_decay(r["p_mastery_micro"] or 0.0, "micro", _parse_ts(r["last_micro_at"]), lam=r["decay_micro_lam"])
+        c = _apply_decay(r["p_mastery_code"]  or 0.0, "code",  _parse_ts(r["last_code_at"]),  lam=r["decay_code_lam"])
+        if q < THETA_DECERTIFY or m < THETA_DECERTIFY or c < THETA_DECERTIFY:
+            db.execute(
+                "UPDATE user_knowledge SET is_certified=0 WHERE username=? AND concept=?",
+                (r["username"], r["concept"]),
+            )
+            lapsed.append((r["username"], r["concept"]))
+            try:
+                from app.core import telemetry
+                telemetry.log_event(r["username"], "decertification",
+                                    {"concept": r["concept"], "q": q, "m": m, "c": c,
+                                     "source": "reconcile"})
+            except Exception:
+                pass
+
+    if lapsed:
+        logger.info(f"[BKT] reconcile_certifications: decertified {len(lapsed)}/{len(rows)} "
+                    f"stale-certified row(s)")
+    return {"checked": len(rows), "decertified": len(lapsed), "rows": lapsed}
+
+
 def answers_to_certify(p_current: float, n_evidence: int, cfg: dict,
                        theta: float = THETA_CERTIFY, n_min: int = N_MIN,
                        max_iter: int = 50) -> int:
@@ -506,4 +566,5 @@ bkt = type("BKTModel", (), {
     "get_effective_mastery": staticmethod(get_effective_mastery),
     "is_mastered":           staticmethod(is_mastered),
     "mastery_ledger":        staticmethod(mastery_ledger),
+    "reconcile_certifications": staticmethod(reconcile_certifications),
 })()

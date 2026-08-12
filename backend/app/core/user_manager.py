@@ -115,23 +115,51 @@ class UserManager:
         self._ensure_admin_exists()
 
     def _ensure_admin_exists(self):
-        try:
-            hashed = pwd_context.hash(_normalize_password("admin123"))
+        """Guarantee the documented default teacher login (teacher1 / admin123) works.
 
-            db.execute("""
-                INSERT OR IGNORE INTO users 
-                (username, password_hash, role, name, email, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                "teacher1",
-                hashed,
-                "teacher",
-                "Default Teacher",
-                "teacher@edu.com",
-                datetime.now()
-            ))
+        Creates the row if missing, and *self-heals* a stale hash. Rows created before
+        passwords were SHA-256 normalized (see _normalize_password) carry a bcrypt hash
+        that no longer matches the current verify path — and the old `INSERT OR IGNORE`
+        seed never updated them, so the default login silently broke. We now reset the
+        hash (and unblock) whenever the default password fails to verify.
+        """
+        try:
+            default_pw = _normalize_password("admin123")
+            row = db.fetch_one(
+                "SELECT password_hash, is_blocked FROM users WHERE username = ?",
+                ("teacher1",)
+            )
+
+            if row is None:
+                db.execute("""
+                    INSERT INTO users
+                    (username, password_hash, role, name, email, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    "teacher1",
+                    pwd_context.hash(default_pw),
+                    "teacher",
+                    "Default Teacher",
+                    "teacher@edu.com",
+                    datetime.now()
+                ))
+                return
+
+            # Row exists: repair it if the documented password no longer verifies,
+            # or if the account got left in a blocked state.
+            try:
+                verifies = pwd_context.verify(default_pw, row["password_hash"])
+            except Exception:
+                verifies = False
+
+            if not verifies or row["is_blocked"]:
+                db.execute(
+                    "UPDATE users SET password_hash = ?, is_blocked = 0 WHERE username = ?",
+                    (pwd_context.hash(default_pw), "teacher1")
+                )
+                print("[user_manager] Reset default teacher login 'teacher1' to 'admin123'.")
         except Exception as e:
-            print(f"Error creating default admin: {e}")
+            print(f"Error ensuring default admin: {e}")
 
     def authenticate(self, username, password) -> Optional[Dict]:
         row = db.fetch_one(

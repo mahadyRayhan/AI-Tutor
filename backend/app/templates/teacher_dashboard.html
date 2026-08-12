@@ -17,7 +17,27 @@
 
         body { font-family: 'Segoe UI', sans-serif; background: var(--light); padding: 20px; color: #333; margin: 0; }
         .container { max-width: 1400px; margin: 0 auto; }
-        
+
+        /* --- TAB NAV --- */
+        .tab-nav {
+            position: sticky; top: 0; z-index: 40;
+            display: flex; gap: 4px; flex-wrap: wrap;
+            background: var(--white); padding: 8px 12px; margin-bottom: 22px;
+            border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .tab-btn {
+            border: none; background: transparent; cursor: pointer;
+            padding: 10px 16px; border-radius: 8px; font-size: 0.95rem;
+            font-weight: 600; color: #6b7280; font-family: inherit;
+            display: flex; flex-direction: column; gap: 1px; line-height: 1.15;
+        }
+        .tab-btn small { font-weight: 400; font-size: 0.68rem; color: #9aa0a6; }
+        .tab-btn:hover { background: #f2f4f6; }
+        .tab-btn.active { background: var(--primary, #2c3e50); color: #fff; }
+        .tab-btn.active small { color: rgba(255,255,255,0.75); }
+        .grid-container[data-tab] { display: none; }
+        .grid-container[data-tab].tab-visible { display: grid; }
+
         /* --- HEADER --- */
         .header { 
             display: flex; justify-content: space-between; align-items: center; 
@@ -288,8 +308,40 @@
         </div>
     </div>
 
+    <!-- TAB NAV: NOW / CLASS / NEXT / SETUP / SYSTEM -->
+    <nav class="tab-nav" id="tabNav">
+        <button class="tab-btn" data-tabkey="NOW"    onclick="showTab('NOW')">Now<small>Who needs me today</small></button>
+        <button class="tab-btn" data-tabkey="CLASS"  onclick="showTab('CLASS')">Class<small>Where everyone stands</small></button>
+        <button class="tab-btn" data-tabkey="NEXT"   onclick="showTab('NEXT')">Next<small>What to teach &amp; prepare</small></button>
+        <button class="tab-btn" data-tabkey="SETUP"  onclick="showTab('SETUP')">Setup<small>Course &amp; users</small></button>
+        <button class="tab-btn" data-tabkey="SYSTEM" onclick="showTab('SYSTEM')">System<small>Is the model trustworthy</small></button>
+    </nav>
+
+    <!-- 0. ACTION TRIAGE — LANDING VIEW (named mechanism per learner, from the 3-tier BKT) -->
+    <div class="grid-container" data-tab="NOW">
+        <div class="card full-width">
+            <h2>🚩 Who needs me today
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— students grouped by what's happening, so one issue is one row. Expand to see who, or act on the whole group.</span>
+            </h2>
+            <div id="triageCounts" style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0;"></div>
+            <div class="table-responsive">
+                <table id="triageTable">
+                    <thead>
+                        <tr>
+                            <th>Students</th>
+                            <th>What's happening</th>
+                            <th>Why we think so</th>
+                            <th>Do this</th>
+                        </tr>
+                    </thead>
+                    <tbody><!-- Loaded via JS --></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- 1. USER MANAGEMENT (New & Improved) -->
-    <div class="grid-container">
+    <div class="grid-container" data-tab="SETUP">
         <div class="card full-width">
             <h2>📬 Pending Reviews</h2>
             <div id="inboxList" style="display:grid; gap:10px;">
@@ -297,7 +349,7 @@
             </div>
         </div>
     </div>
-    <div class="grid-container">
+    <div class="grid-container" data-tab="SETUP">
         <div class="card full-width">
             <h2>🛠️ User Management</h2>
             <div class="table-responsive">
@@ -329,7 +381,7 @@
     </div>
 
     <!-- 2. RESOURCE & VISIBILITY -->
-    <div class="grid-container">
+    <div class="grid-container" data-tab="SETUP">
         <div class="card">
             <h2>📤 Resource Manager</h2>
             <div class="upload-area">
@@ -370,102 +422,85 @@
         </div>
     </div>
 
-    <!-- 3. Global Analytics -->
-    <div class="grid-container">
-        <div class="card">
-            <h2>
-                🔥 Topic Popularity
-                <div class="info-icon">ⓘ
-                    <span class="tooltip-text">
-                        <strong>Measures Engagement Volume.</strong><br>
-                        Shows the total number of questions students are asking per topic. High bars indicate topics students are most curious about or spending the most time on.
-                    </span>
-                </div>
+    <!-- CLASS headline: Where the class stands -->
+    <div class="grid-container" data-tab="CLASS">
+        <div class="card full-width">
+            <h2>🏫 Where the class stands
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— each topic, split by whether students can explain it, complete code, or write it from scratch. Sorted by what needs you most.</span>
             </h2>
-            <div style="flex:1; min-height:200px;"><canvas id="topicChart"></canvas></div>
+            <div id="classStandingBody" style="overflow-x:auto;"></div>
         </div>
-        
+    </div>
+
+    <!-- 3. What students are asking — question types + topics -->
+    <div class="grid-container" data-tab="CLASS">
         <div class="card">
             <h2>
-                ⚠️ Class Struggle Areas
+                🧭 What kind of help students ask for
                 <div class="info-icon">ⓘ
                     <span class="tooltip-text">
-                        <strong>Measures Active Friction.</strong><br>
-                        Counts interactions where students encountered <em>Errors (Debug)</em> or asked for <em>Code Reviews</em>. High bars indicate topics where students are writing broken code or are unsure of their logic.
+                        The mix of question <strong>types</strong> across the class — understanding a concept, solving a problem, debugging an error, code review, or quizzing. Tells you what students mostly come to the tutor for. (Security/greeting turns excluded — those live in the Security Ledger.)
                     </span>
                 </div>
             </h2>
-            <div style="flex:1; min-height:200px;"><canvas id="struggleChart"></canvas></div>
+            <div style="flex:1; min-height:230px;"><canvas id="questionTypeChart"></canvas></div>
+        </div>
+        <div class="card">
+            <h2>
+                📚 Topics students ask about
+                <div class="info-icon">ⓘ
+                    <span class="tooltip-text">
+                        Which curriculum <strong>topics</strong> the questions are about (variables, loops, pointers…). High bars = where the class's attention is going.
+                    </span>
+                </div>
+            </h2>
+            <div style="flex:1; min-height:230px;"><canvas id="topicChart"></canvas></div>
         </div>
     </div>
 
     <!-- 3.5 RISK MATRIX (frustration + low mastery) -->
-    <div class="grid-container">
+    <!-- Risk Matrix has been merged into the Class Progress Monitor table below. -->
+
+    <!-- 4. STUDENT PERFORMANCE (merged: risk + mastery + engagement) -->
+    <div class="grid-container" data-tab="NOW">
         <div class="card full-width">
-            <h2>
-                🚨 Risk Matrix
-                <span style="font-size:0.8rem; font-weight:400; color:#777;">
-                    — students flagged by frustration + low mastery
-                </span>
-                <select id="riskWindowSelector" onchange="loadRiskMatrix(this.value)"
-                        style="float:right; padding:4px; font-size:0.8rem; border-radius:4px; border:1px solid #ccc;">
-                    <option value="7">Last 7 Days</option>
-                    <option value="14" selected>Last 14 Days</option>
-                    <option value="30">Last 30 Days</option>
-                </select>
+            <h2>🎓 Roster
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— risk, mastery &amp; engagement in one view</span>
             </h2>
             <div id="riskMatrixSummary" style="display:flex; gap:12px; margin:10px 0; flex-wrap:wrap;"></div>
-            <div class="table-responsive">
-                <table id="riskMatrixTable">
-                    <thead>
-                        <tr>
-                            <th>Student ID</th>
-                            <th>Risk</th>
-                            <th>Reason</th>
-                            <th>Avg Frustration</th>
-                            <th>Rage Events</th>
-                            <th>Mastery</th>
-                            <th>Certified</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody><!-- Loaded via JS --></tbody>
-                </table>
+            <div style="display:flex; align-items:center; gap:12px; margin:6px 0 14px; flex-wrap:wrap;">
+                <input id="riskSearch" type="search" oninput="onRiskSearch(this.value)"
+                       placeholder="🔍 Search by student, skill, growth area, or risk…"
+                       style="flex:1; min-width:220px; max-width:360px; padding:8px 12px; border:1px solid #ccc; border-radius:8px; font-family:inherit; font-size:0.9rem;">
+                <label style="font-size:0.8rem; color:#7f8c8d; display:inline-flex; align-items:center; gap:6px;">Period:
+                    <select id="mergedPeriodSelector" onchange="onMergedPeriodChange(this.value)"
+                            style="padding:6px 8px; font-size:0.85rem; border-radius:6px; border:1px solid #ccc; cursor:pointer;">
+                        <option value="1">Last 24 Hours</option>
+                        <option value="7" selected>Last 7 Days (1 week)</option>
+                        <option value="30">Last 30 Days (1 month)</option>
+                        <option value="999">All Time</option>
+                    </select>
+                </label>
+                <span id="riskCount" style="font-size:0.8rem; color:#7f8c8d;"></span>
             </div>
-        </div>
-    </div>
-
-    <!-- 4. STUDENT PERFORMANCE -->
-    <div class="grid-container">
-        <div class="card full-width">
-            <h2>🎓 Class Progress Monitor</h2>
             <div class="table-responsive">
                 <table id="riskTable">
                     <thead>
                         <tr>
-                            <th>Student ID</th>
-                            <th>Attention Needed</th>
-                            <th style="min-width: 140px;">
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <span>Active Time</span>
-                                    <select id="timeRangeSelector" onchange="updateAllActiveTimes(this.value)" 
-                                            style="padding:2px; font-size:0.8rem; border-radius:4px; border:1px solid #ccc;">
-                                        <option value="1">Last 24 Hours</option>
-                                        <option value="7" selected>Last 7 Days</option>
-                                        <option value="30">Last 30 Days</option>
-                                        <option value="999">All Time</option>
-                                    </select>
-                                </div>
-                            </th>
-                            <th>Mastered Skill</th>
-                            <th>Growth Area</th>
-                            <th>Last Active</th>
+                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('id')">Student ID<span class="sort-ind" data-key="id" style="opacity:.3;"> ⇅</span></th>
+                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('risk')">Risk<span class="sort-ind" data-key="risk" style="opacity:.3;"> ⇅</span></th>
+                            <th>Reason</th>
+                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('mastery')">Mastery %<span class="sort-ind" data-key="mastery" style="opacity:.3;"> ⇅</span></th>
+                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('active')">Active Time<span class="sort-ind" data-key="active" style="opacity:.3;"> ⇅</span></th>
+                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('weak')">Growth Area<span class="sort-ind" data-key="weak" style="opacity:.3;"> ⇅</span></th>
+                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('last')">Last Active<span class="sort-ind" data-key="last" style="opacity:.3;"> ⇅</span></th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody><!-- Loaded via JS --></tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="6">
+                            <td colspan="8">
                                 <div class="pagination-controls">
                                     <button class="btn-page" onclick="changeRiskPage(-1)">Previous</button>
                                     <span id="riskPageInfo">Page 1</span>
@@ -476,6 +511,75 @@
                     </tfoot>
                 </table>
             </div>
+        </div>
+    </div>
+
+    <!-- 6. MODEL HEALTH — has the model's predictions matched reality? (prediction_log) -->
+    <div class="grid-container" data-tab="SYSTEM">
+        <div class="card full-width">
+            <h2>🎯 Model Health
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— how well the mastery model's predictions have matched observed outcomes (the model grading itself)</span>
+            </h2>
+            <div id="mhStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
+            <div id="mhPlot" style="position:relative; width:100%;"></div>
+            <div id="mhTooltip" style="position:fixed; pointer-events:none; display:none; z-index:60; background:#2c3e50; color:#fff; padding:6px 10px; border-radius:6px; font-size:0.78rem; line-height:1.4; box-shadow:0 4px 12px rgba(0,0,0,0.25);"></div>
+        </div>
+    </div>
+
+    <!-- 7. SECURITY LEDGER — aggregate; evasion separated from curriculum boundary -->
+    <div class="grid-container" data-tab="SYSTEM">
+        <div class="card full-width">
+            <h2>🛡️ Security Ledger
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— gated turns across the cohort; security evasion separated from normal pedagogical redirects (aggregate — no learners named)</span>
+            </h2>
+            <div id="secStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
+            <div id="secBars"></div>
+        </div>
+    </div>
+
+    <!-- NEXT headline: What to prepare next (prep list → assignable groups) -->
+    <div class="grid-container" data-tab="NEXT">
+        <div class="card full-width">
+            <h2>🧑‍🏫 What to prepare next
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— one prep action per topic, the group of students it's for, and reading/code you can assign to that group in one click.</span>
+            </h2>
+            <div id="prepBody"></div>
+        </div>
+    </div>
+
+    <!-- NEXT: Did assignments land? (follow-through on the Prep List) -->
+    <div class="grid-container" data-tab="NEXT">
+        <div class="card full-width">
+            <h2>📬 Did assignments land?
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— what you've assigned and how many students have opened it. Push again, or move on.</span>
+            </h2>
+            <div id="assignStatusBody"></div>
+        </div>
+    </div>
+
+    <!-- NEXT: Ready for what's coming (DAG prerequisite walk) -->
+    <div class="grid-container" data-tab="NEXT">
+        <div class="card full-width">
+            <h2>🎯 Ready for what's coming
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— pick the topic you'll teach next; see if the class holds its prerequisites, and where the gap is.</span>
+            </h2>
+            <div style="display:flex; align-items:center; gap:10px; margin:10px 0 4px; flex-wrap:wrap;">
+                <label style="font-size:0.85rem; color:#555;">I plan to teach:
+                    <select id="readinessTopic" onchange="loadReadiness(this.value)" style="padding:6px 10px; border:1px solid #ccc; border-radius:6px; font-size:0.9rem; margin-left:6px;"></select>
+                </label>
+            </div>
+            <div id="readinessBody"></div>
+        </div>
+    </div>
+
+    <!-- 8. DECERTIFICATION FORECAST — who decays below θ_dec next, projected from the forgetting curve -->
+    <div class="grid-container" data-tab="NEXT">
+        <div class="card full-width">
+            <h2>🔮 Who's about to fade
+                <span style="font-size:0.8rem; font-weight:400; color:#777;">— certified learners projected to drop below the mastery threshold, and when. Act before the lapse, not after.</span>
+            </h2>
+            <div id="fcStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
+            <div id="fcBody"></div>
         </div>
     </div>
 </div>
@@ -503,8 +607,10 @@
                 </div>
             </div>
             
-            <!-- RIGHT: Chats -->
+            <!-- RIGHT: Trajectory + Chats -->
             <div style="width: 65%;">
+                <div id="modalActionBar"></div>
+                <div id="modalTrajectory" style="margin-bottom:18px;"></div>
                 <h3 style="margin-top:0;">💬 Last 2 Conversations</h3>
                 <div id="modalChatContainer" style="display:flex; flex-direction:column; gap:20px;"></div>
             </div>
@@ -516,7 +622,15 @@
     const API_URL = "";
     let currentUserPage = 1;
     let currentRiskPage = 1;
-    const PAGE_SIZE = 10; 
+    // ── Class Progress Monitor state (client-side search / sort / paginate) ──
+    let RISK_ALL = [];               // full class dataset, loaded once
+    let riskSearch = '';
+    let riskSortKey = 'risk';    // open on the most-at-risk students first
+    let riskSortDir = 'desc';
+    let riskViewPage = 1;
+    let RISK_ACTIVE_PERIOD = null;    // the period (days) for which _activeMin values are valid
+    const RISK_VIEW_SIZE = 10;
+    const PAGE_SIZE = 10;
     const USER_ID_MAP = {};
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
     const FILE_RULES = {
@@ -614,12 +728,687 @@
     // --- 2. DATA LOADING ---
     async function loadData() {
         // 1. Load the first page of the tables (Paginated)
+        loadTriage();       // landing view: named-mechanism triage from the 3-tier BKT
+        loadModelHealth();  // has the model's predictions matched reality?
+        loadSecurityLedger(); // aggregate gated turns: evasion vs curriculum boundary
+        loadDecertForecast(); // who decays below θ_dec next, projected from the forgetting curve
+        loadClassStanding();  // CLASS: where the class stands (topic × can explain/complete/write)
+        loadPrepList();       // NEXT: what to prepare next → assignable student groups
+        loadAssignmentStatus(); // NEXT: follow-through — did assignments land?
+        initReadiness();      // NEXT: populate the "ready for what's coming" topic picker
         loadUsersTable(1);
-        loadRiskTable(1);
-        loadRiskMatrix(14);
+        loadRiskTable(1);   // merged: risk matrix + progress + engagement, in one table
 
         // 2. Load the stuff that doesn't change (Charts, Topics, Inbox)
         loadStaticData();
+    }
+
+    // ── Action Triage (landing view) — one named mechanism per learner ──
+    const MECH_COLOR = { decertified: '#c0392b', tier_imbalance: '#e67e22', stalled: '#8e44ad', thin_evidence: '#2980b9' };
+
+    async function loadTriage() {
+        const tbody = document.querySelector('#triageTable tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:16px; color:#999;">🔄 Evaluating learners…</td></tr>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/triage`);
+            renderTriage(await res.json());
+        } catch (e) {
+            console.error('Triage load failed:', e);
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#e74c3c;">Failed to load.</td></tr>';
+        }
+    }
+
+    // mechanism → suggested batch action + labels (teacher language)
+    const MECH_ACTION = {
+        decertified:   { action: 'force_review', verb: 'Refresh',        label: 'Faded' },
+        tier_imbalance:{ action: 'assign_task',  verb: 'Assign coding',  label: "Knows it, can't code it yet" },
+        stalled:       { action: 'assign_task',  verb: 'Plan a check-in',label: 'Stuck' },
+        thin_evidence: { action: 'assign_task',  verb: 'Add a check',    label: 'Not enough practice' },
+    };
+    function clusterWhy(mech, topic) {
+        switch (mech) {
+            case 'decertified':    return `Were solid on ${topic}, but it's faded from not practising.`;
+            case 'tier_imbalance': return `Can explain ${topic} but can't write it from scratch yet.`;
+            case 'stalled':        return `Stuck on ${topic} despite repeated attempts.`;
+            case 'thin_evidence':  return `Marked solid on ${topic} on very little practice.`;
+            default:               return `Need attention on ${topic}.`;
+        }
+    }
+
+    let TRIAGE_CLUSTERS = [];
+    function renderTriage(data) {
+        const tbody = document.querySelector('#triageTable tbody');
+        const countsEl = document.getElementById('triageCounts');
+        const items = (data && data.items) || [];
+        const c = (data && data.counts) || {};
+
+        if (countsEl) {
+            const chip = (label, n, color) =>
+                `<span style="display:inline-flex; align-items:center; gap:6px; background:#f7f7f9; padding:6px 10px; border-radius:4px; font-size:0.8rem; color:#2c3e50;"><span style="width:10px; height:10px; border-radius:50%; background:${color};"></span>${label}: <b>${n || 0}</b></span>`;
+            countsEl.innerHTML =
+                chip('Faded', c.decertified, MECH_COLOR.decertified) +
+                chip("Knows it, can't code it", c.tier_imbalance, MECH_COLOR.tier_imbalance) +
+                chip('Stuck', c.stalled, MECH_COLOR.stalled) +
+                chip('Not enough practice', c.thin_evidence, MECH_COLOR.thin_evidence);
+        }
+
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:16px; color:#27ae60;">✅ Nobody needs attention right now.</td></tr>';
+            return;
+        }
+
+        // Cluster by (mechanism, canonical topic) → one row per issue.
+        const map = new Map();
+        items.forEach(it => {
+            const key = `${it.mechanism}||${it.topic || it.concept}`;
+            if (!map.has(key)) map.set(key, { mechanism: it.mechanism, topic: it.topic || it.concept, students: [] });
+            map.get(key).students.push({ display_id: it.display_id, hidden_username: it.hidden_username });
+        });
+        // Order by severity (mechanism rank) then group size.
+        const SEV = { decertified: 4, tier_imbalance: 3, stalled: 2, thin_evidence: 1 };
+        TRIAGE_CLUSTERS = Array.from(map.values())
+            .sort((a, b) => (SEV[b.mechanism] - SEV[a.mechanism]) || (b.students.length - a.students.length));
+
+        tbody.innerHTML = TRIAGE_CLUSTERS.map((cl, i) => {
+            const color = MECH_COLOR[cl.mechanism] || '#7f8c8d';
+            const meta = MECH_ACTION[cl.mechanism] || { verb: 'Act', label: cl.mechanism };
+            const n = cl.students.length;
+            const who = n === 1 ? cl.students[0].display_id : `${n} students`;
+            return `<tr>
+                <td style="white-space:nowrap;">
+                    <span onclick="toggleCluster(${i})" style="cursor:pointer; font-weight:600; color:#2c3e50;">
+                        <span id="clExp${i}" style="color:#aaa;">▸</span> ${who}</span>
+                </td>
+                <td><span style="background:${color}; color:#fff; padding:2px 10px; border-radius:12px; font-weight:bold; font-size:0.78rem; white-space:nowrap;">${meta.label}</span></td>
+                <td style="font-size:0.85rem; color:#555;">${clusterWhy(cl.mechanism, cl.topic)}</td>
+                <td style="font-size:0.85rem;">
+                    <button onclick="batchAction(${i})" style="background:#8e44ad; color:#fff; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">${meta.verb}${n > 1 ? ' · all ' + n : ''}</button>
+                    <span id="clStatus${i}" style="font-size:0.76rem; color:#27ae60; margin-left:6px;"></span>
+                </td>
+            </tr>
+            <tr id="clRow${i}" style="display:none; background:#fafbfc;"><td colspan="4" style="padding:2px 6px 10px 26px;"><div id="clDetail${i}"></div></td></tr>`;
+        }).join('');
+    }
+
+    function toggleCluster(i) {
+        const row = document.getElementById('clRow' + i), exp = document.getElementById('clExp' + i);
+        if (!row) return;
+        const open = row.style.display !== 'none';
+        row.style.display = open ? 'none' : 'table-row';
+        if (exp) exp.textContent = open ? '▸' : '▾';
+        if (open) return;
+        const cl = TRIAGE_CLUSTERS[i], detail = document.getElementById('clDetail' + i);
+        if (!cl || !detail) return;
+        detail.innerHTML = cl.students.map(s =>
+            `<span onclick="openStudentModal('${s.hidden_username}','${s.display_id}','','${encodeURIComponent('{}')}')"
+                style="display:inline-block; cursor:pointer; font-family:monospace; font-size:0.8rem; color:#2980b9; background:#eef4fb; padding:2px 8px; border-radius:6px; margin:2px 4px 2px 0;">${s.display_id}</span>`).join('');
+    }
+
+    // Batch action: log the prescribed action for EVERY student in the cluster, each with
+    // the flag state at press time (the mechanism) — so actionability stays analysable.
+    async function batchAction(i) {
+        const cl = TRIAGE_CLUSTERS[i];
+        const status = document.getElementById('clStatus' + i);
+        if (!cl) return;
+        const meta = MECH_ACTION[cl.mechanism] || { action: 'assign_task' };
+        if (status) status.innerText = 'recording…';
+        let ok = 0;
+        for (const s of cl.students) {
+            try {
+                const res = await fetch(`${API_URL}/api/v1/analytics/teacher/log_action`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        target_username: s.hidden_username, action: meta.action,
+                        concept: cl.topic, flag_state: `${cl.mechanism}:${meta.label || ''}`
+                    })
+                });
+                if (res.ok) ok++;
+            } catch (e) { console.error('batch action failed for', s.display_id, e); }
+        }
+        if (status) { status.style.color = ok === cl.students.length ? '#27ae60' : '#e67e22'; status.innerText = `✓ recorded for ${ok}/${cl.students.length}`; }
+    }
+
+    // ── Model Health — Brier score + reliability curve from prediction_log ──
+    async function loadModelHealth() {
+        const host = document.getElementById('mhPlot');
+        if (!host) return;
+        host.innerHTML = '<div style="padding:12px; color:#999;">Loading…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/model_health`);
+            renderModelHealth(await res.json());
+        } catch (e) {
+            console.error('Model health load failed:', e);
+            host.innerHTML = '<div style="padding:12px; color:#e74c3c;">Failed to load.</div>';
+        }
+    }
+
+    function mhTile(value, label, sub, color) {
+        return `<div style="flex:1; min-width:150px; background:#f7f7f9; border-radius:8px; padding:12px 14px;">
+            <div style="font-size:1.7rem; font-weight:700; color:${color || '#2c3e50'}; font-variant-numeric:tabular-nums;">${value}</div>
+            <div style="font-size:0.82rem; color:#2c3e50; font-weight:600;">${label}</div>
+            <div style="font-size:0.72rem; color:#7f8c8d;">${sub || ''}</div>
+        </div>`;
+    }
+
+    function renderModelHealth(d) {
+        const statsEl = document.getElementById('mhStats');
+        const host = document.getElementById('mhPlot');
+        if (!host) return;
+        if (!d || !d.n) {
+            if (statsEl) statsEl.innerHTML = '';
+            host.innerHTML = '<div style="padding:12px; color:#777;">No prediction history logged yet.</div>';
+            return;
+        }
+        let cmp = null;
+        if (d.brier_bkt != null && d.brier_eff != null) {
+            cmp = d.brier_eff < d.brier_bkt - 1e-6 ? 'better'
+                : (d.brier_eff > d.brier_bkt + 1e-6 ? 'worse' : 'same');
+        }
+        if (statsEl) {
+            statsEl.innerHTML =
+                mhTile(d.brier_eff != null ? d.brier_eff.toFixed(3) : '—', 'Brier — effective (acted-on)', 'lower is better · 0 = perfect', '#2a78d6') +
+                mhTile(d.brier_bkt != null ? d.brier_bkt.toFixed(3) : '—', 'Brier — raw BKT',
+                       cmp === 'better' ? 'adaptation improves calibration ↓' : cmp === 'worse' ? 'adaptation worse here ↑' : cmp === 'same' ? 'identical to raw on this data' : '', '#eb6834') +
+                mhTile(d.n, 'Predictions scored', `${d.n_users} learners`, '#2c3e50');
+        }
+
+        const W = 560, H = 420, m = { t: 18, r: 18, b: 46, l: 50 };
+        const iw = W - m.l - m.r, ih = H - m.t - m.b;
+        const sx = v => m.l + v * iw, sy = v => m.t + (1 - v) * ih;
+        let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="height:auto; max-width:${W}px; display:block; font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">`;
+        svg += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="#fcfcfb" stroke="#e1e0d9"/>`;
+        [0, .25, .5, .75, 1].forEach(t => {
+            const gx = sx(t), gy = sy(t);
+            svg += `<line x1="${gx}" y1="${m.t}" x2="${gx}" y2="${m.t + ih}" stroke="#eef0ec"/>`;
+            svg += `<line x1="${m.l}" y1="${gy}" x2="${m.l + iw}" y2="${gy}" stroke="#eef0ec"/>`;
+            svg += `<text x="${gx}" y="${m.t + ih + 15}" text-anchor="middle" fill="#898781" font-size="10">${t}</text>`;
+            svg += `<text x="${m.l - 7}" y="${gy + 3}" text-anchor="end" fill="#898781" font-size="10">${t}</text>`;
+        });
+        svg += `<line x1="${sx(0)}" y1="${sy(0)}" x2="${sx(1)}" y2="${sy(1)}" stroke="#c3c2b7" stroke-dasharray="4 4"/>`;
+        svg += `<text x="${sx(.5).toFixed(0)}" y="${(sy(.5) - 6).toFixed(0)}" fill="#b0aea8" font-size="10" transform="rotate(-38 ${sx(.5).toFixed(0)} ${sy(.5).toFixed(0)})">perfectly calibrated</text>`;
+        svg += `<text x="${m.l + iw / 2}" y="${H - 8}" text-anchor="middle" fill="#52514e" font-size="12" font-weight="600">Predicted probability</text>`;
+        svg += `<text x="14" y="${m.t + ih / 2}" text-anchor="middle" fill="#52514e" font-size="12" font-weight="600" transform="rotate(-90 14 ${m.t + ih / 2})">Observed accuracy</text>`;
+        [['Raw BKT', '#eb6834', d.bins_bkt], ['Effective', '#2a78d6', d.bins_eff]].forEach(([label, color, bins]) => {
+            if (!bins || !bins.length) return;
+            const pts = bins.map(b => `${sx(b.p).toFixed(1)},${sy(b.acc).toFixed(1)}`).join(' ');
+            svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" opacity="0.45"/>`;
+            bins.forEach(b => {
+                const r = Math.max(4, Math.min(11, 3 + Math.sqrt(b.n) * 1.5));
+                svg += `<circle cx="${sx(b.p).toFixed(1)}" cy="${sy(b.acc).toFixed(1)}" r="${r.toFixed(1)}" fill="${color}" stroke="#fff" stroke-width="1.5" style="cursor:pointer;" onmousemove="showMhTip(event,'${label}',${b.p},${b.acc},${b.n})" onmouseout="hideMhTip()"></circle>`;
+            });
+        });
+        svg += `</svg>`;
+        svg += `<div style="display:flex; gap:16px; margin-top:8px; font-size:0.78rem; color:#2c3e50; flex-wrap:wrap;">
+            <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:10px;height:10px;border-radius:50%;background:#2a78d6;"></span>Effective (acted-on)</span>
+            <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:10px;height:10px;border-radius:50%;background:#eb6834;"></span>Raw BKT</span>
+            <span style="color:#7f8c8d;">above the line = underconfident · below = overconfident · marker size ∝ #predictions</span>
+        </div>`;
+        host.innerHTML = svg;
+    }
+
+    function showMhTip(evt, series, p, acc, n) {
+        const tip = document.getElementById('mhTooltip');
+        if (!tip) return;
+        tip.innerHTML = `<b>${series}</b><br>predicted ${(p * 100).toFixed(0)}% · observed ${(acc * 100).toFixed(0)}%<br>${n} prediction${n === 1 ? '' : 's'}`;
+        tip.style.display = 'block';
+        tip.style.left = (evt.clientX + 14) + 'px';
+        tip.style.top = (evt.clientY + 14) + 'px';
+        if (evt.target && evt.target.setAttribute) evt.target.setAttribute('r', 12);
+    }
+    function hideMhTip() { const t = document.getElementById('mhTooltip'); if (t) t.style.display = 'none'; }
+
+    // ── Security Ledger — aggregate gated turns; evasion vs curriculum boundary ──
+    async function loadSecurityLedger() {
+        const host = document.getElementById('secBars');
+        if (!host) return;
+        host.innerHTML = '<div style="padding:12px; color:#999;">Loading…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/security_ledger`);
+            renderSecurityLedger(await res.json());
+        } catch (e) {
+            console.error('Security ledger load failed:', e);
+            host.innerHTML = '<div style="padding:12px; color:#e74c3c;">Failed to load.</div>';
+        }
+    }
+
+    function secBar(label, count, learners, maxN, color) {
+        const pct = maxN ? Math.max(1, Math.round(count / maxN * 100)) : 0;
+        return `<div style="display:flex; align-items:center; gap:10px; margin:5px 0;">
+            <div style="width:150px; font-size:0.82rem; color:#2c3e50; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${label}</div>
+            <div style="flex:1; background:#eef0ec; border-radius:4px; height:20px;"><div style="width:${pct}%; background:${color}; height:100%; border-radius:4px;"></div></div>
+            <div style="width:130px; font-size:0.8rem; color:#2c3e50; font-variant-numeric:tabular-nums;"><b>${count}</b> · ${learners} learners</div>
+        </div>`;
+    }
+
+    function renderSecurityLedger(d) {
+        const statsEl = document.getElementById('secStats');
+        const host = document.getElementById('secBars');
+        if (!host) return;
+        if (!d) { host.innerHTML = ''; return; }
+        const ev = d.evasion || { count: 0, learners: 0 };
+        if (statsEl) {
+            statsEl.innerHTML =
+                mhTile(ev.count, '⚠ Evasion attempts (security)', `${ev.learners} learners · peak risk ${ev.max_risk != null ? ev.max_risk : '—'}`, '#d03b3b') +
+                mhTile(d.ped_total, 'Curriculum redirects (pedagogy)', 'tutor guiding, not threats', '#2a78d6') +
+                mhTile(d.total_turns, 'Total turns', `${d.total_gated} gated`, '#2c3e50');
+        }
+        const maxN = Math.max(ev.count, ...(d.pedagogical || []).map(p => p.count), 1);
+        let html = '';
+        html += `<div style="font-size:0.8rem; font-weight:700; color:#c0392b; margin:8px 0 4px;">⚠ Security — evasion attempts (Sentinel blocks)</div>`;
+        html += secBar('Evasion', ev.count, ev.learners, maxN, '#d03b3b');
+        html += `<div style="font-size:0.8rem; font-weight:700; color:#2c3e50; margin:16px 0 4px;">Curriculum / pedagogy — the tutor guiding instead of answering (not threats)</div>`;
+        (d.pedagogical || []).forEach(p => { html += secBar(p.reason, p.count, p.learners, maxN, '#2a78d6'); });
+        host.innerHTML = html;
+    }
+
+    // ── Decertification Forecast — who decays below θ_dec next (forgetting curve) ──
+    async function loadDecertForecast() {
+        const host = document.getElementById('fcBody');
+        if (!host) return;
+        host.innerHTML = '<div style="padding:12px; color:#999;">Loading…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/decert_forecast?horizon=14`);
+            renderDecertForecast(await res.json());
+        } catch (e) {
+            console.error('Decert forecast load failed:', e);
+            host.innerHTML = '<div style="padding:12px; color:#e74c3c;">Failed to load.</div>';
+        }
+    }
+
+    // Color the urgency: ≤3 days critical, ≤7 warning, else watch.
+    function fcUrgencyColor(days) {
+        if (days <= 3) return '#c0392b';
+        if (days <= 7) return '#e67e22';
+        return '#2980b9';
+    }
+
+    function renderDecertForecast(d) {
+        const statsEl = document.getElementById('fcStats');
+        const host = document.getElementById('fcBody');
+        if (!host) return;
+        d = d || {};
+        const items = d.items || [];
+        const certified = d.total_certified || 0;
+
+        if (statsEl) {
+            statsEl.innerHTML =
+                mhTile(d.n_7 || 0,  'Lapse within 7 days',  'send a retention check now', (d.n_7 ? '#c0392b' : '#7f8c8d')) +
+                mhTile(d.n_14 || 0, 'Lapse within 14 days', 'plan a review',              (d.n_14 ? '#e67e22' : '#7f8c8d')) +
+                mhTile(certified,   'Currently certified',  'the pool being forecast',    '#2c3e50');
+        }
+
+        if (items.length === 0) {
+            // Honest empty state — say WHY it's empty, don't just show a blank table.
+            let msg;
+            if (certified === 0) {
+                msg = 'No learners are certified yet, so there is nothing to forecast. This populates once learners certify a topic.';
+            } else {
+                msg = `No certified learner is on a decay path in the next 14 days. The ${certified} currently-certified record(s) have no dated practice yet, so the forgetting curve hasn't started for them — the model only decays mastery once there's a timestamped last-seen. This fills in as learners practice on the clock.`;
+            }
+            host.innerHTML = `<div style="padding:14px 16px; background:#f6f8f9; border:1px solid #e1e6e8; border-radius:8px; color:#5b6b73; font-size:0.9rem; line-height:1.5;">✅ ${msg}</div>`;
+            return;
+        }
+
+        let html = `<table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+            <thead><tr style="text-align:left; color:#7f8c8d; border-bottom:2px solid #eee;">
+                <th style="padding:8px 6px;">Student ID</th>
+                <th style="padding:8px 6px;">Topic</th>
+                <th style="padding:8px 6px;">Fades in</th>
+                <th style="padding:8px 6px;">First skill to go</th>
+                <th style="padding:8px 6px;">Suggested action</th>
+            </tr></thead><tbody>`;
+        items.forEach(it => {
+            const col = fcUrgencyColor(it.days_to_lapse);
+            const when = it.days_to_lapse < 1 ? '&lt;1 day' : `${it.days_to_lapse.toFixed(1)} days`;
+            html += `<tr class="clickable-row" onclick="openStudentModal('${it.hidden_username}', '${it.display_id}', '', '${encodeURIComponent('{}')}')" style="border-bottom:1px solid #f4f4f4;">
+                <td style="padding:8px 6px; font-family:monospace; font-weight:600; color:#2c3e50;">${it.display_id}</td>
+                <td style="padding:8px 6px;">${it.concept}</td>
+                <td style="padding:8px 6px;"><span style="background:${col}; color:#fff; padding:2px 10px; border-radius:12px; font-weight:600; font-variant-numeric:tabular-nums;">${when}</span></td>
+                <td style="padding:8px 6px; color:#555;">${it.first_tier_label} <span style="color:#aaa;">(now ${it.tier_pct_now}%)</span></td>
+                <td style="padding:8px 6px; color:#555;">${it.action}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        host.innerHTML = html;
+    }
+
+    // ── CLASS: Where the class stands (topic × can explain/complete/write) ──
+    let CLASS_STANDING = [];
+    async function loadClassStanding() {
+        const host = document.getElementById('classStandingBody');
+        if (!host) return;
+        host.innerHTML = '<div style="padding:12px; color:#999;">Loading…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/class_standing`);
+            const d = await res.json();
+            CLASS_STANDING = d.topics || [];
+            renderClassStanding(d);
+        } catch (e) {
+            console.error('Class standing load failed:', e);
+            host.innerHTML = '<div style="padding:12px; color:#e74c3c;">Failed to load.</div>';
+        }
+    }
+
+    // A capability cell: % with a thin bar, colored by the value (conjunctive thresholds).
+    function capCell(pct) {
+        return `<td style="padding:8px 6px; min-width:88px;">
+            <div style="display:flex; align-items:center; gap:6px;">
+                <div style="flex:1; height:5px; background:#eee; border-radius:3px;">
+                    <div style="height:100%; width:${Math.min(100, pct)}%; background:${tierColor(pct)}; border-radius:3px;"></div>
+                </div>
+                <span style="font-size:0.76rem; color:#555; font-variant-numeric:tabular-nums; width:30px; text-align:right;">${pct}%</span>
+            </div></td>`;
+    }
+
+    function renderClassStanding(d) {
+        const host = document.getElementById('classStandingBody');
+        if (!host) return;
+        const topics = (d && d.topics) || [];
+        if (!topics.length) {
+            host.innerHTML = '<div style="padding:14px 16px; background:#f6f8f9; border:1px solid #e1e6e8; border-radius:8px; color:#5b6b73; font-size:0.9rem;">No topic activity yet — this fills in as students practise curriculum topics.</div>';
+            return;
+        }
+        let html = `<table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+            <thead><tr style="text-align:left; color:#7f8c8d; border-bottom:2px solid #eee;">
+                <th style="padding:8px 6px;">Topic</th>
+                <th style="padding:8px 6px;">Can explain</th>
+                <th style="padding:8px 6px;">Can complete</th>
+                <th style="padding:8px 6px;">Can write</th>
+                <th style="padding:8px 6px;">Practiced</th>
+                <th style="padding:8px 6px;">Status</th>
+            </tr></thead><tbody>`;
+        topics.forEach((t, i) => {
+            const pill = `<span style="background:${t.status_color}; color:#fff; padding:2px 10px; border-radius:12px; font-size:0.76rem; font-weight:600; white-space:nowrap;">${t.status}</span>`;
+            html += `<tr onclick="toggleStandingRow(${i})" style="border-bottom:1px solid #f4f4f4; cursor:pointer;" title="Click to see the students behind this row">
+                <td style="padding:8px 6px; font-weight:600; color:#2c3e50;"><span id="stExp${i}" style="color:#aaa;">▸</span> ${t.concept}</td>
+                ${capCell(t.explain)}${capCell(t.complete)}${capCell(t.write)}
+                <td style="padding:8px 6px; color:#555; font-variant-numeric:tabular-nums;">${t.practiced}/${t.total}</td>
+                <td style="padding:8px 6px;">${pill}</td>
+            </tr>
+            <tr id="stRow${i}" style="display:none; background:#fafbfc;"><td colspan="6" style="padding:0 6px 10px 26px;"><div id="stDetail${i}"></div></td></tr>`;
+        });
+        html += '</tbody></table>';
+        html += `<div style="font-size:0.72rem; color:#999; margin-top:8px;">Averages over students who've practised each topic, decay-adjusted. Click a topic to see who's behind it.</div>`;
+        host.innerHTML = html;
+    }
+
+    function toggleStandingRow(i) {
+        const row = document.getElementById('stRow' + i);
+        const exp = document.getElementById('stExp' + i);
+        if (!row) return;
+        const open = row.style.display !== 'none';
+        row.style.display = open ? 'none' : 'table-row';
+        if (exp) exp.textContent = open ? '▸' : '▾';
+        if (open) return;
+        // Lazy-render the student breakdown (weakest first), each clickable to their modal.
+        const t = CLASS_STANDING[i];
+        const detail = document.getElementById('stDetail' + i);
+        if (!t || !detail) return;
+        const cellCol = p => tierColor(p);
+        let h = `<table style="width:100%; border-collapse:collapse; font-size:0.8rem;"><tbody>`;
+        (t.students || []).forEach(s => {
+            h += `<tr onclick="event.stopPropagation(); openStudentModal('${s.hidden_username}','${s.display_id}','','${encodeURIComponent('{}')}')" style="cursor:pointer; border-bottom:1px solid #f0f0f0;">
+                <td style="padding:4px 6px; font-family:monospace; color:#2c3e50;">${s.display_id}</td>
+                <td style="padding:4px 6px; color:${cellCol(s.explain)};">explain ${s.explain}%</td>
+                <td style="padding:4px 6px; color:${cellCol(s.complete)};">complete ${s.complete}%</td>
+                <td style="padding:4px 6px; color:${cellCol(s.write)};">write ${s.write}%</td>
+            </tr>`;
+        });
+        h += `</tbody></table>`;
+        detail.innerHTML = h;
+    }
+
+    // ── NEXT: Ready for what's coming (prerequisite DAG walk) ──
+    // ── NEXT: What to prepare next (prep list → assignable groups) ──
+    let PREP_ROWS = [];
+    async function loadPrepList() {
+        const host = document.getElementById('prepBody');
+        if (!host) return;
+        host.innerHTML = '<div style="padding:12px; color:#999;">Working out what to prepare…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/prep_list`);
+            const d = await res.json();
+            PREP_ROWS = d.rows || [];
+            renderPrepList(d);
+        } catch (e) {
+            console.error('prep list load failed:', e);
+            host.innerHTML = '<div style="padding:12px; color:#e74c3c;">Failed to load.</div>';
+        }
+    }
+
+    function renderPrepList(d) {
+        const host = document.getElementById('prepBody');
+        if (!host) return;
+        const rows = d.rows || [];
+        if (!rows.length) { host.innerHTML = '<div style="padding:12px; color:#999;">No topics tracked yet.</div>'; return; }
+
+        let html = `<div style="font-size:0.82rem; color:#777; margin:2px 0 10px;">Sorted by urgency, then by how many students the prep would help (class of ${d.class_size}).</div>`;
+        rows.forEach((r, i) => {
+            const onTrack = r.action === 'on_track';
+            const canAssign = r.group_size > 0 && (r.materials || []).length > 0;
+            const opts = (r.materials || []).map(m =>
+                `<option value="${m.file}" data-kind="${m.kind}">${m.kind === 'code' ? '💻' : '📄'} ${m.label}</option>`).join('');
+            html += `
+            <div style="border:1px solid #eaecef; border-left:4px solid ${r.action_color}; border-radius:8px; padding:12px 14px; margin-bottom:10px; background:${onTrack ? '#fafbfb' : '#fff'};">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <span style="font-weight:700; color:#2c3e50; font-size:1.02rem;">${r.topic}</span>
+                    <span style="background:${r.action_color}; color:#fff; font-size:0.74rem; font-weight:600; padding:2px 9px; border-radius:11px;">${r.action_label}</span>
+                    ${r.group_size > 0 ? `<span style="font-size:0.8rem; color:#555;">for <b>${r.group_size}</b> student${r.group_size === 1 ? '' : 's'}</span>` : ''}
+                </div>
+                <div style="font-size:0.88rem; color:#5b6b73; margin-top:5px;">${r.why}</div>
+                ${canAssign ? `
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px;">
+                    <select id="prepMat${i}" style="padding:5px 9px; border:1px solid #ccc; border-radius:6px; font-size:0.83rem; max-width:280px;">${opts}</select>
+                    <label style="font-size:0.78rem; color:#777; display:inline-flex; align-items:center; gap:4px;">📎 or upload:
+                        <input type="file" id="prepFile${i}" onchange="document.getElementById('prepStatus${i}').innerText = this.files.length ? 'will upload: ' + this.files[0].name : ''"
+                            style="font-size:0.75rem; max-width:190px;">
+                    </label>
+                    <button onclick="assignGroup(${i})" style="background:${r.action_color}; color:#fff; border:none; padding:6px 13px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;">Assign to all ${r.group_size}</button>
+                    <button onclick="togglePrepGroup(${i})" style="background:none; border:none; color:#2980b9; cursor:pointer; font-size:0.8rem; text-decoration:underline;">who's in this group?</button>
+                    <span id="prepStatus${i}" style="font-size:0.8rem; color:#27ae60;"></span>
+                </div>
+                <div id="prepGroup${i}" style="display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #eee; font-size:0.78rem; color:#555;"></div>` : ''}
+            </div>`;
+        });
+        host.innerHTML = html;
+    }
+
+    function togglePrepGroup(i) {
+        const box = document.getElementById('prepGroup' + i);
+        const r = PREP_ROWS[i];
+        if (!box || !r) return;
+        if (box.style.display === 'none') {
+            box.innerHTML = '<b>Weakest first:</b> ' + r.group.map(s =>
+                `<span style="display:inline-block; background:#f1f3f5; border-radius:10px; padding:1px 8px; margin:2px 3px; white-space:nowrap;">${s.display_id} <span style="color:#999;">·${s.weakest}%</span></span>`).join('');
+            box.style.display = 'block';
+        } else { box.style.display = 'none'; }
+    }
+
+    async function assignGroup(i) {
+        const r = PREP_ROWS[i];
+        if (!r) return;
+        const sel = document.getElementById('prepMat' + i);
+        const fileInput = document.getElementById('prepFile' + i);
+        const status = document.getElementById('prepStatus' + i);
+        let material = sel ? sel.value : null;
+        let kind = sel && sel.selectedOptions[0] ? sel.selectedOptions[0].getAttribute('data-kind') : null;
+        const usernames = r.group.map(s => s.hidden_username);
+        if (status) { status.style.color = '#888'; status.innerText = 'recording…'; }
+        try {
+            // If the teacher picked a file, upload it first and assign that instead.
+            if (fileInput && fileInput.files && fileInput.files.length) {
+                if (status) status.innerText = 'uploading file…';
+                const fd = new FormData();
+                fd.append('file', fileInput.files[0]);
+                const up = await fetch(`${API_URL}/api/v1/analytics/teacher/upload_material`, { method: 'POST', body: fd });
+                if (!up.ok) { const err = await up.json().catch(() => ({})); throw new Error(err.detail || 'upload failed'); }
+                const ud = await up.json();
+                material = ud.filename; kind = 'file';
+            }
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/assign_group`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    usernames, topic: r.topic, action: 'assign_material',
+                    material, material_kind: kind,
+                    note: `${r.action}: ${r.action_label}`
+                })
+            });
+            const d = await res.json();
+            if (status) { status.style.color = '#27ae60'; status.innerText = `✓ assigned to ${d.assigned}/${d.of}`; }
+            loadAssignmentStatus();   // reflect the new send in the follow-through panel
+        } catch (e) {
+            console.error('assign group failed:', e);
+            if (status) { status.style.color = '#e74c3c'; status.innerText = e.message || 'failed'; }
+        }
+    }
+
+    // ── NEXT: Did assignments land? (follow-through on the Prep List) ──
+    let ASSIGN_STATUS = [];
+    async function loadAssignmentStatus() {
+        const host = document.getElementById('assignStatusBody');
+        if (!host) return;
+        host.innerHTML = '<div style="padding:12px; color:#999;">Loading…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/assignment_status`);
+            renderAssignmentStatus(await res.json());
+        } catch (e) {
+            console.error('assignment status load failed:', e);
+            host.innerHTML = '<div style="padding:12px; color:#e74c3c;">Failed to load.</div>';
+        }
+    }
+
+    function matLabel(m) {
+        return (m || 'resource').replace(/^\d+_/, '').replace(/^demo_/, '')
+            .replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+    }
+
+    function renderAssignmentStatus(d) {
+        const host = document.getElementById('assignStatusBody');
+        if (!host) return;
+        const a = d.assignments || [];
+        ASSIGN_STATUS = a;
+        if (!a.length) {
+            host.innerHTML = '<div style="padding:14px 16px; background:#f6f8f9; border:1px solid #e1e6e8; border-radius:8px; color:#5b6b73; font-size:0.9rem;">Nothing assigned yet. Use <b>What to prepare next</b> above to assign reading or a file to a group — it\'ll show up here once sent.</div>';
+            return;
+        }
+        let html = '';
+        a.forEach((r, i) => {
+            const pct = r.total ? Math.round(100 * r.done / r.total) : 0;
+            const col = pct >= 70 ? '#27ae60' : (pct >= 30 ? '#e67e22' : '#e74c3c');
+            const icon = r.material_kind === 'code' ? '💻' : (r.material_kind === 'file' ? '📎' : '📄');
+            html += `
+            <div style="border:1px solid #eaecef; border-radius:8px; padding:11px 14px; margin-bottom:9px;">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <span style="font-weight:600; color:#2c3e50;">${icon} ${matLabel(r.material)}</span>
+                    ${r.topic ? `<span style="font-size:0.78rem; color:#777;">${r.topic}</span>` : ''}
+                    ${r.date ? `<span style="font-size:0.74rem; color:#aaa;">sent ${r.date}</span>` : ''}
+                    <span style="margin-left:auto; font-size:0.85rem; font-weight:700; color:${col}; font-variant-numeric:tabular-nums;">${r.done}/${r.total} done</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:7px;">
+                    <div style="flex:1; height:7px; background:#eee; border-radius:4px;">
+                        <div style="height:100%; width:${pct}%; background:${col}; border-radius:4px;"></div>
+                    </div>
+                    ${r.pending ? `<button onclick="toggleAssignPending(${i})" style="background:none; border:none; color:#2980b9; cursor:pointer; font-size:0.78rem; text-decoration:underline; white-space:nowrap;">${r.pending} not yet</button>`
+                                : '<span style="font-size:0.78rem; color:#27ae60; white-space:nowrap;">all done ✓</span>'}
+                </div>
+                <div id="assignPending${i}" style="display:none; margin-top:7px; font-size:0.78rem; color:#555;"></div>
+            </div>`;
+        });
+        host.innerHTML = html;
+    }
+
+    function toggleAssignPending(i) {
+        const box = document.getElementById('assignPending' + i);
+        const r = ASSIGN_STATUS[i];
+        if (!box || !r) return;
+        if (box.style.display === 'none') {
+            box.innerHTML = '<b>Haven\'t opened it yet:</b> ' + r.not_done.map(s =>
+                `<span style="display:inline-block; background:#f1f3f5; border-radius:10px; padding:1px 8px; margin:2px 3px; white-space:nowrap;">${s}</span>`).join('');
+            box.style.display = 'block';
+        } else { box.style.display = 'none'; }
+    }
+
+    async function initReadiness() {
+        const sel = document.getElementById('readinessTopic');
+        if (!sel) return;
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/readiness`);
+            const d = await res.json();
+            const topics = d.topics_available || [];
+            sel.innerHTML = '<option value="">— choose a topic —</option>' +
+                topics.map(t => `<option value="${encodeURIComponent(t)}">${t}</option>`).join('');
+        } catch (e) { console.error('readiness init failed:', e); }
+    }
+
+    async function loadReadiness(topicEnc) {
+        const host = document.getElementById('readinessBody');
+        if (!host) return;
+        const topic = decodeURIComponent(topicEnc || '');
+        if (!topic) { host.innerHTML = ''; return; }
+        host.innerHTML = '<div style="padding:12px; color:#999;">Checking prerequisites…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/readiness?topic=${encodeURIComponent(topic)}`);
+            renderReadiness(await res.json());
+        } catch (e) {
+            console.error('readiness load failed:', e);
+            host.innerHTML = '<div style="padding:12px; color:#e74c3c;">Failed to load.</div>';
+        }
+    }
+
+    function readyBar(pct) {
+        const col = pct >= 60 ? '#27ae60' : (pct >= 30 ? '#e67e22' : '#e74c3c');
+        return `<div style="display:flex; align-items:center; gap:6px;">
+            <div style="flex:1; height:6px; background:#eee; border-radius:3px;">
+                <div style="height:100%; width:${Math.min(100, pct)}%; background:${col}; border-radius:3px;"></div>
+            </div>
+            <span style="font-size:0.76rem; color:#555; width:34px; text-align:right; font-variant-numeric:tabular-nums;">${pct}%</span></div>`;
+    }
+
+    function renderReadiness(d) {
+        const host = document.getElementById('readinessBody');
+        if (!host) return;
+        const prereqs = d.prereqs || [];
+        const untracked = d.untracked_prereqs || [];
+
+        if (!prereqs.length && !untracked.length) {
+            host.innerHTML = `<div style="padding:14px 16px; background:#f6f8f9; border:1px solid #e1e6e8; border-radius:8px; color:#5b6b73; font-size:0.9rem;">No prerequisites recorded for <b>${d.topic}</b> in the concept map — either it's a starting topic, or the graph doesn't link it yet.</div>`;
+            return;
+        }
+
+        let html = '';
+        if (d.readiness_pct != null) {
+            const rc = d.readiness_pct >= 60 ? '#27ae60' : (d.readiness_pct >= 30 ? '#e67e22' : '#e74c3c');
+            html += `<div style="font-size:1.05rem; margin:6px 0 2px;">
+                <b style="color:${rc}; font-size:1.4rem;">${d.readiness_pct}%</b> of the class holds every prerequisite for <b>${d.topic}</b>
+                <span style="color:#999; font-size:0.85rem;">(${d.holders}/${d.total}, ready = at least ${d.ready_bar}% on all three)</span></div>`;
+            if (d.gap) {
+                html += `<div style="font-size:0.92rem; color:#c0392b; margin:4px 0 12px;">⚑ Biggest gap: <b>${d.gap.prereq}</b> — only ${d.gap.pct}% of the class is ready at <b>${d.gap.tier_label}</b>. Prepare a ${d.gap.prereq} warm-up before ${d.topic}.</div>`;
+            }
+        }
+
+        if (prereqs.length) {
+            html += `<table style="width:100%; border-collapse:collapse; font-size:0.86rem; margin-top:6px;">
+                <thead><tr style="text-align:left; color:#7f8c8d; border-bottom:2px solid #eee;">
+                    <th style="padding:8px 6px;">Prerequisite</th>
+                    <th style="padding:8px 6px;">Can explain</th>
+                    <th style="padding:8px 6px;">Can complete</th>
+                    <th style="padding:8px 6px;">Can write</th>
+                </tr></thead><tbody>`;
+            prereqs.forEach(p => {
+                html += `<tr style="border-bottom:1px solid #f4f4f4;">
+                    <td style="padding:8px 6px; font-weight:600; color:#2c3e50;">${p.name}</td>
+                    <td style="padding:8px 6px; min-width:110px;">${readyBar(p.tiers.explain)}</td>
+                    <td style="padding:8px 6px; min-width:110px;">${readyBar(p.tiers.complete)}</td>
+                    <td style="padding:8px 6px; min-width:110px;">${readyBar(p.tiers.write)}</td>
+                </tr>`;
+            });
+            html += '</tbody></table><div style="font-size:0.72rem; color:#999; margin-top:6px;">% of the class ready at each level for each prerequisite.</div>';
+        }
+        if (untracked.length) {
+            html += `<div style="font-size:0.78rem; color:#888; margin-top:8px;">Also required but not yet tracked: ${untracked.join(', ')}.</div>`;
+        }
+        host.innerHTML = html;
     }
 
     // --- RISK MATRIX (frustration + low mastery) ---
@@ -804,85 +1593,248 @@
         if (newPage > 0) loadUsersTable(newPage);
     }
 
-    async function loadRiskTable(page) {
-        const tbody = document.querySelector('#riskTable tbody');
-        // Loading State
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:#999;">🔄 Calculating analytics...</td></tr>';
+    // ── Merged Risk + Progress table: join /detailed (history) with /risk_matrix (window) ──
+    function currentPeriodDays() {
+        return (document.getElementById('mergedPeriodSelector') || {}).value || '7';
+    }
+    // risk_matrix uses a date cutoff; "All Time" (999) → a very large window.
+    function riskMatrixDays(days) { return String(days) === '999' ? 3650 : days; }
 
-        try {
-            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/detailed?page=${page}&page_size=${PAGE_SIZE}`);
-            const data = await res.json();
-            
-            // Pass the array of students to the renderer
-            renderRiskTableRows(data.items);
+    // Fold the two endpoints' rows into one, keyed by the stable hidden_username.
+    function mergeRows(detItems, rmItems) {
+        const byUser = {};
+        (detItems || []).forEach(d => {
+            byUser[d.hidden_username] = Object.assign({ _activeMin: null, _activeStr: null }, d);
+        });
+        (rmItems || []).forEach(m => {
+            const row = byUser[m.hidden_username] ||
+                (byUser[m.hidden_username] = { hidden_username: m.hidden_username, display_id: m.display_id, _activeMin: null, _activeStr: null });
+            row.risk_tier = m.risk_tier;
+            row.risk_reason_m = m.risk_reason;
+            row.avg_frustration = m.avg_frustration;
+            row.turns = m.turns;
+            row.rage_events = m.rage_events;
+            row.avg_mastery_pct = m.avg_mastery_pct;
+            row.concepts_certified = m.concepts_certified;
+        });
+        return Object.values(byUser);
+    }
 
-            // Update State & UI
-            currentRiskPage = data.page;
-            const info = document.getElementById('riskPageInfo');
-            if(info) info.innerText = `Page ${data.page} of ${data.pages}`;
-            
-        } catch (e) { 
-            console.error("Error loading risk table:", e);
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:red;">Error loading data</td></tr>';
+    function renderRiskSummary(s) {
+        const el = document.getElementById('riskMatrixSummary');
+        if (!el) return;
+        s = s || {};
+        // Frustration is a model ESTIMATE — reported at the class level only, never
+        // per learner as fact. Shows % of active learners reading elevated this window.
+        let frustChip = '';
+        if (s.frust_pct != null && s.frust_active > 0) {
+            const hot = s.frust_pct >= 25;
+            const bg = hot ? '#d35400' : '#7f8c8d';
+            frustChip =
+                `<span title="Estimated — cohort aggregate, not a per-student verdict" ` +
+                `style="background:${bg}; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">` +
+                `😟 Class frustration: ${s.frust_pct}% of active learners (${s.frust_elevated}/${s.frust_active})</span>`;
+        } else if (s.frust_active === 0) {
+            frustChip =
+                `<span style="background:#95a5a6; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">` +
+                `😐 Class frustration: no affect data this period</span>`;
         }
+        el.innerHTML =
+            `<span style="background:#e74c3c; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">Critical: ${s.critical || 0}</span>` +
+            `<span style="background:#f39c12; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">High: ${s.high || 0}</span>` +
+            `<span style="background:#3498db; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">Watch: ${s.watch || 0}</span>` +
+            frustChip;
+    }
+
+    // Load & join the whole class in one shot so search & sort span every student.
+    async function loadRiskTable() {
+        const tbody = document.querySelector('#riskTable tbody');
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px; color:#999;">🔄 Calculating analytics...</td></tr>';
+        try {
+            const days = currentPeriodDays();
+            const [detRes, rmRes] = await Promise.all([
+                fetch(`${API_URL}/api/v1/analytics/teacher/detailed?page=1&page_size=100000`),
+                fetch(`${API_URL}/api/v1/analytics/teacher/risk_matrix?days=${riskMatrixDays(days)}`)
+            ]);
+            const det = await detRes.json();
+            const rm = await rmRes.json();
+            RISK_ALL = mergeRows(det.items, rm.items);
+            renderRiskSummary(rm.summary);
+            RISK_ACTIVE_PERIOD = null;
+            riskViewPage = 1;
+            renderRisk();
+        } catch (e) {
+            console.error("Error loading merged risk table:", e);
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:red;">Error loading data</td></tr>';
+        }
+    }
+
+    // Shared period selector: re-pull the windowed risk_matrix, invalidate active times, re-render.
+    async function onMergedPeriodChange(days) {
+        const cnt = document.getElementById('riskCount');
+        if (cnt) cnt.innerText = 'Loading…';
+        try {
+            const rmRes = await fetch(`${API_URL}/api/v1/analytics/teacher/risk_matrix?days=${riskMatrixDays(days)}`);
+            const rm = await rmRes.json();
+            const byUser = {};
+            (rm.items || []).forEach(m => { byUser[m.hidden_username] = m; });
+            RISK_ALL.forEach(row => {
+                const m = byUser[row.hidden_username];
+                if (m) {
+                    row.risk_tier = m.risk_tier; row.risk_reason_m = m.risk_reason;
+                    row.avg_frustration = m.avg_frustration; row.turns = m.turns; row.rage_events = m.rage_events;
+                    row.avg_mastery_pct = m.avg_mastery_pct; row.concepts_certified = m.concepts_certified;
+                }
+            });
+            renderRiskSummary(rm.summary);
+        } catch (e) {
+            console.error("Risk window reload failed:", e);
+        }
+        // Active Time also keys off the window → invalidate its cache.
+        RISK_ACTIVE_PERIOD = null;
+        RISK_ALL.forEach(r => { r._activeMin = null; r._activeStr = null; });
+        if (riskSortKey === 'active') await ensureAllActiveTimes(days);
+        renderRisk();
+    }
+
+    function onRiskSearch(v) { riskSearch = v || ''; riskViewPage = 1; renderRisk(); }
+
+    async function sortRisk(key) {
+        if (riskSortKey === key) {
+            riskSortDir = (riskSortDir === 'asc') ? 'desc' : 'asc';
+        } else {
+            riskSortKey = key;
+            riskSortDir = 'asc';
+        }
+        riskViewPage = 1;
+        // Active Time is lazy-loaded per row; to sort the WHOLE class we need every value first.
+        if (key === 'active') {
+            const days = currentPeriodDays();
+            if (RISK_ACTIVE_PERIOD !== String(days)) {
+                const cnt = document.getElementById('riskCount');
+                if (cnt) cnt.innerText = 'Loading active times…';
+                await ensureAllActiveTimes(days);
+            }
+        }
+        renderRisk();
     }
 
     function changeRiskPage(dir) {
-        const newPage = currentRiskPage + dir;
-        if (newPage > 0) loadRiskTable(newPage);
+        riskViewPage = Math.max(1, riskViewPage + dir);
+        renderRisk();
     }
 
-    function renderRiskTableRows(students) {
+    // --- sort key helpers ---
+    function riskSeverityRank(tier) {
+        return ({ Critical: 4, High: 3, Watch: 2, OK: 1, 'No Data': 0 })[tier] ?? 0;
+    }
+    function riskStudentNum(id) {
+        const m = String(id || '').match(/(\d+)/);
+        return m ? parseInt(m[1], 10) : 0;
+    }
+    function parseActiveMinutes(str) {
+        if (!str) return -1;
+        const h = String(str).match(/(\d+)\s*h/);
+        const m = String(str).match(/(\d+)\s*m/);
+        if (h || m) return (h ? parseInt(h[1], 10) * 60 : 0) + (m ? parseInt(m[1], 10) : 0);
+        const n = String(str).match(/(\d+)/);
+        return n ? parseInt(n[1], 10) : 0;
+    }
+
+    function getFilteredSortedRisk() {
+        const q = riskSearch.trim().toLowerCase();
+        let rows = RISK_ALL;
+        if (q) {
+            rows = rows.filter(s =>
+                (s.display_id || '').toLowerCase().includes(q) ||
+                (s.risk_tier || '').toLowerCase().includes(q) ||
+                (s.risk_reason_m || '').toLowerCase().includes(q) ||
+                (s.strongest_topic || '').toLowerCase().includes(q) ||
+                (s.weakest_topic || '').toLowerCase().includes(q) ||
+                (s.last_active || '').toLowerCase().includes(q)
+            );
+        }
+        const dir = (riskSortDir === 'asc') ? 1 : -1;
+        const key = riskSortKey;
+        return rows.slice().sort((a, b) => {
+            let av, bv;
+            switch (key) {
+                case 'id':      av = riskStudentNum(a.display_id);   bv = riskStudentNum(b.display_id);   break;
+                case 'risk':    av = riskSeverityRank(a.risk_tier);  bv = riskSeverityRank(b.risk_tier);  break;
+                case 'mastery': av = (a.avg_mastery_pct != null ? a.avg_mastery_pct : -1); bv = (b.avg_mastery_pct != null ? b.avg_mastery_pct : -1); break;
+                case 'active':  av = (a._activeMin == null ? -1 : a._activeMin); bv = (b._activeMin == null ? -1 : b._activeMin); break;
+                case 'weak':    av = (a.weakest_topic || '').toLowerCase();   bv = (b.weakest_topic || '').toLowerCase();   break;
+                case 'last':    av = (a.last_active === 'Never' ? '' : (a.last_active || '')); bv = (b.last_active === 'Never' ? '' : (b.last_active || '')); break;
+                default:        av = 0; bv = 0;
+            }
+            if (av < bv) return -1 * dir;
+            if (av > bv) return  1 * dir;
+            return 0;
+        });
+    }
+
+    function updateSortIndicators() {
+        document.querySelectorAll('#riskTable thead .sort-ind').forEach(el => {
+            const active = (el.dataset.key === riskSortKey);
+            el.textContent = active ? (riskSortDir === 'asc' ? ' ▲' : ' ▼') : ' ⇅';
+            el.style.opacity = active ? '1' : '0.3';
+        });
+    }
+
+    function renderRisk() {
+        const rows = getFilteredSortedRisk();
+        const total = rows.length;
+        const pages = Math.max(1, Math.ceil(total / RISK_VIEW_SIZE));
+        if (riskViewPage > pages) riskViewPage = pages;
+        const start = (riskViewPage - 1) * RISK_VIEW_SIZE;
+        const pageRows = rows.slice(start, start + RISK_VIEW_SIZE);
+
         const tbody = document.querySelector('#riskTable tbody');
         tbody.innerHTML = '';
-        
-        if (!students || students.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">No students found.</td></tr>';
-            return;
+
+        if (total === 0) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:20px;">${riskSearch ? 'No students match your search.' : 'No students found.'}</td></tr>`;
+        } else {
+            const tierColor = { Critical: '#e74c3c', High: '#f39c12', Watch: '#3498db', OK: '#27ae60', 'No Data': '#95a5a6' };
+            pageRows.forEach(s => {
+                USER_ID_MAP[s.hidden_username] = s.display_id;
+                const tier = s.risk_tier || 'No Data';
+                const color = tierColor[tier] || '#95a5a6';
+                const riskBadge = `<span style="background:${color}; color:#fff; padding:2px 10px; border-radius:12px; font-weight:bold; font-size:0.8rem;">${tier}</span>`;
+                const masteryStr = encodeURIComponent(JSON.stringify(s.mastery || {}));
+                const timeCellId = `time-${s.display_id}`;
+                const activeCell = (s._activeMin == null)
+                    ? '<span style="color:#bdc3c7; font-size:0.8rem;">Pending...</span>'
+                    : `<span style="font-weight:600; color:#2c3e50;">${s._activeStr}</span>`;
+                const masteryPct = `${s.avg_mastery_pct != null ? s.avg_mastery_pct : 0}%`;
+                const actionBtn = (tier === 'Critical' || tier === 'High')
+                    ? `<button onclick="event.stopPropagation(); pushQuickChallenge('${s.hidden_username}', '${s.display_id}')" style="background:#8e44ad; color:#fff; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem;">Push Challenge</button>`
+                    : '<span style="color:#aaa;">—</span>';
+                tbody.innerHTML += `
+                    <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${tier}', '${masteryStr}')">
+                        <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
+                        <td>${riskBadge}</td>
+                        <td style="font-size:0.85rem; color:#555;">${s.risk_reason_m || '—'}</td>
+                        <td>${masteryPct}</td>
+                        <td id="${timeCellId}" class="active-time-cell" data-username="${s.hidden_username}">${activeCell}</td>
+                        <td>${s.weakest_topic || '—'}</td>
+                        <td>${s.last_active || '—'}</td>
+                        <td>${actionBtn}</td>
+                    </tr>`;
+            });
         }
 
-        students.forEach(s => {
-            // Map hidden username to display ID for other parts of the app
-            USER_ID_MAP[s.hidden_username] = s.display_id;
-            
-            // Determine badge color
-            let riskColor = s.risk_level === 'High' ? '#e74c3c' : (s.risk_level === 'Medium' ? '#f39c12' : '#27ae60');
-            if(s.risk_level === 'Inactive') riskColor = '#95a5a6';
+        const info = document.getElementById('riskPageInfo');
+        if (info) info.innerText = `Page ${riskViewPage} of ${pages}`;
+        const cnt = document.getElementById('riskCount');
+        if (cnt) cnt.innerText = riskSearch
+            ? `${total} match${total === 1 ? '' : 'es'}`
+            : `${total} student${total === 1 ? '' : 's'}`;
 
-            const riskBadge = `
-                <div class="info-icon" style="background:${riskColor}; color:white; width:auto; padding:2px 10px; border-radius:12px; font-weight:bold; font-family:sans-serif;">
-                    ${s.risk_level}
-                    <span class="tooltip-text">${s.risk_reason}</span>
-                </div>
-            `;
+        updateSortIndicators();
 
-            // Escape JSON for onclick handler
-            const masteryStr = encodeURIComponent(JSON.stringify(s.mastery));
-            const timeCellId = `time-${s.display_id}`;
-
-            tbody.innerHTML += `
-                <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${s.risk_level}', '${masteryStr}')">
-                    <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
-                    <td>${riskBadge}</td>
-                    
-                    <!-- Active Time Cell -->
-                    <td id="${timeCellId}" class="active-time-cell" data-username="${s.hidden_username}">
-                        <span style="color:#bdc3c7; font-size:0.8rem;">Pending...</span>
-                    </td>
-                    
-                    <td>${s.strongest_topic}</td>
-                    <td>${s.weakest_topic}</td>
-                    <td>${s.last_active}</td>
-                </tr>
-            `;
-        });
-
-        // Trigger Active Time Calc for this specific page of students
-        setTimeout(() => {
-            const dropdown = document.getElementById('timeRangeSelector');
-            // If dropdown exists, calculate. Default to 7 days if not set.
-            if(dropdown) updateAllActiveTimes(dropdown.value || 7);
-        }, 100);
+        // Fill the visible page's Active Time cells (uses cache when valid for the period).
+        fillVisibleActiveTimes(currentPeriodDays());
     }
 
     // --- HELPERS ---
@@ -1125,59 +2077,272 @@
         }, 100);
     }
 
-    async function updateAllActiveTimes(days) {
-        const cells = document.querySelectorAll('.active-time-cell');
-        
-        // 1. Show Loading State for all cells
-        cells.forEach(cell => {
-            cell.innerHTML = '<span style="font-size:0.8rem; color:#3498db;">⟳ Calculating...</span>';
-        });
-
-        // 2. Fetch data for each student in parallel
-        // We use map to create an array of promises
-        const promises = Array.from(cells).map(async (cell) => {
+    // Fill ONLY the visible page's active-time cells. Never re-renders (avoids sort loops).
+    // Uses the cached per-row minutes when they are valid for the selected period.
+    async function fillVisibleActiveTimes(days) {
+        const cells = document.querySelectorAll('#riskTable .active-time-cell');
+        await Promise.all(Array.from(cells).map(async (cell) => {
             const username = cell.dataset.username;
+            const row = RISK_ALL.find(r => r.hidden_username === username);
+            if (row && row._activeMin != null && RISK_ACTIVE_PERIOD === String(days)) {
+                cell.innerHTML = `<span style="font-weight:600; color:#2c3e50;">${row._activeStr}</span>`;
+                return;
+            }
+            cell.innerHTML = '<span style="font-size:0.8rem; color:#3498db;">⟳</span>';
             try {
                 const res = await fetch(`${API_URL}/api/v1/analytics/active_time?username=${username}&days=${days}`);
                 const data = await res.json();
-                
-                // Update the specific cell
                 cell.innerHTML = `<span style="font-weight:600; color:#2c3e50;">${data.active_time}</span>`;
+                if (row) { row._activeStr = data.active_time; row._activeMin = parseActiveMinutes(data.active_time); }
             } catch (e) {
                 cell.innerHTML = '<span style="color:red;">Error</span>';
             }
-        });
-
-        await Promise.all(promises);
+        }));
     }
 
+    // Fetch active time for EVERY student (needed to sort the whole class by Active Time).
+    async function ensureAllActiveTimes(days) {
+        await Promise.all(RISK_ALL.map(async (row) => {
+            try {
+                const res = await fetch(`${API_URL}/api/v1/analytics/active_time?username=${row.hidden_username}&days=${days}`);
+                const data = await res.json();
+                row._activeStr = data.active_time;
+                row._activeMin = parseActiveMinutes(data.active_time);
+            } catch (e) {
+                row._activeStr = '—'; row._activeMin = -1;
+            }
+        }));
+        RISK_ACTIVE_PERIOD = String(days);
+    }
+
+    // Period selector changed: invalidate cached minutes, refetch as needed, re-render.
+    async function onPeriodChange(days) {
+        RISK_ACTIVE_PERIOD = null;
+        RISK_ALL.forEach(r => { r._activeMin = null; r._activeStr = null; });
+        if (riskSortKey === 'active') {
+            const cnt = document.getElementById('riskCount');
+            if (cnt) cnt.innerText = 'Loading active times…';
+            await ensureAllActiveTimes(days);
+        }
+        renderRisk();
+    }
+
+    // Back-compat shim for any legacy caller (e.g. the unused renderRiskTable template).
+    function updateAllActiveTimes(days) { return fillVisibleActiveTimes(days); }
+
     // --- MODAL LOGIC ---
+    // Color a tier by absolute mastery (conjunctive thresholds, NOT a compensatory avg).
+    function tierColor(pct) {
+        if (pct >= 75) return '#27ae60';   // at/above θ_dec
+        if (pct >= 35) return '#e67e22';   // developing
+        return '#e74c3c';                  // low / unmeasured
+    }
+
+    // One concept block: three tier bars (quiz/micro/code) each with N^(k), the concept
+    // header colored by the WEAKEST tier, a cert/lapsed badge, and a "why-flagged" line
+    // derived from the same numbers shown (so it can't drift from the bars).
+    function renderConceptMastery(m) {
+        const t = m.tiers || {}, n = m.n || {};
+        const minPct = m.min_pct != null ? m.min_pct : Math.min(t.quiz, t.micro, t.code);
+        const headColor = tierColor(minPct);
+        const badge = m.is_certified
+            ? ' <span title="Solid — can do all three" style="color:#27ae60;">✅ Solid</span>'
+            : (m.ever_certified ? ' <span title="Was solid, has faded from not practising" style="color:#e67e22;">⚠️ Faded</span>' : '');
+
+        // Why-flagged: the weakest skill, distinguishing NOT-YET-PRACTISED from struggling.
+        const TIER_WORD = { quiz: 'explain it', micro: 'complete code', code: 'write it' };
+        const nMin = m.n_min || 3;
+        const weak = m.min_tier || 'code';
+        const weakN = n[weak] != null ? n[weak] : 0;
+        let why = '';
+        if (weakN < nMin) {
+            why = `<div style="font-size:0.72rem; color:#c0392b; margin-top:4px;">⚑ We haven't seen them ${TIER_WORD[weak]} yet (${weakN} attempts) — assess, don't reteach.</div>`;
+        } else if (minPct < 75) {
+            why = `<div style="font-size:0.72rem; color:#c0392b; margin-top:4px;">⚑ Weakest skill: ${TIER_WORD[weak]} at ${t[weak]}% (${weakN} attempts).</div>`;
+        }
+
+        const bar = (label, pct, cnt) => `
+            <div style="display:flex; align-items:center; gap:8px; margin-top:3px;">
+                <span style="width:96px; font-size:0.7rem; color:#777;">${label}</span>
+                <div style="flex:1; height:5px; background:#eee; border-radius:3px;">
+                    <div style="height:100%; width:${Math.min(100, pct)}%; background:${tierColor(pct)}; border-radius:3px;"></div>
+                </div>
+                <span style="width:88px; font-size:0.7rem; color:#555; text-align:right; font-variant-numeric:tabular-nums;">${pct}% · ${cnt} tries</span>
+            </div>`;
+
+        return `
+            <div style="margin-bottom:12px; padding-left:8px; border-left:3px solid ${headColor};">
+                <div style="display:flex; justify-content:space-between; font-size:0.82rem; font-weight:600;">
+                    <span>${m.concept}${badge}</span>
+                    <span style="color:${headColor};" title="Weakest of the three skills">weakest ${minPct}%</span>
+                </div>
+                ${bar('Can explain', t.quiz ?? 0, n.quiz ?? 0)}
+                ${bar('Can complete', t.micro ?? 0, n.micro ?? 0)}
+                ${bar('Can write', t.code ?? 0, n.code ?? 0)}
+                ${why}
+            </div>`;
+    }
+
+    // Tier trajectory — one small multi-line chart (quiz/micro/code over time) with
+    // certification / decertification markers, from bkt_history (pure read). CVD-safe
+    // first-3 categorical slots: blue / orange / aqua.
+    const TRAJ_COLORS = { quiz: '#2a78d6', micro: '#eb6834', code: '#1baf7a' };
+
+    async function loadTrajectory(username) {
+        const host = document.getElementById('modalTrajectory');
+        if (!host) return;
+        host.innerHTML = '';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/analytics/student_trajectory/${username}`);
+            const data = await res.json();
+            renderTrajectory(data.trajectory || []);
+        } catch (e) { console.error('Trajectory load failed:', e); }
+    }
+
+    let TRAJ_DATA = [];
+    function renderTrajectory(traj) {
+        TRAJ_DATA = traj;
+        const host = document.getElementById('modalTrajectory');
+        if (!host) return;
+        if (!traj.length) {
+            host.innerHTML = '<h3 style="margin:0 0 8px;">📈 Progress over time</h3>'
+                + '<div style="color:#999; font-size:0.85rem;">Not enough history yet — a trajectory needs at least two graded snapshots on a topic.</div>';
+            return;
+        }
+        const opts = traj.map((t, i) => `<option value="${i}">${t.concept} (${t.points} pts)</option>`).join('');
+        host.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                <h3 style="margin:0;">📈 Progress over time</h3>
+                ${traj.length > 1 ? `<select id="trajPick" onchange="drawTrajectory(this.value)" style="padding:4px 8px; border:1px solid #ccc; border-radius:6px; font-size:0.82rem;">${opts}</select>` : ''}
+            </div>
+            <div id="trajChart" style="margin-top:8px;"></div>`;
+        drawTrajectory(0);
+    }
+
+    function drawTrajectory(idx) {
+        const t = TRAJ_DATA[idx];
+        const el = document.getElementById('trajChart');
+        if (!t || !el) return;
+        const W = 460, H = 180, padL = 34, padR = 12, padT = 12, padB = 22;
+        const allPts = [...t.quiz, ...t.micro, ...t.code, ...t.events];
+        const times = allPts.map(p => new Date(p.t).getTime()).filter(x => !isNaN(x));
+        const tMin = Math.min(...times), tMax = Math.max(...times);
+        const xOf = ts => {
+            const x = new Date(ts).getTime();
+            if (tMax === tMin) return padL + (W - padL - padR) / 2;
+            return padL + (x - tMin) / (tMax - tMin) * (W - padL - padR);
+        };
+        const yOf = p => padT + (1 - p / 100) * (H - padT - padB);
+
+        // θ_dec reference line at 75.
+        let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;">`;
+        [0, 25, 50, 75, 100].forEach(g => {
+            const y = yOf(g);
+            svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${g === 75 ? '#c9a227' : '#eee'}" stroke-width="1" ${g === 75 ? 'stroke-dasharray="4 3"' : ''}/>`;
+            svg += `<text x="${padL - 5}" y="${y + 3}" text-anchor="end" font-size="9" fill="#999">${g}</text>`;
+        });
+        svg += `<text x="${W - padR}" y="${yOf(75) - 3}" text-anchor="end" font-size="8" fill="#c9a227">fade line</text>`;
+
+        // Event markers (cert / decert) as vertical lines.
+        (t.events || []).forEach(ev => {
+            const x = xOf(ev.t), col = ev.type === 'certified' ? '#27ae60' : '#c0392b';
+            svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" stroke="${col}" stroke-width="1" stroke-dasharray="2 2"/>`;
+            svg += `<text x="${x}" y="${padT - 2}" text-anchor="middle" font-size="8" fill="${col}">${ev.type === 'certified' ? '✓' : '⚠'}</text>`;
+        });
+
+        // Tier lines + markers.
+        ['quiz', 'micro', 'code'].forEach(tier => {
+            const pts = (t[tier] || []).slice().sort((a, b) => new Date(a.t) - new Date(b.t));
+            if (!pts.length) return;
+            const col = TRAJ_COLORS[tier];
+            const d = pts.map((p, i) => `${i ? 'L' : 'M'}${xOf(p.t).toFixed(1)},${yOf(p.p).toFixed(1)}`).join(' ');
+            svg += `<path d="${d}" fill="none" stroke="${col}" stroke-width="2"/>`;
+            pts.forEach(p => { svg += `<circle cx="${xOf(p.t).toFixed(1)}" cy="${yOf(p.p).toFixed(1)}" r="2.5" fill="${col}"/>`; });
+        });
+        svg += `</svg>`;
+
+        // Legend (teacher language).
+        const LEG = { quiz: 'Can explain', micro: 'Can complete', code: 'Can write' };
+        const legend = ['quiz', 'micro', 'code'].map(tier =>
+            `<span style="display:inline-flex; align-items:center; gap:4px; margin-right:12px; font-size:0.75rem; color:#555;">
+                <span style="width:12px; height:3px; background:${TRAJ_COLORS[tier]}; display:inline-block;"></span>${LEG[tier]}</span>`).join('');
+        el.innerHTML = svg + `<div style="margin-top:4px;">${legend}
+            <span style="font-size:0.72rem; color:#888;">· ✓ became solid · ⚠ faded</span></div>`;
+    }
+
+    // Action bar — three prescribed actions, each LOGGED (append-only) on press. The
+    // suggested action is highlighted from the learner's flag so the drill-down carries
+    // Triage's prescription instead of leaving the instructor to re-derive it.
+    let CURRENT_FLAG = null;   // flag state captured for flag-state-at-press-time logging
+    function renderActionBar(username, displayId, flag) {
+        const host = document.getElementById('modalActionBar');
+        if (!host) return;
+        flag = flag || {};
+        CURRENT_FLAG = flag;
+        const concept = flag.concept || '';
+        // Which action does the flag suggest?
+        const suggest = ({ decertified: 'force_review', tier_imbalance: 'assign_task',
+                           low: 'assign_task', thin_evidence: 'assign_task' })[flag.mechanism] || null;
+        const why = (flag.mechanism && flag.mechanism !== 'on_track')
+            ? `<div style="font-size:0.78rem; color:#c0392b; margin-bottom:6px;">⚑ ${flag.label}${concept ? ' on ' + concept : ''} — suggested action highlighted.</div>` : '';
+        const btn = (action, label, emoji) => {
+            const hot = (action === suggest);
+            return `<button onclick="doInstructorAction('${username}','${displayId}','${action}','${(concept || '').replace(/'/g, '')}')"
+                style="border:1px solid ${hot ? '#8e44ad' : '#ccc'}; background:${hot ? '#8e44ad' : '#fff'}; color:${hot ? '#fff' : '#444'};
+                       padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:${hot ? '700' : '500'};">
+                ${emoji} ${label}</button>`;
+        };
+        host.innerHTML = `${why}
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
+                ${btn('assign_task', 'Assign task', '📌')}
+                ${btn('unlock_prereq', 'Unlock prerequisite', '🔓')}
+                ${btn('force_review', 'Force review', '🔁')}
+                <span id="actionStatus" style="font-size:0.78rem; color:#27ae60;"></span>
+            </div>`;
+    }
+
+    async function doInstructorAction(username, displayId, action, concept) {
+        const status = document.getElementById('actionStatus');
+        try {
+            // Capture the flag state AT PRESS TIME — without it the actionability
+            // analysis (did acting on this flag help?) is unrecoverable.
+            const fs = CURRENT_FLAG || {};
+            const res = await fetch(`${API_URL}/api/v1/analytics/teacher/log_action`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    target_username: username, action, concept: concept || null,
+                    flag_state: `${fs.mechanism || 'none'}:${fs.label || ''}`
+                })
+            });
+            if (!res.ok) throw new Error('log failed');
+            const label = { assign_task: 'Task assigned', unlock_prereq: 'Prerequisite unlocked', force_review: 'Review scheduled' }[action] || 'Action';
+            if (status) status.innerText = `✓ ${label} · recorded`;
+            // "Assign task" also drops focus into the existing challenge composer.
+            if (action === 'assign_task') {
+                const ta = document.getElementById('challengeInput');
+                if (ta) { ta.focus(); if (concept) ta.value = `Write a small C program that uses ${concept}.`; }
+            }
+        } catch (e) {
+            console.error('instructor action failed:', e);
+            if (status) { status.style.color = '#e74c3c'; status.innerText = '✗ could not record'; }
+        }
+    }
+
     async function openStudentModal(realUsername, displayId, riskLevel, masteryJson) {
         // 1. Header setup
         document.getElementById('modalStudentId').innerText = displayId;
         document.getElementById('studentModal').dataset.student = realUsername;
+        // Badge is set from the fetched conjunctive flag (below), NOT the passed-in
+        // risk tier — one severity function, so the modal can't disagree with Triage.
         const badge = document.getElementById('modalRiskBadge');
-        badge.innerText = riskLevel;
-        badge.className = `status-badge ${riskLevel === 'High' ? 'status-blocked' : 'status-active'}`;
+        badge.innerText = '…';
+        badge.className = 'status-badge status-active';
 
-        // 2. Mastery Bar setup
-        const mastery = JSON.parse(decodeURIComponent(masteryJson));
+        // 2. Mastery Profile — real 3-tier BKT, fetched below (masteryJson param is
+        //    the legacy heuristic map; no longer rendered).
         const masteryDiv = document.getElementById('modalMasteryList');
-        masteryDiv.innerHTML = '<h4 style="margin:0 0 10px 0; border-bottom:1px solid #eee; padding-bottom:5px;">📊 Mastery Profile</h4>';
-        
-        Object.entries(mastery).forEach(([topic, score]) => {
-            masteryDiv.innerHTML += `
-                <div style="margin-bottom:8px;">
-                    <div style="display:flex; justify-content:space-between; font-size:0.8rem;">
-                        <span>${topic}</span>
-                        <strong>${Math.round(score)}%</strong>
-                    </div>
-                    <div style="height:5px; background:#eee; border-radius:3px; margin-top:2px;">
-                        <div style="height:100%; width:${Math.min(100, score)}%; background:${score > 50 ? '#27ae60' : '#e74c3c'}; border-radius:3px;"></div>
-                    </div>
-                </div>
-            `;
-        });
+        masteryDiv.innerHTML = '<h4 style="margin:0 0 10px 0; border-bottom:1px solid #eee; padding-bottom:5px;">📊 Mastery Profile</h4>'
+            + '<div style="color:#999; font-size:0.85rem;">Loading mastery…</div>';
 
         // 3. FETCH & RENDER CHATS
         const chatDiv = document.getElementById('modalChatContainer');
@@ -1188,7 +2353,29 @@
         try {
             const res = await fetch(`${API_URL}/api/v1/analytics/student_detail/${realUsername}`);
             const data = await res.json();
-            
+
+            // --- Header badge from the ONE conjunctive flag (matches Triage) ---
+            const f = data.flag || { label: 'On track', color: '#27ae60', concept: null };
+            badge.innerText = f.label + (f.concept ? ` · ${f.concept}` : '');
+            badge.className = 'status-badge';
+            badge.style.background = f.color;
+            badge.style.color = '#fff';
+
+            // Trajectory + action bar (independent lazy loads).
+            loadTrajectory(realUsername);
+            renderActionBar(realUsername, displayId, data.flag);
+
+            // --- REAL MASTERY PROFILE — per-tier bars with evidence counts (conjunctive) ---
+            // No single compensatory composite: three tiers, each with N^(k), colored by the
+            // WEAKEST tier. "code 1% (n=0)" reads as UNMEASURED (assess), not low (reteach).
+            masteryDiv.innerHTML = '<h4 style="margin:0 0 10px 0; border-bottom:1px solid #eee; padding-bottom:5px;">📊 What they can do <span style="font-weight:400; color:#999; font-size:0.72rem;">— explain it · complete code · write it from scratch</span></h4>';
+            const mrows = data.mastery || [];
+            if (mrows.length === 0) {
+                masteryDiv.innerHTML += '<div style="color:#999; font-size:0.85rem;">No mastery data yet.</div>';
+            } else {
+                masteryDiv.innerHTML += mrows.map(renderConceptMastery).join('');
+            }
+
             // --- NEW: RENDER SESSION LIST ON LEFT (Under Mastery) ---
             masteryDiv.innerHTML += '<h4 style="margin:20px 0 10px 0; border-bottom:1px solid #eee; padding-bottom:5px;">🗂️ Interaction History</h4>';
             masteryDiv.innerHTML += '<div style="max-height:300px; overflow-y:auto; font-size:0.85rem;">';
@@ -1199,14 +2386,26 @@
 
             data.all_sessions_summary.forEach((sess, index) => {
                 const dateStr = new Date(sess.date).toLocaleDateString();
-                // Highlight the ones shown on the right
                 const isRecent = index < 2;
                 const icon = isRecent ? '👁️' : '📄';
                 const style = isRecent ? 'font-weight:bold; color:#2980b9;' : 'color:#555;';
-                
+                const dupBadge = (sess.count > 1)
+                    ? ` <span title="${sess.count} identical sessions on this day" style="background:#e1e6e8; color:#5b6b73; border-radius:8px; padding:0 6px; font-size:0.7rem;">×${sess.count}</span>`
+                    : '';
+                // Meta tags (topic · what they did · struggle) instead of a raw query string.
+                const tg = sess.tags || {};
+                const chip = (txt, bg, col) => `<span style="background:${bg}; color:${col}; border-radius:8px; padding:0 6px; font-size:0.68rem; margin-right:4px;">${txt}</span>`;
+                let meta = '';
+                if (tg.topic) meta += chip(tg.topic, '#eaf2fb', '#2a5d9c');
+                const intents = Object.keys(tg.intents || {});
+                if (intents.length) meta += chip(intents.join('/').toLowerCase(), '#f0efec', '#666');
+                if (tg.turns) meta += `<span style="font-size:0.66rem; color:#999;">${tg.turns} turns</span> `;
+                if (tg.struggled) meta += chip('⚠ struggled', '#fdecea', '#c0392b');
+                const label = tg.topic ? '' : ((sess.title || '').length > 34 ? sess.title.substring(0, 34) + '…' : (sess.title || ''));
                 masteryDiv.innerHTML += `
-                    <div style="padding:6px 0; border-bottom:1px solid #f9f9f9; ${style}">
-                        ${icon} ${dateStr}: ${sess.title.substring(0, 30)}...
+                    <div style="padding:7px 0; border-bottom:1px solid #f9f9f9; ${style}">
+                        <div>${icon} ${dateStr}${label ? ': ' + label : ''}${dupBadge}</div>
+                        ${meta ? `<div style="margin-top:3px; margin-left:18px;">${meta}</div>` : ''}
                     </div>`;
             });
             masteryDiv.innerHTML += '</div>';
@@ -1263,7 +2462,14 @@
                 });
             }
 
-        } catch (e) { console.error(e); }
+        } catch (e) {
+            console.error(e);
+            // Don't leave the profile stuck on "Loading mastery…" if the fetch failed.
+            if (masteryDiv.innerHTML.includes('Loading mastery')) {
+                masteryDiv.innerHTML = '<h4 style="margin:0 0 10px 0; border-bottom:1px solid #eee; padding-bottom:5px;">📊 Mastery Profile</h4>'
+                    + '<div style="color:#e74c3c; font-size:0.85rem;">Failed to load mastery.</div>';
+            }
+        }
     }
 
     function closeModal() {
@@ -1291,34 +2497,59 @@
         }
     }
 
-    let topicChart, struggleChart;
+    let questionTypeChart, topicChart;
     function renderCharts(data) {
-        if(topicChart) topicChart.destroy();
-        if(struggleChart) struggleChart.destroy();
+        if (questionTypeChart) questionTypeChart.destroy();
+        if (topicChart) topicChart.destroy();
 
+        // What kind of help (question types) — horizontal bars so labels fit.
+        const qt = data.question_types || {};
+        questionTypeChart = new Chart(document.getElementById('questionTypeChart'), {
+            type: 'bar',
+            data: {
+                labels: Object.keys(qt),
+                datasets: [{ label: 'Questions', data: Object.values(qt), backgroundColor: '#2a78d6' }]
+            },
+            options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } } }
+        });
+
+        // Topics asked about — drop the untagged "General"/"UNKNOWN" bucket (not a curriculum topic).
+        const tp = {};
+        Object.entries(data.popular_topics || {}).forEach(([k, v]) => {
+            if (k !== 'General' && k !== 'UNKNOWN') tp[k] = v;
+        });
         topicChart = new Chart(document.getElementById('topicChart'), {
             type: 'bar',
             data: {
-                labels: Object.keys(data.popular_topics),
-                datasets: [{ label: 'Queries', data: Object.values(data.popular_topics), backgroundColor: '#9b59b6' }]
+                labels: Object.keys(tp),
+                datasets: [{ label: 'Questions', data: Object.values(tp), backgroundColor: '#1baf7a' }]
             },
-            options: { maintainAspectRatio: false }
-        });
-
-        struggleChart = new Chart(document.getElementById('struggleChart'), {
-            type: 'bar',
-            data: {
-                labels: Object.keys(data.struggle_areas),
-                datasets: [{ label: 'Struggle Events', data: Object.values(data.struggle_areas), backgroundColor: '#e74c3c' }]
-            },
-            options: { maintainAspectRatio: false }
+            options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } } }
         });
     }
 
     // Initialize rules on page load
+    // ── Tab navigation (NOW / CLASS / NEXT / SETUP / SYSTEM) ──
+    const TAB_KEY = 'sage_teacher_tab';
+    function showTab(name) {
+        document.querySelectorAll('.grid-container[data-tab]').forEach(sec => {
+            sec.classList.toggle('tab-visible', sec.dataset.tab === name);
+        });
+        document.querySelectorAll('.tab-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.tabkey === name);
+        });
+        try { localStorage.setItem(TAB_KEY, name); } catch (e) {}
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
     window.onload = function() {
         loadData(); // Your existing load function
         updateUploadRules(); // Initialize file input
+        // Default landing is NOW (or the last tab this browser used).
+        let start = 'NOW';
+        try { const s = localStorage.getItem(TAB_KEY); if (s) start = s; } catch (e) {}
+        if (!document.querySelector(`.grid-container[data-tab="${start}"]`)) start = 'NOW';
+        showTab(start);
     };
 </script>
 </body>

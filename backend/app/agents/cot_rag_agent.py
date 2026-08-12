@@ -33,6 +33,51 @@ from app.agents.profiler import ProfilerAgent
 _WEAK_TIER_MIN_SPREAD = 0.20
 _WEAK_TIER_MIN_EVIDENCE = 1
 
+# Lead-in phrases learners type before naming a topic. Stripped for display so the goal
+# reads as a topic ("Pointers") instead of a raw utterance ("I want to learn about
+# pointers in C"). Longest-first so multi-word prefixes match before their sub-phrases.
+_GOAL_LEADINS = sorted([
+    "i want to learn about", "i want to learn", "i would like to learn about",
+    "i'd like to learn about", "i want to understand", "i want to master",
+    "i want to study", "i want to", "help me learn", "help me understand",
+    "learn about", "learning about", "understand about", "understanding",
+    "understand", "study about", "studying", "study", "master", "learn",
+    "the basics of", "the basic of", "basics of", "fundamentals of",
+    "how to use", "how to", "all about", "about",
+], key=len, reverse=True)
+
+
+def canonicalize_goal_display(goal: str) -> str:
+    """Best-effort clean of a free-text goal into a topic-like label for display ONLY.
+
+    Strips conversational lead-ins and a trailing " in c", collapses whitespace, and
+    title-cases the remainder. Purely cosmetic — does not resolve to a graph node and
+    is never used for adaptation/certification. Returns the original (trimmed) string if
+    stripping would leave nothing, so a genuinely sentence-like goal is preserved intact.
+    """
+    if not goal:
+        return goal
+    s = " ".join(goal.strip().split())
+    low = s.lower()
+    changed = True
+    while changed:                                   # peel stacked lead-ins ("i want to learn about")
+        changed = False
+        for lead in _GOAL_LEADINS:
+            if low.startswith(lead + " "):
+                s = s[len(lead) + 1:].lstrip()
+                low = s.lower()
+                changed = True
+                break
+    for tail in (" in c programming", " in the c language", " in c language", " in c", " using c"):
+        if low.endswith(tail):
+            s = s[: len(s) - len(tail)].rstrip()
+            low = s.lower()
+    s = s.strip(" .,!?:;-").strip()
+    if not s:
+        return " ".join(goal.strip().split())        # nothing left → keep original
+    # Title-case only all-lowercase input; leave deliberate capitalization (acronyms) alone.
+    return s.title() if s == s.lower() else s
+
 import nltk
 from nltk.corpus import stopwords
 # Ensure resources are downloaded (do this once, maybe in __init__)
@@ -1596,7 +1641,10 @@ class ChainOfThoughtRAGAgent:
                 if starts_with_action:
                     greeting += f"Your Current Goal is to <b><i>{user_goal}</i></b><br><br>"
                 else:
-                    greeting += f"Your Current Goal is to master <b><i>{user_goal}</i></b><br><br>"
+                    # Topic-framed goal: show a clean topic label, not the raw utterance
+                    # ("I want to learn about pointers in C" → "Pointers").
+                    goal_topic = canonicalize_goal_display(user_goal)
+                    greeting += f"Your Current Goal is to master <b><i>{goal_topic}</i></b><br><br>"
             
             warmup_topic = None
             if known_concepts:

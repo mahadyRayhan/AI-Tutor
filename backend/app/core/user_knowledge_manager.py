@@ -61,14 +61,22 @@ class UserKnowledgeManager:
         return ta == tb or ta.issubset(tb) or tb.issubset(ta)
 
     def get_known_concepts(self, username: str) -> List[str]:
-        """Returns list of concepts the user has mastered, ordered by timestamp, filtered.
+        """Returns concepts the user has actually MASTERED (ever certified), ordered by time.
 
-        Only BKT-certified concepts should be in this table (see mark_concept_as_known
-        call sites — all are gated on bkt.is_mastered). We additionally drop any legacy
-        'Solved: X' pseudo-rows so they can't fuzzy-match a real concept and trigger a
-        spurious "you already mastered X" message."""
+        Certification gate (ever_certified=1): user_knowledge holds a row for EVERY concept
+        the learner has merely touched — bkt.update() inserts one on the first evidence of
+        any tier — so an unfiltered read returns interacted-with topics, not mastered ones.
+        Without this filter every caller ("student already knows…", the "you successfully
+        mastered X" greeting, Socratic withholding) treats a single quiz attempt at code
+        tier 1% as mastery, contradicting the conjunctive certification rule. ever_certified
+        is the sticky flag set only when is_mastered() passed the conjunctive + N_min gate,
+        and (Fix #5) is never reset by decay — so "you mastered it" stays true past a lapse.
+
+        We additionally drop any legacy 'Solved: X' pseudo-rows so they can't fuzzy-match a
+        real concept and trigger a spurious mastery message."""
         rows = db.fetch_all(
-            "SELECT concept FROM user_knowledge WHERE username = ? ORDER BY timestamp ASC",
+            "SELECT concept FROM user_knowledge WHERE username = ? AND ever_certified = 1 "
+            "ORDER BY timestamp ASC",
             (username,)
         )
         all_concepts = [r['concept'] for r in rows]

@@ -1117,23 +1117,47 @@ async def get_teacher_analytics():
     # We only care about messages where intent/topic were actually logged
     rows = db.fetch_all("SELECT topic, intent FROM messages WHERE topic IS NOT NULL")
     
+    # Group raw intents into teacher-facing "kind of help" buckets. Security/greeting/
+    # unknown are intentionally excluded — evasion lives in the Security Ledger, not here.
+    INTENT_LABEL = {
+        "CONCEPT": "Understand a concept",
+        "PROBLEM": "Solve a problem", "COMPLEX_PROBLEM": "Solve a problem",
+        "DEBUG": "Debug an error",
+        "REVIEW": "Review my code",
+        "QUIZ": "Quiz / test", "EXAM": "Quiz / test", "EVALUATION": "Quiz / test",
+        "GUIDED_PRACTICE": "Guided practice",
+        "PLANNING": "Plan a project",
+        "GUIDANCE": "General guidance",
+    }
+
     # 2. Process in Python (keeping your existing logic logic)
     topic_counts = {}
     struggle_counts = {}
-    
+    question_types = {}
+
     for r in rows:
         topic = r['topic'] or 'General'
         intent = r['intent'] or 'UNKNOWN'
-        
+
         # Count Topics
         topic_counts[topic] = topic_counts.get(topic, 0) + 1
-        
-        # Count Struggles (DEBUG or REVIEW)
+
+        # Count question types (what kind of help students seek)
+        label = INTENT_LABEL.get((intent or "").upper())
+        if label:
+            question_types[label] = question_types.get(label, 0) + 1
+
+        # Count Struggles (DEBUG or REVIEW) — kept for back-compat
         if intent in ['REVIEW', 'DEBUG']:
             struggle_counts[topic] = struggle_counts.get(topic, 0) + 1
 
+    # Sort both distributions high→low so the charts read as a ranking.
+    topic_counts = dict(sorted(topic_counts.items(), key=lambda kv: -kv[1]))
+    question_types = dict(sorted(question_types.items(), key=lambda kv: -kv[1]))
+
     return {
         "popular_topics": topic_counts,
+        "question_types": question_types,
         "struggle_areas": struggle_counts,
         "total_interactions": len(rows)
     }
@@ -1224,6 +1248,19 @@ async def get_teacher_detailed_analytics(page: int = 1, page_size: int = 10):
             if len(sorted_topics) > 1: weakest = sorted_topics[-1][0]
             elif top_score < 40: weakest = top_topic
 
+        # Real 3-tier BKT means from user_knowledge (0–100; None if no graded evidence yet).
+        uk = db.fetch_all(
+            "SELECT p_mastery_quiz, p_mastery_micro, p_mastery_code FROM user_knowledge WHERE username = ?",
+            (student,)
+        )
+        def _tier_avg(col):
+            vals = [row[col] for row in uk if row[col] is not None]
+            return round(100.0 * sum(vals) / len(vals), 1) if vals else None
+        tier_quiz = _tier_avg("p_mastery_quiz")
+        tier_micro = _tier_avg("p_mastery_micro")
+        tier_code = _tier_avg("p_mastery_code")
+        kt_concepts = len(uk)
+
         class_matrix.append({
             "hidden_username": student, 
             "display_id": anon_id,      
@@ -1232,7 +1269,11 @@ async def get_teacher_detailed_analytics(page: int = 1, page_size: int = 10):
             "strongest_topic": strongest,
             "weakest_topic": weakest,
             "last_active": last_active_str,
-            "mastery": mastery
+            "mastery": mastery,
+            "tier_quiz": tier_quiz,
+            "tier_micro": tier_micro,
+            "tier_code": tier_code,
+            "kt_concepts": kt_concepts,
         })
         
     return {
@@ -1326,29 +1367,965 @@ async def get_risk_matrix(days: int = 14):
 
     # Most-at-risk first
     matrix.sort(key=lambda x: x["risk_score"], reverse=True)
+
+    # Cohort affect aggregate: frustration is a MODEL ESTIMATE, so it is reported
+    # at the class level only — never per learner as fact. Denominator is learners
+    # with any affect turns in the window; numerator is those reading elevated.
+    frust_active = sum(1 for m in matrix if m["turns"] > 0)
+    frust_elevated = sum(1 for m in matrix
+                         if m["turns"] > 0 and (m["rage_events"] > 0 or m["avg_frustration"] > 0.1))
     summary = {
         "critical": sum(1 for m in matrix if m["risk_tier"] == "Critical"),
         "high": sum(1 for m in matrix if m["risk_tier"] == "High"),
         "watch": sum(1 for m in matrix if m["risk_tier"] == "Watch"),
+        "frust_active": frust_active,
+        "frust_elevated": frust_elevated,
+        "frust_pct": round(100.0 * frust_elevated / frust_active, 0) if frust_active else None,
         "window_days": days,
     }
     return {"items": matrix, "summary": summary}
 
 
+@app.get("/api/v1/analytics/teacher/triage")
+async def get_teacher_triage():
+    """
+    Action Triage (landing view): one row per learner, flagged by a SINGLE named
+    mechanism derived from the 3-tier BKT in user_knowledge — not a composite risk
+    score. Each row carries its own one-line derivation so the instructor can act
+    with low inference cost. Thresholds come from the model itself (bkt_model).
+    """
+    from app.core.bkt_model import (THETA_DECERTIFY, N_MIN, reconcile_certifications,
+                                     _apply_decay, _parse_ts, _TS_COL, _LAM_COL)
+    from collections import defaultdict
+
+    # Correct any stale is_certified flags before we trust them: certification decays
+    # with time but the stored flag is only fixed lazily during active practice, so an
+    # idle certified learner reads certified while already below θ_dec. The sweep writes
+    # corrections to the DB, so the decertified check below (and every other panel that
+    # reads is_certified) sees truth, not a stale flag.
+    reconcile_certifications()
+
+    TIER_HI, TIER_LO, GAP = 0.70, 0.40, 0.35      # "defines but can't use"
+    STALL_EV, STALL_P = 6, 0.40                    # wheel-spinning proxy
+
+    students = sorted([r["username"] for r in
+                       db.fetch_all("SELECT username FROM users WHERE role = 'student'")])
+    if not students:
+        return {"items": [], "counts": {}, "total_learners": 0}
+    id_map = {u: f"Student_{i+1:02d}" for i, u in enumerate(students)}
+
+    ph = ",".join("?" * len(students))
+    uk = db.fetch_all(f"SELECT * FROM user_knowledge WHERE username IN ({ph})", tuple(students))
+    by_user = defaultdict(list)
+    for r in uk:
+        by_user[r["username"]].append(r)
+
+    SEV = {"decertified": 4, "tier_imbalance": 3, "stalled": 2, "thin_evidence": 1}
+    # Teacher-language labels (Phase 2 vocabulary): no model jargon in the teaching views.
+    LABEL = {"decertified": "Faded", "tier_imbalance": "Knows it, can't code it yet",
+             "stalled": "Stuck", "thin_evidence": "Not enough practice"}
+
+    def evaluate(r):
+        """Return (mechanism, why, action, tiebreak) for the most salient flag on this
+        learner-concept, or None. Ordered so the most urgent mechanism wins."""
+        concept = r["concept"] or "a topic"
+        # Decay-adjust every tier so Triage reads the SAME retained mastery the modal,
+        # is_mastered(), and the forecast use — Triage was the one view showing the raw
+        # as-of-last-practice posterior, which reads too high for an idle learner.
+        q  = _apply_decay(r["p_mastery_quiz"]  or 0.0, "quiz",  _parse_ts(r["last_quiz_at"]),  lam=r["decay_quiz_lam"])
+        mi = _apply_decay(r["p_mastery_micro"] or 0.0, "micro", _parse_ts(r["last_micro_at"]), lam=r["decay_micro_lam"])
+        co = _apply_decay(r["p_mastery_code"]  or 0.0, "code",  _parse_ts(r["last_code_at"]),  lam=r["decay_code_lam"])
+        nq  = r["n_evidence_quiz"]  or 0
+        nmi = r["n_evidence_micro"] or 0
+        nco = r["n_evidence_code"]  or 0
+        cert = r["is_certified"]
+        ever = r["ever_certified"]
+        total_ev = nq + nmi + nco
+
+        if ever and not cert:
+            return ("decertified",
+                    f"Was solid on {concept}, but it has faded from not practising.",
+                    f"Give a quick refresher on {concept}", 1.0)
+        if q >= TIER_HI and co <= TIER_LO and (q - co) >= GAP:
+            return ("tier_imbalance",
+                    f"Can explain {concept} ({q*100:.0f}%) but can't write it yet ({co*100:.0f}%).",
+                    f"Assign a hands-on {concept} coding task", q - co)
+        if total_ev >= STALL_EV and max(q, mi, co) < STALL_P:
+            return ("stalled",
+                    f"Stuck on {concept}: {total_ev} practice attempts, still not getting it.",
+                    f"1:1 check-in on {concept}; try a different explanation", float(total_ev))
+        if cert and min(nq, nmi, nco) <= N_MIN:
+            thin_label = {"code": "writing it", "micro": "completing code", "quiz": "explaining it"}
+            thin = "code" if nco <= N_MIN else ("micro" if nmi <= N_MIN else "quiz")
+            return ("thin_evidence",
+                    f"Marked solid on {concept}, but only {min(nq, nmi, nco)} practice attempts at {thin_label[thin]}.",
+                    f"Add one more {concept} check to confirm", 0.0)
+        return None
+
+    items = []
+    for user, recs in by_user.items():
+        best = None
+        for r in recs:
+            ev = evaluate(r)
+            if not ev:
+                continue
+            mech, why, action, tie = ev
+            key = (SEV[mech], tie)
+            if best is None or key > best["key"]:
+                best = {"key": key, "mechanism": mech, "why": why, "action": action, "concept": r["concept"]}
+        if best:
+            items.append({
+                "display_id": id_map.get(user, user),
+                "hidden_username": user,
+                "mechanism": best["mechanism"],
+                "mechanism_label": LABEL[best["mechanism"]],
+                "why": best["why"],
+                "action": best["action"],
+                "concept": best["concept"],
+                "topic": _canon_topic(best["concept"]) or best["concept"],  # canonical, for clustering
+                "severity": SEV[best["mechanism"]],
+            })
+    items.sort(key=lambda x: -x["severity"])
+    counts = {m: sum(1 for i in items if i["mechanism"] == m) for m in SEV}
+    return {"items": items, "counts": counts, "total_learners": len(students)}
+
+
+@app.get("/api/v1/analytics/teacher/decert_forecast")
+async def get_decert_forecast(horizon: int = 14):
+    """
+    Decertification Forecast: which certified learner-concepts will decay below
+    THETA_DECERTIFY within the horizon, and in how many days — projected from the
+    forgetting curve (Eq. 18) using each tier's stored decay rate λ and last-seen
+    time. Deterministic, no new data. Prescriptive: an instructor can schedule a
+    retention check BEFORE the lapse instead of catching it after (that's Triage's
+    'Decertified'). Stale certs are reconciled first so the baseline is the truth.
+
+    days-to-lapse solves value(T)=θ for the forgetting curve:
+        p̃·e^(−λT) + p₀·(1−e^(−λT)) = θ  ⇒  T* = −ln((θ−p₀)/(p̃−p₀)) / λ
+    then subtracts the time already elapsed. The soonest-crossing tier drives the
+    learner-concept's lapse date (conjunctive certification: ANY tier < θ decertifies).
+    """
+    import math
+    from app.core.bkt_model import (reconcile_certifications, THETA_DECERTIFY,
+                                     DECAY_RATES, EVIDENCE_CONFIG, _parse_ts,
+                                     _TS_COL, _LAM_COL)
+    reconcile_certifications()
+
+    students = sorted([r["username"] for r in
+                       db.fetch_all("SELECT username FROM users WHERE role='student'")])
+    id_map = {u: f"Student_{i+1:02d}" for i, u in enumerate(students)}
+
+    rows = db.fetch_all(
+        "SELECT username, concept, p_mastery_quiz, p_mastery_micro, p_mastery_code, "
+        "last_quiz_at, last_micro_at, last_code_at, "
+        "decay_quiz_lam, decay_micro_lam, decay_code_lam "
+        "FROM user_knowledge WHERE is_certified=1")
+
+    TIER_LABEL = {"quiz": "explaining it", "micro": "completing code", "code": "writing it"}
+    now = datetime.now()
+    items = []
+    for r in rows:
+        soonest = None  # (days_to_lapse, tier, current_tier_pct)
+        for tier in ("quiz", "micro", "code"):
+            p_raw = r[EVIDENCE_CONFIG[tier]["col"]]
+            last = _parse_ts(r[_TS_COL[tier]])
+            if p_raw is None or last is None:
+                continue
+            if last.tzinfo is not None:
+                last = last.astimezone().replace(tzinfo=None)
+            p0 = EVIDENCE_CONFIG[tier]["P_L0"]
+            lam = r[_LAM_COL[tier]] or DECAY_RATES[tier]
+            T0 = max(0.0, (now - last).total_seconds() / 86400.0)
+            cur = max(p_raw * math.exp(-lam * T0) + p0 * (1 - math.exp(-lam * T0)), p0)
+            if cur < THETA_DECERTIFY:               # already lapsed (guard; reconcile should prevent)
+                d = 0.0
+            else:
+                ratio = (THETA_DECERTIFY - p0) / (p_raw - p0)
+                if not (0.0 < ratio < 1.0):         # never crosses θ (shouldn't happen: p̃>θ>p₀)
+                    continue
+                d = max(0.0, (-math.log(ratio) / lam) - T0)
+            if soonest is None or d < soonest[0]:
+                soonest = (d, tier, round(cur * 100, 1))
+        if soonest is None:
+            continue
+        d, tier, cur_pct = soonest
+        items.append({
+            "display_id": id_map.get(r["username"], r["username"]),
+            "hidden_username": r["username"],
+            "concept": r["concept"],
+            "first_tier": tier,
+            "first_tier_label": TIER_LABEL[tier],
+            "days_to_lapse": round(d, 1),
+            "tier_pct_now": cur_pct,
+            "action": f"Quick refresher on {r['concept']} before they lose {TIER_LABEL[tier]}",
+        })
+
+    items.sort(key=lambda x: x["days_to_lapse"])
+    n7 = sum(1 for i in items if i["days_to_lapse"] <= 7)
+    n14 = sum(1 for i in items if i["days_to_lapse"] <= 14)
+    within = [i for i in items if i["days_to_lapse"] <= horizon]
+    return {"items": within, "n_7": n7, "n_14": n14,
+            "total_certified": len(rows), "horizon": horizon}
+
+
+# user_knowledge concepts are entity-extraction fragments ("variable", "variables",
+# "Variables and Types", plus junk like "fork", "Bob", "what is 1+1?"). This maps them to
+# the C curriculum topics; anything unmapped is dropped — the class views show the syllabus,
+# not raw extractor output. (Replaceable later by Neo4j graph resolution.)
+_CURRICULUM_CANON = {
+    "variable": "Variables", "variables": "Variables", "variables and types": "Variables",
+    "variable and types": "Variables", "variables in c": "Variables", "types": "Variables",
+    "type": "Variables", "constant": "Variables", "constants": "Variables", "declare": "Variables",
+    "control flow": "Control Flow", "conditional": "Control Flow", "conditionals": "Control Flow",
+    "loop": "Control Flow", "loops": "Control Flow", "sequential execution": "Control Flow",
+    "operator": "Operators", "operators": "Operators", "logical": "Operators",
+    "logical operators": "Operators",
+    "function": "Functions", "functions": "Functions",
+    "array": "Arrays", "arrays": "Arrays",
+    "string": "Strings", "strings": "Strings",
+    "pointer": "Pointers", "pointers": "Pointers", "memory and pointers": "Pointers",
+    "memory management": "Pointers", "memory allocation": "Pointers",
+    "structure": "Structures", "structures": "Structures", "struct": "Structures",
+    "structs": "Structures",
+}
+_CURRICULUM_TOPICS = ["Variables", "Operators", "Control Flow", "Functions",
+                      "Arrays", "Strings", "Pointers", "Structures"]
+
+
+def _canon_topic(name: str):
+    """Map a raw concept string to its curriculum topic, or None if it isn't one."""
+    return _CURRICULUM_CANON.get((name or "").strip().lower())
+
+
+def _class_tier_matrix():
+    """Per-student, per-curriculum-topic decayed tier values (max across merged fragments).
+
+    Returns (per_user, active, id_map) where per_user[(topic, username)] = {quiz,micro,code}
+    in 0–100, active = set of students with any curriculum activity, id_map = username→Student_NN.
+    Shared by every CLASS/NEXT panel so they agree on canonicalization and decay.
+    """
+    from app.core.bkt_model import _apply_decay, _parse_ts, _TS_COL, _LAM_COL, EVIDENCE_CONFIG
+    from collections import defaultdict
+
+    students = sorted([r["username"] for r in
+                       db.fetch_all("SELECT username FROM users WHERE role='student'")])
+    id_map = {u: f"Student_{i+1:02d}" for i, u in enumerate(students)}
+
+    rows = db.fetch_all(
+        "SELECT username, concept, p_mastery_quiz, p_mastery_micro, p_mastery_code, "
+        "last_quiz_at, last_micro_at, last_code_at, "
+        "decay_quiz_lam, decay_micro_lam, decay_code_lam FROM user_knowledge")
+
+    def decayed(r, tier):
+        col = EVIDENCE_CONFIG[tier]["col"]
+        p_raw = r[col] if r[col] is not None else EVIDENCE_CONFIG[tier]["P_L0"]
+        return _apply_decay(p_raw, tier, _parse_ts(r[_TS_COL[tier]]), lam=r[_LAM_COL[tier]]) * 100.0
+
+    per_user = defaultdict(lambda: {"quiz": 0.0, "micro": 0.0, "code": 0.0})
+    active = set()
+    for r in rows:
+        canon = _canon_topic(r["concept"])
+        if not canon:
+            continue
+        active.add(r["username"])
+        cur = per_user[(canon, r["username"])]
+        for tier in ("quiz", "micro", "code"):
+            cur[tier] = max(cur[tier], decayed(r, tier))
+    return per_user, active, id_map
+
+
+@app.get("/api/v1/analytics/teacher/class_standing")
+async def get_class_standing():
+    """
+    CLASS / "Where the class stands": one row per topic, split into the three things a
+    learner can do — Can explain it / Can complete code / Can write it from scratch —
+    as class averages over the students who have practised it (decay-adjusted). Plus a
+    prescriptive status ("Needs a coding session", "Needs re-explaining", "Not started",
+    "Solid") and, on expand, the students behind the row (weakest first). Built on
+    user_knowledge only, so the 62% 'General' bucket in turn_log doesn't touch it.
+    """
+    from app.core.bkt_model import reconcile_certifications
+    from collections import defaultdict
+    reconcile_certifications()
+
+    per_user, active, id_map = _class_tier_matrix()
+    total_active = len(active)
+
+    by_topic = defaultdict(list)   # canonical -> [ {username, explain, complete, write} ]
+    for (canon, user), v in per_user.items():
+        by_topic[canon].append({"username": user, "explain": v["quiz"],
+                                 "complete": v["micro"], "write": v["code"]})
+
+    def status_for(explain, write, practiced, frac):
+        # Prescriptive, teacher language. Order of checks = priority (attention first).
+        if practiced < 3 or frac < 0.15:
+            return ("Not enough data", "#95a5a6", 4)
+        if write >= 75:
+            return ("Solid", "#27ae60", 5)
+        if explain >= 60 and write < 40:
+            return ("Needs a coding session", "#e67e22", 1)   # strong left, weak right
+        if explain < 40:
+            return ("Needs re-explaining", "#e74c3c", 0)        # weak across
+        return ("In progress", "#2980b9", 2)
+
+    topics = []
+    for canon, studs in by_topic.items():
+        n = len(studs)
+        ex = sum(s["explain"] for s in studs) / n
+        co = sum(s["complete"] for s in studs) / n
+        wr = sum(s["write"] for s in studs) / n
+        frac = n / total_active if total_active else 0.0
+        label, color, rank = status_for(ex, wr, n, frac)
+        out_studs = sorted(({
+            "display_id": id_map.get(s["username"], s["username"]),
+            "hidden_username": s["username"],
+            "explain": round(s["explain"], 0), "complete": round(s["complete"], 0),
+            "write": round(s["write"], 0),
+            "weakest": round(min(s["explain"], s["complete"], s["write"]), 0),
+        } for s in studs), key=lambda s: s["weakest"])
+        topics.append({
+            "concept": canon,
+            "explain": round(ex, 0), "complete": round(co, 0), "write": round(wr, 0),
+            "practiced": n, "total": total_active,
+            "status": label, "status_color": color, "sort_rank": rank,
+            "students": out_studs,
+        })
+
+    topics.sort(key=lambda t: (t["sort_rank"], t["write"]))
+    return {"topics": topics, "class_size": total_active}
+
+
+def _ensure_calendar_table():
+    """Course calendar is instructor setup, created lazily so no schema migration is needed."""
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS course_calendar ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " entry_date TEXT NOT NULL,"          # ISO date the session/assignment happens
+        " topics TEXT,"                        # JSON list of curriculum topics
+        " activity_type TEXT,"                 # Lecture | Lab | Review | Exam | Assignment
+        " assignment_due TEXT,"                # optional ISO date
+        " note TEXT,"
+        " created_at TEXT)")
+
+
+class CalendarEntryRequest(BaseModel):
+    entry_date: str
+    topics: list[str] | None = None
+    activity_type: str | None = None
+    assignment_due: str | None = None
+    note: str | None = None
+
+
+@app.get("/api/v1/analytics/teacher/calendar")
+async def get_course_calendar():
+    """The course schedule: dated entries of what's taught/assigned. Time-anchors the
+    other panels (a signal is only interpretable once it's aligned to instruction)."""
+    import json
+    _ensure_calendar_table()
+    rows = db.fetch_all("SELECT * FROM course_calendar ORDER BY entry_date ASC, id ASC")
+    out = []
+    for r in rows:
+        try:
+            topics = json.loads(r["topics"]) if r["topics"] else []
+        except Exception:
+            topics = []
+        out.append({
+            "id": r["id"], "entry_date": r["entry_date"], "topics": topics,
+            "activity_type": r["activity_type"], "assignment_due": r["assignment_due"],
+            "note": r["note"],
+        })
+    return {"entries": out, "topics_available": _CURRICULUM_TOPICS}
+
+
+@app.post("/api/v1/analytics/teacher/calendar")
+async def add_course_calendar_entry(req: CalendarEntryRequest):
+    import json
+    from datetime import datetime as _dt
+    _ensure_calendar_table()
+    if not (req.entry_date or "").strip():
+        raise HTTPException(status_code=400, detail="entry_date is required")
+    cur = db.execute(
+        "INSERT INTO course_calendar (entry_date, topics, activity_type, assignment_due, note, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (req.entry_date.strip(), json.dumps(req.topics or []), req.activity_type,
+         req.assignment_due, req.note, _dt.now().isoformat()))
+    return {"status": "added", "id": cur.lastrowid}
+
+
+@app.delete("/api/v1/analytics/teacher/calendar/{entry_id}")
+async def delete_course_calendar_entry(entry_id: int):
+    _ensure_calendar_table()
+    db.execute("DELETE FROM course_calendar WHERE id = ?", (entry_id,))
+    return {"status": "deleted", "id": entry_id}
+
+
+@app.get("/api/v1/analytics/teacher/readiness")
+async def get_readiness(topic: str = None):
+    """
+    NEXT / "Ready for what's coming": pick the topic you plan to teach; this walks the
+    Neo4j prerequisite DAG (REQUIRES_UNDERSTANDING_OF) and reports what share of the class
+    already holds ALL prerequisites, plus the single biggest gap (which prereq, which
+    tier). Uses only data you already have. "Holds a prerequisite" = all three tiers at or
+    above the ready bar (conjunctive). Prereqs the graph names but we can't measure (not a
+    curriculum topic with BKT data) are listed separately, not silently dropped.
+    """
+    from app.core.bkt_model import reconcile_certifications
+    reconcile_certifications()
+    per_user, active, id_map = _class_tier_matrix()
+    total = len(active)
+
+    if not topic:
+        return {"topic": None, "topics_available": _CURRICULUM_TOPICS, "total": total}
+
+    try:
+        from app.core import prereq_headstart
+        raw_prereqs = prereq_headstart._prerequisites_of(topic)
+    except Exception as e:
+        logger.warning(f"[readiness] prereq lookup failed for '{topic}': {e}")
+        raw_prereqs = []
+
+    # Canonicalize to measurable curriculum topics; keep the rest as "not tracked".
+    measurable, untracked, seen = [], [], set()
+    for p in raw_prereqs:
+        cp = _canon_topic(p)
+        if cp and cp != topic and cp not in seen:
+            seen.add(cp); measurable.append(cp)
+        elif not cp and p not in untracked:
+            untracked.append(p)
+
+    READY = 50.0
+    TIER_LABEL = {"explain": "explaining it", "complete": "completing code", "write": "writing it"}
+    TKEY = {"explain": "quiz", "complete": "micro", "write": "code"}
+
+    holds_all = {u: True for u in active}
+    prereq_info, gap = [], None
+    for pt in measurable:
+        tier_ready = {}
+        for disp, key in TKEY.items():
+            cnt = sum(1 for u in active
+                      if (per_user.get((pt, u)) or {}).get(key, 0.0) >= READY)
+            tier_ready[disp] = round(100 * cnt / total) if total else 0
+        for u in active:
+            v = per_user.get((pt, u))
+            if not (v and v["quiz"] >= READY and v["micro"] >= READY and v["code"] >= READY):
+                holds_all[u] = False
+        weak = min(tier_ready, key=tier_ready.get)
+        prereq_info.append({"name": pt, "tiers": tier_ready,
+                            "weakest_tier": weak, "weakest_label": TIER_LABEL[weak],
+                            "weakest_pct": tier_ready[weak]})
+        if gap is None or tier_ready[weak] < gap["pct"]:
+            gap = {"prereq": pt, "tier": weak, "tier_label": TIER_LABEL[weak], "pct": tier_ready[weak]}
+
+    holders = sum(1 for u in active if holds_all[u]) if measurable else 0
+    readiness_pct = round(100 * holders / total) if (total and measurable) else None
+
+    return {
+        "topic": topic,
+        "topics_available": _CURRICULUM_TOPICS,
+        "total": total,
+        "prereqs": prereq_info,
+        "untracked_prereqs": untracked,
+        "readiness_pct": readiness_pct,
+        "holders": holders,
+        "gap": gap,
+        "ready_bar": int(READY),
+    }
+
+
+# Curriculum topic → the reading (concept notes) and code demos already in resources/.
+# Lets the Prep List suggest *real* material to assign per group, not a placeholder.
+_TOPIC_RESOURCES = {
+    "Variables":    {"reading": ["02_variables_datatypes.md", "03_input_output.md"],
+                     "code": ["demo_hello_world.c", "demo_io.c"]},
+    "Operators":    {"reading": ["04_operators.md"],
+                     "code": ["demo_math.c"]},
+    "Control Flow": {"reading": ["05_control_flow.md", "06_loops.md"],
+                     "code": ["demo_conditions.c", "demo_loops.c"]},
+    "Functions":    {"reading": ["09_functions.md"],
+                     "code": ["demo_functions.c", "demo_recursion.c"]},
+    "Arrays":       {"reading": ["07_arrays.md"],
+                     "code": ["demo_arrays.c"]},
+    "Strings":      {"reading": ["08_strings.md", "11_input_safety.md"],
+                     "code": ["demo_strings.c"]},
+    "Pointers":     {"reading": ["10_pointers_basic.md", "15_memory_allocation.md"],
+                     "code": ["demo_pointers.c", "demo_memory_allocation.c"]},
+    "Structures":   {"reading": ["13_structures.md"],
+                     "code": ["demo_structures.c"]},
+}
+
+
+def _topic_materials(topic: str):
+    """The assignable materials for a topic, tagged by kind, as a flat list."""
+    r = _TOPIC_RESOURCES.get(topic, {})
+    return ([{"file": f, "kind": "reading",
+              "label": f.split("_", 1)[-1].rsplit(".", 1)[0].replace("_", " ").title()}
+             for f in r.get("reading", [])] +
+            [{"file": f, "kind": "code",
+              "label": f.replace("demo_", "").rsplit(".", 1)[0].replace("_", " ").title() + " (code)"}
+             for f in r.get("code", [])])
+
+
+@app.get("/api/v1/analytics/teacher/prep_list")
+async def get_prep_list():
+    """
+    NEXT / "What to prepare next": turns class standing into a to-do for the instructor.
+    Per topic it emits ONE prep action (re-explain / coding session / first exposure /
+    reinforce / on track), the *group of students it's for* (weakest first — this set is
+    what you assign to), and the real reading/code from resources/ that fits. Ranked by how
+    many students the prep would help, so prep time goes where it moves the most people.
+    Reuses _class_tier_matrix() so it agrees with CLASS standing and NEXT readiness.
+    """
+    from app.core.bkt_model import reconcile_certifications
+    from collections import defaultdict
+    reconcile_certifications()
+
+    per_user, active, id_map = _class_tier_matrix()
+    total_active = len(active)
+    WEAK = 50.0   # a learner is "weak" on a tier below this
+
+    by_topic = defaultdict(dict)   # topic -> {username: {explain,complete,write}}
+    for (canon, user), v in per_user.items():
+        by_topic[canon][user] = {"explain": v["quiz"], "complete": v["micro"], "write": v["code"]}
+
+    def student_row(user, v):
+        return {"display_id": id_map.get(user, user), "hidden_username": user,
+                "explain": round(v["explain"], 0), "complete": round(v["complete"], 0),
+                "write": round(v["write"], 0),
+                "weakest": round(min(v["explain"], v["complete"], v["write"]), 0)}
+
+    ACTIONS = {
+        "re_explain":     ("Prepare a re-explainer",      "#e74c3c", "reading"),
+        "coding_session": ("Prepare a coding / lab session", "#e67e22", "code"),
+        "first_exposure": ("Assign first exposure before you lecture it", "#8e44ad", "reading"),
+        "reinforce":      ("Reinforce — targeted practice", "#2980b9", "reading"),
+        "on_track":       ("On track — no prep needed",    "#27ae60", None),
+    }
+
+    rows = []
+    for topic in _CURRICULUM_TOPICS:
+        studs = by_topic.get(topic, {})
+        n = len(studs)
+        frac = n / total_active if total_active else 0.0
+        materials = _topic_materials(topic)
+
+        if n < 3 or frac < 0.15:
+            # Barely touched — assign intro reading to those who haven't started yet.
+            not_started = [u for u in active if u not in studs]
+            group = [{"display_id": id_map.get(u, u), "hidden_username": u,
+                      "explain": 0, "complete": 0, "write": 0, "weakest": 0}
+                     for u in not_started]
+            action = "first_exposure"
+            why = (f"only {n} of {total_active} have practised it — get the class exposed "
+                   f"before the lecture")
+        else:
+            ex = sum(s["explain"] for s in studs.values()) / n
+            wr = sum(s["write"] for s in studs.values()) / n
+            if wr >= 75:
+                action = "on_track"; group = []
+                why = f"{round(wr)}% can write it on average — leave it be"
+            elif ex >= 60 and wr < 40:
+                action = "coding_session"
+                grp = [(u, v) for u, v in studs.items() if v["write"] < WEAK]
+                group = [student_row(u, v) for u, v in grp]
+                why = (f"{round(ex)}% can explain it but only {round(wr)}% can write it — "
+                       f"{len(grp)} students need hands-on coding")
+            elif ex < 40:
+                action = "re_explain"
+                grp = [(u, v) for u, v in studs.items() if v["explain"] < 60]
+                group = [student_row(u, v) for u, v in grp]
+                why = (f"only {round(ex)}% can explain it — {len(grp)} students need the "
+                       f"concept retaught")
+            else:
+                action = "reinforce"
+                grp = [(u, v) for u, v in studs.items()
+                       if min(v["explain"], v["complete"], v["write"]) < WEAK]
+                group = [student_row(u, v) for u, v in grp]
+                why = f"in progress — {len(grp)} students still weak on at least one level"
+
+        group.sort(key=lambda s: s["weakest"])
+        label, color, prefer = ACTIONS[action]
+        # Order materials so the recommended kind for this action comes first.
+        mats = sorted(materials, key=lambda m: (m["kind"] != prefer, m["kind"]))
+        rows.append({
+            "topic": topic, "action": action, "action_label": label, "action_color": color,
+            "why": why, "group_size": len(group), "group": group,
+            "practiced": n, "materials": mats,
+        })
+
+    # Prep-needed first, biggest group first; on-track topics sink to the bottom.
+    order = {"re_explain": 0, "coding_session": 1, "first_exposure": 2, "reinforce": 3, "on_track": 4}
+    rows.sort(key=lambda r: (order[r["action"]], -r["group_size"]))
+    return {"rows": rows, "class_size": total_active}
+
+
+class GroupAssignRequest(BaseModel):
+    usernames: list[str]
+    topic: str | None = None
+    action: str = "assign_material"     # assign_material | assign_task | force_review
+    material: str | None = None         # resource filename, if assigning reading/code
+    material_kind: str | None = None    # reading | code
+    note: str | None = None
+    by: str | None = None
+
+
+@app.post("/api/v1/analytics/teacher/assign_group")
+async def assign_to_group(req: GroupAssignRequest):
+    """
+    Assign the same material/task to a whole group at once (a Prep List row's students).
+    Records one append-only event per learner in event_log, capturing which material and
+    which topic — so a group assignment is a real artifact, not just a display. Delivery to
+    the student's tutor session is layered on top of this record later, never instead of it.
+    """
+    ALLOWED = {"assign_material", "assign_task", "force_review"}
+    if req.action not in ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Unknown action '{req.action}'")
+    if not req.usernames:
+        raise HTTPException(status_code=400, detail="No students in the group")
+    from app.core import telemetry
+    teacher = req.by or "instructor"
+    ok = 0
+    for u in req.usernames:
+        try:
+            # 1) Deliver to the student: shows in their "Active Challenges" panel.
+            if req.action == "assign_material" and req.material:
+                assignment_manager.create_material_assignment(
+                    teacher, u, req.topic, req.material, req.material_kind, note=req.note)
+            # 2) Append-only record for dashboard-actionability analysis.
+            telemetry.log_event(u, "instructor_action", {
+                "action": req.action, "topic": req.topic,
+                "material": req.material, "material_kind": req.material_kind,
+                "group_size": len(req.usernames), "note": req.note, "by": req.by,
+            })
+            ok += 1
+        except Exception as e:
+            logger.warning(f"[assign_group] failed for {u}: {e}")
+    return {"status": "recorded", "assigned": ok, "of": len(req.usernames),
+            "topic": req.topic, "material": req.material}
+
+
+# Where uploaded assignment/handout files live (kept apart from curriculum resources).
+_ASSIGNMENT_DIR = config.PROJECT_ROOT / "resources" / "assignments"
+_MATERIAL_DIRS = {
+    "reading": config.PROJECT_ROOT / "resources" / "concepts",
+    "code": config.PROJECT_ROOT / "resources" / "code",
+    "file": _ASSIGNMENT_DIR,
+}
+_UPLOAD_EXTS = {".pdf", ".md", ".txt", ".docx", ".pptx", ".c", ".h", ".png", ".jpg", ".jpeg", ".zip"}
+
+
+@app.post("/api/v1/analytics/teacher/upload_material")
+async def upload_teacher_material(file: UploadFile = File(...)):
+    """Teacher uploads their own handout/assignment file to attach to a group assignment.
+    Saved under resources/assignments/ (separate from the ingested curriculum resources)."""
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _UPLOAD_EXTS:
+        raise HTTPException(status_code=400,
+                            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(_UPLOAD_EXTS))}")
+    os.makedirs(_ASSIGNMENT_DIR, exist_ok=True)
+    safe_name = os.path.basename(file.filename)
+    dest = _ASSIGNMENT_DIR / safe_name
+    try:
+        with open(dest, "wb") as buf:
+            shutil.copyfileobj(file.file, buf)
+    except Exception as e:
+        logger.error(f"[upload_material] save failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save file")
+    return {"status": "success", "filename": safe_name, "material_kind": "file"}
+
+
+@app.get("/api/v1/materials/download")
+async def download_material(kind: str, name: str):
+    """Serve an assignable material (curriculum reading/code or an uploaded handout) to a
+    student. Path-traversal-safe: kind picks the directory, name is reduced to a basename."""
+    base = _MATERIAL_DIRS.get(kind)
+    if base is None:
+        raise HTTPException(status_code=400, detail="Unknown material kind")
+    safe_name = os.path.basename(name or "")
+    path = base / safe_name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Material not found")
+    return FileResponse(str(path), filename=safe_name)
+
+
+class MaterialDoneRequest(BaseModel):
+    assignment_id: str
+
+
+@app.post("/api/v1/assignments/material_done")
+async def material_done(req: MaterialDoneRequest):
+    """Student marks an assigned material as read/done (so it stops nagging)."""
+    assignment_manager.mark_material_done(req.assignment_id)
+    return {"status": "success"}
+
+
+@app.get("/api/v1/analytics/teacher/assignment_status")
+async def get_assignment_status():
+    """
+    NEXT / "Did assignments land?": the follow-through half of the Prep List. Each material
+    assignment sent (grouped by topic + material + day) with how many of the assigned
+    students have opened / marked it done, and who hasn't yet. Closes the loop the Prep List
+    opens — turns assign-and-forget into assign-and-check. Pure read on the assignments table.
+    """
+    from collections import defaultdict
+    assignment_manager._ensure_columns()
+    rows = db.fetch_all(
+        "SELECT student_id, status, material, material_kind, topic, timestamp "
+        "FROM assignments WHERE kind='material'")
+    students = sorted([r["username"] for r in
+                       db.fetch_all("SELECT username FROM users WHERE role='student'")])
+    id_map = {u: f"Student_{i+1:02d}" for i, u in enumerate(students)}
+
+    groups = defaultdict(lambda: {"total": 0, "done": 0, "not_done": [], "last": ""})
+    meta = {}
+    for r in rows:
+        day = (r["timestamp"] or "")[:10]
+        key = (r["topic"], r["material"], r["material_kind"], day)
+        meta[key] = {"topic": r["topic"], "material": r["material"],
+                     "material_kind": r["material_kind"], "date": day}
+        g = groups[key]
+        g["total"] += 1
+        if r["status"] == "DONE":
+            g["done"] += 1
+        else:
+            g["not_done"].append(id_map.get(r["student_id"], r["student_id"]))
+        if (r["timestamp"] or "") > g["last"]:
+            g["last"] = r["timestamp"] or ""
+
+    out = []
+    for key, g in groups.items():
+        m = meta[key]
+        g["not_done"].sort()
+        out.append({
+            "topic": m["topic"], "material": m["material"], "material_kind": m["material_kind"],
+            "date": m["date"], "total": g["total"], "done": g["done"],
+            "pending": g["total"] - g["done"], "not_done": g["not_done"],
+        })
+    out.sort(key=lambda x: (-x["pending"], x["topic"] or ""))
+    return {"assignments": out}
+
+
+@app.get("/api/v1/analytics/teacher/model_health")
+async def get_model_health():
+    """
+    Model Health: how well the mastery model's pre-update predictions have matched the
+    observed outcomes recorded in prediction_log. Surfaces the Brier score (raw BKT vs
+    the effective, adaptation-adjusted prediction the system acted on) and a reliability
+    curve, so an instructor can see the model's track record before trusting a
+    certification decision. Honest-by-design: it shows the model grading itself.
+    """
+    rows = [r for r in db.fetch_all(
+        "SELECT username, p_bkt_pred, p_eff_pred, is_correct FROM prediction_log"
+    ) if r["is_correct"] is not None]
+    n = len(rows)
+    if n == 0:
+        return {"n": 0, "n_users": 0, "brier_eff": None, "brier_bkt": None,
+                "bins_eff": [], "bins_bkt": []}
+
+    def brier(pairs):
+        return round(sum((p - y) ** 2 for p, y in pairs) / len(pairs), 4) if pairs else None
+
+    def reliability(pairs, nb=5):
+        buckets = [[] for _ in range(nb)]
+        for p, y in pairs:
+            idx = min(nb - 1, max(0, int(p * nb)))
+            buckets[idx].append((p, y))
+        out = []
+        for b in buckets:
+            if b:
+                out.append({
+                    "p": round(sum(p for p, _ in b) / len(b), 3),
+                    "acc": round(sum(y for _, y in b) / len(b), 3),
+                    "n": len(b),
+                })
+        return out
+
+    eff = [(r["p_eff_pred"], r["is_correct"]) for r in rows if r["p_eff_pred"] is not None]
+    bkt = [(r["p_bkt_pred"], r["is_correct"]) for r in rows if r["p_bkt_pred"] is not None]
+    n_users = db.fetch_one("SELECT COUNT(DISTINCT username) c FROM prediction_log")["c"]
+
+    return {
+        "n": n,
+        "n_users": n_users,
+        "brier_eff": brier(eff),
+        "brier_bkt": brier(bkt),
+        "bins_eff": reliability(eff),
+        "bins_bkt": reliability(bkt),
+    }
+
+
+@app.get("/api/v1/analytics/teacher/security_ledger")
+async def get_security_ledger():
+    """
+    Security Ledger (aggregate-first): cohort counts of gated turns, with the EVASION
+    case (Sentinel security block) visually separated from CURRICULUM / pedagogical
+    redirects (the tutor guiding instead of handing over answers). No learner is named
+    by default — leading with "who tried to jailbreak" is itself a harm.
+    """
+    total_turns = db.fetch_one("SELECT COUNT(*) n FROM turn_log")["n"]
+    rows = db.fetch_all(
+        "SELECT block_reason, COUNT(*) n, COUNT(DISTINCT username) u "
+        "FROM turn_log WHERE was_blocked = 1 AND block_reason IS NOT NULL "
+        "GROUP BY block_reason"
+    )
+    SECURITY = "SECURITY_RISK"
+    evasion = {"count": 0, "learners": 0}
+    pedagogical = []
+    for r in rows:
+        if r["block_reason"] == SECURITY:
+            evasion = {"count": r["n"], "learners": r["u"]}
+        else:
+            pedagogical.append({
+                "reason": (r["block_reason"] or "").title().replace("_", " "),
+                "count": r["n"], "learners": r["u"],
+            })
+    pedagogical.sort(key=lambda x: -x["count"])
+
+    risk = db.fetch_one(
+        "SELECT ROUND(AVG(traj_risk), 3) avg, ROUND(MAX(traj_risk), 3) mx "
+        "FROM turn_log WHERE block_reason = ?", (SECURITY,)
+    )
+    evasion["avg_risk"] = risk["avg"] if risk else None
+    evasion["max_risk"] = risk["mx"] if risk else None
+    ped_total = sum(p["count"] for p in pedagogical)
+
+    return {
+        "total_turns": total_turns,
+        "total_gated": evasion["count"] + ped_total,
+        "evasion": evasion,
+        "pedagogical": pedagogical,
+        "ped_total": ped_total,
+    }
+
+
 @app.get("/api/v1/analytics/student_detail/{username}")
 async def get_student_detail_view(username: str):
     """
-    Fetches deep-dive data: Full list of sessions + Full text of last 2.
+    Fetches deep-dive data: real 3-tier BKT mastery + full session list + last 2 transcripts.
+
+    The mastery profile is the REAL model (user_knowledge, decay applied) — not the
+    _calculate_mastery intent heuristic the modal used to render. This closes the
+    last "modal disagrees with the cohort panels" gap: a learner shown decertified in
+    Triage now reads decertified here too.
     """
-    # 1. Get All Sessions (Lightweight: ID, Title, Date)
+    from app.core.bkt_model import (reconcile_certifications, _apply_decay, _parse_ts,
+                                     _TS_COL, _LAM_COL, _N_COL, EVIDENCE_CONFIG, N_MIN)
+
+    # Correct any stale certs for THIS learner first, so the modal's ✓/lapsed badges
+    # match Triage rather than a flag that decay already invalidated.
+    try:
+        reconcile_certifications(username)
+    except Exception as e:
+        logger.warning(f"[modal] reconcile_certifications failed for {username}: {e}")
+
+    # --- Real per-concept mastery (3-tier BKT, decay applied) ---
+    # Reported per TIER with evidence counts, NOT as a single compensatory composite:
+    # a learner at quiz 91% / code 1% (n=0) is not "59% mastered" — the applied tier is
+    # UNMEASURED, and only the min tier + its evidence count makes that visible. The UI
+    # colors by the weakest tier (conjunctive), so no tier compensates for another.
+    mastery = []
+    uk = db.fetch_all(
+        "SELECT concept, p_mastery_quiz, p_mastery_micro, p_mastery_code, "
+        "n_evidence_quiz, n_evidence_micro, n_evidence_code, "
+        "last_quiz_at, last_micro_at, last_code_at, "
+        "decay_quiz_lam, decay_micro_lam, decay_code_lam, "
+        "is_certified, ever_certified "
+        "FROM user_knowledge WHERE username=?", (username,))
+    for r in uk:
+        concept = (r["concept"] or "").strip()
+        if concept.lower() in ("", "general", "unknown", "code submission"):
+            continue
+        tiers, ns, comp = {}, {}, 0.0
+        for tier in ("quiz", "micro", "code"):
+            col = EVIDENCE_CONFIG[tier]["col"]
+            p_raw = r[col] if r[col] is not None else EVIDENCE_CONFIG[tier]["P_L0"]
+            p = _apply_decay(p_raw, tier, _parse_ts(r[_TS_COL[tier]]), lam=r[_LAM_COL[tier]])
+            tiers[tier] = round(p * 100, 1)
+            ns[tier] = r[_N_COL[tier]] or 0
+            comp += p * EVIDENCE_CONFIG[tier]["ceiling"]
+        min_tier = min(tiers, key=tiers.get)          # conjunctive: weakest tier governs
+        mastery.append({
+            "concept": concept,
+            "tiers": tiers,                            # {quiz,micro,code} decayed %
+            "n": ns,                                   # evidence count per tier (N^(k))
+            "min_tier": min_tier,
+            "min_pct": tiers[min_tier],                # governs color; NOT the composite
+            "composite_pct": round(min(comp / 0.95, 1.0) * 100, 1),  # kept for reference only
+            "n_min": N_MIN,
+            "is_certified": bool(r["is_certified"]),
+            "ever_certified": bool(r["ever_certified"]),
+        })
+    # Sort by the weakest tier ascending — the least-mastered surfaces first (needs attention).
+    mastery.sort(key=lambda m: m["min_pct"])
+
+    # --- Learner-level flag: ONE severity function, derived from the SAME conjunctive
+    # tier data shown below — so the modal header can't say "OK" while Triage flags the
+    # learner (the previous badge came from the frustration-based risk tier, a second
+    # severity function). Mirrors Triage's mechanism priority (decertified > imbalance
+    # > low > thin evidence). ---
+    TIER_HI, TIER_LO, GAP = 70.0, 40.0, 35.0
+    flag = {"label": "On track", "color": "#27ae60", "mechanism": "on_track", "concept": None, "severity": 0}
+    for m in mastery:
+        t, n = m["tiers"], m["n"]
+        if m["ever_certified"] and not m["is_certified"]:
+            cand = (4, "Faded", "#c0392b", "decertified")
+        elif t["quiz"] >= TIER_HI and t["code"] <= TIER_LO and (t["quiz"] - t["code"]) >= GAP:
+            cand = (3, "Knows it, can't code it yet", "#e67e22", "tier_imbalance")
+        elif m["min_pct"] < 35.0:
+            cand = (2, "Struggling", "#e74c3c", "low")
+        elif m["is_certified"] and min(n.values()) <= m["n_min"]:
+            cand = (1, "Not enough practice", "#2980b9", "thin_evidence")
+        else:
+            continue
+        if cand[0] > flag["severity"]:
+            flag = {"severity": cand[0], "label": cand[1], "color": cand[2],
+                    "mechanism": cand[3], "concept": m["concept"]}
+
+    # --- Per-session summary tags from turn_log (topic, intent mix, struggle) ---
+    # Replaces raw truncated query strings with a readable, meta-level tag per session:
+    # dominant topic, what the learner was doing (intent distribution), and whether they
+    # struggled (a gate block, a strike streak, or an elevated frustration reading).
+    from collections import OrderedDict, Counter, defaultdict
+    turns = db.fetch_all(
+        "SELECT session_id, topic, intent, was_blocked, n_strike, delta_f "
+        "FROM turn_log WHERE username=?", (username,))
+    tags_by_session = {}
+    grp = defaultdict(lambda: {"topics": Counter(), "intents": Counter(), "turns": 0,
+                               "blocked": 0, "max_strike": 0, "max_df": 0.0})
+    for t in turns:
+        g = grp[t["session_id"]]
+        g["turns"] += 1
+        if t["topic"] and t["topic"].lower() not in ("general", "unknown", ""):
+            g["topics"][t["topic"]] += 1
+        if t["intent"]:
+            g["intents"][t["intent"]] += 1
+        g["blocked"] += 1 if t["was_blocked"] else 0
+        g["max_strike"] = max(g["max_strike"], t["n_strike"] or 0)
+        g["max_df"] = max(g["max_df"], t["delta_f"] or 0.0)
+    for sid, g in grp.items():
+        struggled = g["blocked"] > 0 or g["max_strike"] >= 2 or g["max_df"] > 0.1
+        tags_by_session[sid] = {
+            "topic": (g["topics"].most_common(1)[0][0] if g["topics"] else None),
+            "intents": dict(g["intents"].most_common(3)),
+            "turns": g["turns"],
+            "blocked": g["blocked"],
+            "struggled": struggled,
+        }
+
+    # 1. Get All Sessions, then DEDUPE identical (title, day) rows into one with a count.
     sessions_list = history_manager.get_user_sessions_list(username)
-    
-    # Sort by date desc (Newest first)
-    sessions_list.sort(key=lambda x: x['date'], reverse=True)
-    
-    # 2. Get Details for ONLY the last 2 (Heavy)
+    sessions_list.sort(key=lambda x: x['date'], reverse=True)   # newest first
+    grouped = OrderedDict()
+    for s in sessions_list:
+        key = ((s.get("title") or "").strip().lower(), (s.get("date") or "")[:10])
+        if key in grouped:
+            grouped[key]["count"] += 1                          # collapse the duplicate
+        else:
+            grouped[key] = {**s, "count": 1, "tags": tags_by_session.get(s["id"])}
+    deduped_sessions = list(grouped.values())
+
+    # 2. Get Details for ONLY the last 2 DISTINCT sessions (Heavy).
     recent_chats_details = []
-    for sess in sessions_list[:2]:
+    for sess in deduped_sessions[:2]:
         details = history_manager.get_session_details(username, sess['id'])
         if details:
             recent_chats_details.append({
@@ -1357,11 +2334,92 @@ async def get_student_detail_view(username: str):
                 "date": sess['date'],
                 "messages": details.get('messages', [])
             })
-            
+
     return {
-        "all_sessions_summary": sessions_list, # List of {id, title, date}
-        "recent_chats": recent_chats_details   # Full text
+        "mastery": mastery,                        # real 3-tier BKT per concept
+        "flag": flag,                              # single conjunctive learner status
+        "all_sessions_summary": deduped_sessions,  # {id, title, date, count} — deduped
+        "recent_chats": recent_chats_details       # Full text
     }
+
+@app.get("/api/v1/analytics/student_trajectory/{username}")
+async def get_student_trajectory(username: str):
+    """
+    Per-concept mastery trajectory for one learner, reconstructed from bkt_history.
+    Three tier series (quiz/micro/code) over time + certification/decertification event
+    markers — so a snapshot's "50%" can be told apart from a learner climbing vs one who
+    has lapsed. Pure read of the existing telemetry stream; no new logging.
+    """
+    rows = db.fetch_all(
+        "SELECT concept, tier, p_tilde, n_evidence, is_certified, ts_utc "
+        "FROM bkt_history WHERE username=? ORDER BY ts_utc ASC", (username,))
+
+    from collections import defaultdict
+    by_concept = defaultdict(lambda: {"quiz": [], "micro": [], "code": [], "events": [], "_cert": 0})
+    for r in rows:
+        c = r["concept"]
+        if not c:
+            continue
+        tier = r["tier"]
+        if tier in ("quiz", "micro", "code") and r["p_tilde"] is not None:
+            by_concept[c][tier].append({"t": r["ts_utc"], "p": round(r["p_tilde"] * 100, 1)})
+        # Certification transition (any tier's row carries the current flag).
+        cur = int(r["is_certified"] or 0)
+        prev = by_concept[c]["_cert"]
+        if cur != prev:
+            by_concept[c]["events"].append(
+                {"t": r["ts_utc"], "type": "certified" if cur > prev else "decertified"})
+            by_concept[c]["_cert"] = cur
+
+    trajectory = []
+    for c, d in by_concept.items():
+        pts = len(d["quiz"]) + len(d["micro"]) + len(d["code"])
+        if pts < 2:                       # a single point isn't a trajectory
+            continue
+        trajectory.append({
+            "concept": c, "points": pts,
+            "quiz": d["quiz"], "micro": d["micro"], "code": d["code"],
+            "events": d["events"],
+        })
+    trajectory.sort(key=lambda x: -x["points"])   # richest series first
+    return {"trajectory": trajectory}
+
+
+class InstructorActionRequest(BaseModel):
+    target_username: str
+    action: str                 # assign_task | unlock_prereq | force_review
+    concept: str | None = None
+    flag_state: str | None = None   # learner's flag AT PRESS TIME (for actionability analysis)
+    note: str | None = None
+    by: str | None = None       # instructor username, if the client knows it
+
+
+@app.post("/api/v1/analytics/teacher/log_action")
+async def log_instructor_action(req: InstructorActionRequest):
+    """
+    Append-only record of an instructor acting on a learner from the dashboard.
+    Logging is the point (the agent flagged this as irreversible-if-missed before
+    deployment): every press is written to event_log so dashboard actionability can be
+    measured numerically later, not by a post-hoc Likert. Writes the intent; any real
+    side-effect (unlock/schedule) is layered on top of this record, never instead of it.
+    """
+    ALLOWED = {"assign_task", "unlock_prereq", "force_review"}
+    if req.action not in ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Unknown action '{req.action}'")
+    try:
+        from app.core import telemetry
+        telemetry.log_event(req.target_username, "instructor_action", {
+            "action": req.action,
+            "concept": req.concept,
+            "flag_state": req.flag_state,   # what the flag said when the button was pressed
+            "note": req.note,
+            "by": req.by,
+        })
+    except Exception as e:
+        logger.warning(f"[instructor_action] log failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to record action")
+    return {"status": "recorded", "action": req.action, "target": req.target_username}
+
 
 @app.get("/api/v1/history/sessions")
 async def get_sessions(username: str):

@@ -1,6 +1,6 @@
 {
     "Variables": true,
-    "Control Flow": true,
+    "Control Flow": false,
     "Functions": true,
     "Arrays": true,
     "Strings": true,
