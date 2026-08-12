@@ -520,8 +520,12 @@
             <h2>🎯 Model Health
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— how well the mastery model's predictions have matched observed outcomes (the model grading itself)</span>
             </h2>
-            <div id="mhStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
-            <div id="mhPlot" style="position:relative; width:100%;"></div>
+            <div id="mhBadge"></div>
+            <details style="margin-top:10px;">
+                <summary style="cursor:pointer; color:#7f8c8d; font-size:0.85rem; user-select:none;">🔧 Developer detail — calibration curve &amp; Brier scores</summary>
+                <div id="mhStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
+                <div id="mhPlot" style="position:relative; width:100%;"></div>
+            </details>
             <div id="mhTooltip" style="position:fixed; pointer-events:none; display:none; z-index:60; background:#2c3e50; color:#fff; padding:6px 10px; border-radius:6px; font-size:0.78rem; line-height:1.4; box-shadow:0 4px 12px rgba(0,0,0,0.25);"></div>
         </div>
     </div>
@@ -894,11 +898,34 @@
     function renderModelHealth(d) {
         const statsEl = document.getElementById('mhStats');
         const host = document.getElementById('mhPlot');
+        const badge = document.getElementById('mhBadge');
         if (!host) return;
         if (!d || !d.n) {
             if (statsEl) statsEl.innerHTML = '';
-            host.innerHTML = '<div style="padding:12px; color:#777;">No prediction history logged yet.</div>';
+            if (badge) badge.innerHTML = '<div style="padding:12px; color:#777;">No prediction history logged yet — the reliability score fills in as students answer.</div>';
+            host.innerHTML = '';
             return;
+        }
+        // Instructor-facing reliability badge: one number + a plain-language meaning.
+        if (badge) {
+            const s = d.reliability_score;
+            if (s == null) { badge.innerHTML = ''; }
+            else {
+                const col = s >= 90 ? '#27ae60' : (s >= 75 ? '#2a78d6' : (s >= 60 ? '#e67e22' : '#e74c3c'));
+                const dirLine = d.reliability_dir === 'under'
+                    ? 'It tends to <b>under-estimate</b> — students may know more than the score shows.'
+                    : d.reliability_dir === 'over'
+                    ? 'It tends to <b>over-estimate</b> — students may know less than the score shows.'
+                    : 'Its estimates line up well with how students actually perform.';
+                badge.innerHTML = `<div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; background:${col}14; border:1px solid ${col}55; border-radius:10px; padding:14px 18px;">
+                    <div style="font-size:2.5rem; font-weight:800; color:${col}; font-variant-numeric:tabular-nums; line-height:1;">${s}<span style="font-size:1rem; color:#999;">/100</span></div>
+                    <div style="flex:1; min-width:220px;">
+                        <div style="font-weight:700; color:${col}; font-size:1.05rem;">Model reliability: ${d.reliability_label}</div>
+                        <div style="font-size:0.88rem; color:#5b6b73; margin-top:3px;">How much to trust the mastery numbers on this dashboard. ${dirLine}</div>
+                        <div style="font-size:0.72rem; color:#999; margin-top:3px;">From ${d.n} scored predictions across ${d.n_users} learners.</div>
+                    </div>
+                </div>`;
+            }
         }
         let cmp = null;
         if (d.brier_bkt != null && d.brier_eff != null) {
@@ -995,11 +1022,39 @@
         }
         const maxN = Math.max(ev.count, ...(d.pedagogical || []).map(p => p.count), 1);
         let html = '';
-        html += `<div style="font-size:0.8rem; font-weight:700; color:#c0392b; margin:8px 0 4px;">⚠ Security — evasion attempts (Sentinel blocks)</div>`;
-        html += secBar('Evasion', ev.count, ev.learners, maxN, '#d03b3b');
+
+        // What students are actually trying — the academic-integrity signal.
+        const techs = d.techniques || [];
+        if (techs.length) {
+            html += `<div style="font-size:0.82rem; font-weight:700; color:#2c3e50; margin:4px 0 6px;">🔎 What students are trying
+                <span style="font-weight:400; color:#999;">— the kind of attempt behind the ${ev.count} blocked turns (examples are representative; no student is identified)</span></div>`;
+            const tmax = Math.max(...techs.map(t => t.count), 1);
+            techs.forEach(t => {
+                const pct = Math.max(2, Math.round(t.count / tmax * 100));
+                html += `<div style="margin:9px 0;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <div style="width:190px; font-size:0.82rem; color:#2c3e50; font-weight:600; text-align:right;">${secEsc(t.category)}</div>
+                        <div style="flex:1; background:#f4e9e9; border-radius:4px; height:16px;"><div style="width:${pct}%; background:#d03b3b; height:100%; border-radius:4px;"></div></div>
+                        <div style="width:46px; font-size:0.8rem; color:#2c3e50; font-variant-numeric:tabular-nums; text-align:right;"><b>${t.count}</b></div>
+                    </div>
+                    <div style="margin:4px 0 0 200px; display:flex; flex-direction:column; gap:3px;">
+                        ${(t.examples || []).map(ex => `<span style="font-family:ui-monospace,Menlo,monospace; font-size:0.74rem; color:#8a6d3b; background:#fbf6ec; border:1px solid #f0e6cf; border-radius:4px; padding:2px 7px; align-self:flex-start; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">"${secEsc(ex)}"</span>`).join('')}
+                    </div>
+                </div>`;
+            });
+            html += `<div style="border-top:1px solid #eee; margin:16px 0 0;"></div>`;
+        }
+
+        html += `<div style="font-size:0.8rem; font-weight:700; color:#c0392b; margin:12px 0 4px;">⚠ Total blocked (Sentinel security)</div>`;
+        html += secBar('Blocked attempts', ev.count, ev.learners, maxN, '#d03b3b');
         html += `<div style="font-size:0.8rem; font-weight:700; color:#2c3e50; margin:16px 0 4px;">Curriculum / pedagogy — the tutor guiding instead of answering (not threats)</div>`;
         (d.pedagogical || []).forEach(p => { html += secBar(p.reason, p.count, p.learners, maxN, '#2a78d6'); });
         host.innerHTML = html;
+    }
+
+    // Minimal HTML-escape for surfaced student query snippets (defense-in-depth).
+    function secEsc(s) {
+        return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     // ── Decertification Forecast — who decays below θ_dec next (forgetting curve) ──

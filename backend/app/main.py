@@ -1117,17 +1117,17 @@ async def get_teacher_analytics():
     # We only care about messages where intent/topic were actually logged
     rows = db.fetch_all("SELECT topic, intent FROM messages WHERE topic IS NOT NULL")
     
-    # Group raw intents into teacher-facing "kind of help" buckets. Security/greeting/
-    # unknown are intentionally excluded — evasion lives in the Security Ledger, not here.
+    # Group raw intents into teacher-facing "kind of help" buckets. ONLY student-initiated
+    # intents count here — a real ask, code submitted, an error brought, a quiz taken.
+    # Tutor-side / system labels (GUIDANCE fallbacks, GUIDED_PRACTICE, PLANNING, GREETING)
+    # and SECURITY_RISK are intentionally excluded — they aren't things students asked for
+    # (evasion lives in the Security Ledger).
     INTENT_LABEL = {
         "CONCEPT": "Understand a concept",
         "PROBLEM": "Solve a problem", "COMPLEX_PROBLEM": "Solve a problem",
         "DEBUG": "Debug an error",
         "REVIEW": "Review my code",
         "QUIZ": "Quiz / test", "EXAM": "Quiz / test", "EVALUATION": "Quiz / test",
-        "GUIDED_PRACTICE": "Guided practice",
-        "PLANNING": "Plan a project",
-        "GUIDANCE": "General guidance",
     }
 
     # 2. Process in Python (keeping your existing logic logic)
@@ -2143,6 +2143,46 @@ async def get_model_health():
     bkt = [(r["p_bkt_pred"], r["is_correct"]) for r in rows if r["p_bkt_pred"] is not None]
     n_users = db.fetch_one("SELECT COUNT(DISTINCT username) c FROM prediction_log")["c"]
 
+    # --- Single instructor-facing reliability value (0–100) from the effective preds. ---
+    # Expected Calibration Error: bin-size-weighted gap between predicted and observed;
+    # reliability = 100·(1 − ECE). One honest number an instructor can read without stats.
+    def ece(pairs, nb=10):
+        if not pairs:
+            return None
+        buckets = [[] for _ in range(nb)]
+        for p, y in pairs:
+            buckets[min(nb - 1, max(0, int(p * nb)))].append((p, y))
+        e = 0.0
+        for b in buckets:
+            if b:
+                pm = sum(p for p, _ in b) / len(b)
+                am = sum(y for _, y in b) / len(b)
+                e += (len(b) / len(pairs)) * abs(pm - am)
+        return e
+
+    e_eff = ece(eff)
+    rel_score = round(100 * (1 - e_eff)) if e_eff is not None else None
+    avg_p = sum(p for p, _ in eff) / len(eff) if eff else None
+    avg_y = sum(y for _, y in eff) / len(eff) if eff else None
+    if avg_p is None:
+        rel_dir = None
+    elif avg_p < avg_y - 0.05:
+        rel_dir = "under"    # the model predicts lower than students actually perform
+    elif avg_p > avg_y + 0.05:
+        rel_dir = "over"     # the model predicts higher than students perform
+    else:
+        rel_dir = "well"
+    if rel_score is None:
+        rel_label = None
+    elif rel_score >= 90:
+        rel_label = "Reliable"
+    elif rel_score >= 75:
+        rel_label = "Mostly reliable"
+    elif rel_score >= 60:
+        rel_label = "Use with caution"
+    else:
+        rel_label = "Unreliable"
+
     return {
         "n": n,
         "n_users": n_users,
@@ -2150,6 +2190,9 @@ async def get_model_health():
         "brier_bkt": brier(bkt),
         "bins_eff": reliability(eff),
         "bins_bkt": reliability(bkt),
+        "reliability_score": rel_score,
+        "reliability_label": rel_label,
+        "reliability_dir": rel_dir,
     }
 
 
@@ -2188,12 +2231,73 @@ async def get_security_ledger():
     evasion["max_risk"] = risk["mx"] if risk else None
     ped_total = sum(p["count"] for p in pedagogical)
 
+    # --- What are students actually trying? Categorize the blocked queries by technique,
+    # with a few representative (truncated, UNATTRIBUTED) examples so the instructor sees
+    # the *kind* of attempt — the academic-integrity signal, not just a total count.
+    import re as _re
+    CATS = [
+        ("Posing as staff / false authority",
+         ["i am the teacher", "i'm the teacher", "i am teacher", "as the teacher", "teacher, give",
+          "i am the instructor", "i am the professor", "professor said", "i am the admin",
+          "i am an administrator", "give me the key", "give answer key",
+          "i'm a ta", "i am a ta", "actually a ta", "as a ta", "i have permission",
+          "i'm allowed", "i am allowed", "it's fine, i have"]),
+        ("Prompt injection / override",
+         ["ignore all", "ignore rules", "ignore the rules", "ignore previous", "ignore your",
+          "disregard", "forget your", "forget the", "previous instruction", "prior instruction",
+          "system prompt", "override", "pretend", "act as", "jailbreak", "developer mode",
+          "in that mode", "print the exam", "print exam", "that got blocked", "just describe in words"]),
+        ("Malicious / system-abuse code",
+         ["keylogger", "keylog", "virus", "malware", "reverse shell", "ransomware", "ddos",
+          "dos attack", "backdoor", "trojan", "spyware", "botnet", "rootkit", "worm",
+          "fork bomb", "fork(", "self-replicat", "shellcode", "exploit", "sql injection",
+          "<script>", "alert(", "phishing", "brute-force", "brute force", "steal", "bomb", "hack",
+          "freezes the system", "freeze the system", "consume all", "keeps calling",
+          "keeps executing", "keeps running", "wipe", "leak the file", "send packets",
+          "packets over", "run commands", "quietly run"]),
+        ("Trying to extract answers",
+         ["exam answer", "answer key", "give me the answer", "the answer to", "the solution",
+          "exam solution", "do my homework", "do my assignment", "just give me the code",
+          "full solution", "complete code", "write it for me", "cheat"]),
+        ("Probing other students' data",
+         ["another student", "other student", "other students", "someone else", "classmate",
+          "other people's", "all students", "students'", "everyone's", "the whole class",
+          "list all", "'s progress", "'s answers", "'s mastery", "'s goal", "mastery scores"]),
+    ]
+
+    def _categorize(t):
+        tl = t.lower()
+        for name, kws in CATS:
+            if any(k in tl for k in kws):
+                return name
+        return "Other attempts"
+
+    sec_texts = db.fetch_all(
+        "SELECT query_text FROM turn_log WHERE block_reason = ? AND query_text IS NOT NULL",
+        (SECURITY,))
+    tech = {}
+    for r in sec_texts:
+        t = (r["query_text"] or "").strip()
+        if not t:
+            continue
+        cat = _categorize(t)
+        d = tech.setdefault(cat, {"count": 0, "examples": []})
+        d["count"] += 1
+        if len(d["examples"]) < 3:
+            snip = _re.sub(r"\s+", " ", t)[:100]
+            if snip not in d["examples"]:
+                d["examples"].append(snip)
+    techniques = [{"category": k, "count": v["count"], "examples": v["examples"]}
+                  for k, v in tech.items()]
+    techniques.sort(key=lambda x: -x["count"])
+
     return {
         "total_turns": total_turns,
         "total_gated": evasion["count"] + ped_total,
         "evasion": evasion,
         "pedagogical": pedagogical,
         "ped_total": ped_total,
+        "techniques": techniques,
     }
 
 
