@@ -1,0 +1,11 @@
+﻿Feature Area,Test ID,Steps / Input,Expected Result,Failure Condition,Actual Result,Pass / Fail,Severity,Evidence / Screenshot Link,Reproducibility,Tester Feedback / Notes,Suggested Fix / Follow-up,Retest Needed,Reviewed By,Review Status
+Mastery System,F2-01,Pass Variables quiz only,No mastery granted,Mastery incorrectly awarded,Im not able to do the mastery challenge,Fail,Medium,,Always,Tells me focus mode is locked,,,,
+Mastery System,F2-04,3 incorrect attempts,No mastery granted,Progress increases incorrectly,Progrees increases incorrectly,Fail,Medium,,,I answered with idk and progress moved to 15%,,,,
+Mastery System,F2-05,Complete quiz + challenge + review correctly,Mastery awarded (≥95%),No mastery awarded,Mastery awaraded for the first challenge completed,Fail,Medium,,,Was only able to get one question answered then it tells me I have mastered variables only at 20%,,,,
+Curriculum & Prerequisite Gates,F3-01,Ask about arrays (no prerequisites),Blocked with guidance,Full explanation given,Full Explanation given,Fail,Medium,"8/6/26, 8:01 PM",,This might be because i have had quite a few chats with this account,,,,
+Curriculum & Prerequisite Gates,F3-02,Ask about pointers,Blocked with prerequisite hint,Explanation given,Explanation Given,Fail,Medium,"8/6/26, 8:04 PM",,This might be because i have had quite a few chats with this account,,,,
+Curriculum & Prerequisite Gates,F3-03,Ask about malloc,Blocked,Explanation given,Explanation Given,Fail,Medium,"8/6/26, 8:06 PM",,,,,,
+Curriculum & Prerequisite Gates,F3-04,Ask about recursion,Blocked,Explanation given,Explanation given,Fail,Medium,"8/6/26, 8:08 PM",,,,,,
+Socratic Teaching & Examiner,F4-03,Answer incorrectly,Marked wrong,Mastery granted,Blocked answer,Fail,Medium,"8/6/26, 8:19 PM",,It tells me im going off topic,,,,
+Scaffolding & Hint System,F5-06,"Class recommendation, ask a question about the class videos, for example variable",There is a recommendation to classroom video,There is no related recommendation,There is no related reccomendation,Fail,Medium,,,Tells me I masterd variables then when asked again it just explains variables in depth,,,,
+Audio System (Listen Button),F9-01,Click Listen,Audio plays,No audio,No audio,Fail,Medium,,,Give me a text to speech fail. ,,,,

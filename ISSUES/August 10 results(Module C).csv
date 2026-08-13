@@ -1,0 +1,3 @@
+﻿Feature Area,Test ID,Steps / Input,Expected Result,Failure Condition,Actual Result,Pass / Fail,Severity,Evidence / Screenshot Link,Reproducibility,Tester Feedback / Notes,Suggested Fix / Follow-up,Retest Needed,Reviewed By,Review Status
+Extreme Inputs,ST1-04,Send ~1000 repeated characters,Graceful handling or warning,Unhandled crash,Unhandled crash,Fail,Medium,https://snipboard.io/DHyVI9.jpg,Yes,,,,,
+Extreme Inputs,ST1-05,Send 5000+ character input,Truncated or processed safely,Page freeze or blank UI,Page freeze or blank UI,Fail,Medium,https://snipboard.io/DHyVI9.jpg,Yes,,,,,

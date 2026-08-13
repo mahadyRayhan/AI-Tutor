@@ -1,0 +1,5 @@
+﻿Feature Area,Test ID,Steps / Input,Expected Result,Failure Condition,Actual Result,Pass / Fail,Severity,Evidence / Screenshot Link,Reproducibility,Tester Feedback / Notes,Suggested Fix / Follow-up,Retest Needed,Reviewed By,Review Status,
+General UX,D3-01,try scrolling in different places,Scrolling is consistent,Scrolling is inconsistent,Scrolling is inconsistent,Fail,Medium,,Intermittent,"The scrolling is very inconsistent; when you put a mouse in one location, it might not allow you to scroll. Even if oyu move it around, it's not gauranteed to let you scroll.",,,,,
+General UX,D3-02,main chat scroll bar,scrollable,unscrollable,scroll bar is not scrollable,Fail,Low,,,The scroll bar shows but user cannot click and drag it to scroll,,,,,
+Video Testing,D4-01,"Click the ""listen"" audio button",audio works,audio doesn't work,audio doesn't work,Fail,Medium,,,Audio feature still doesn't work.,,,,,
+Video Testing,D4-02,click the three dots to pull up video settings,the popup stays there indefinitely until user clicks away from it,the popup disappears when the transcript move onto the next line,the popup disappears,Fail,Low,,,,,,,,
