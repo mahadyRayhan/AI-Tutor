@@ -1086,6 +1086,7 @@ class ChainOfThoughtRAGAgent:
         """
         from app.core.bkt_model import (
             _read_row, _apply_decay, _parse_ts, _TS_COL, _LAM_COL, EVIDENCE_CONFIG,
+            is_current_certified,
         )
 
         # Step 1: Get candidate concept names from the knowledge graph, with out-degree.
@@ -1191,8 +1192,12 @@ class ChainOfThoughtRAGAgent:
         if not row:
             return ("novice", f"No prior interactions with '{resolved}'", resolved, None)
 
-        # Step 4: ever_certified takes priority → reviewing
-        if row["ever_certified"]:
+        # Step 4: CURRENT certification takes priority → reviewing. Routed through the
+        # single source of truth so a lapsed (decayed) certification no longer pins the
+        # learner in the 'reviewing' adaptation — response adaptation reverts in lockstep
+        # with the access gate. Under the earned_credentials ablation this falls back to
+        # the sticky ever_certified flag (old behaviour).
+        if is_current_certified(username, resolved):
             return ("reviewing", f"Previously certified on '{resolved}'", resolved, None)
 
         # Step 5: Per-tier OBJECTIVE BKT posteriors (decay-adjusted).

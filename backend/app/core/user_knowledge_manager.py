@@ -87,7 +87,12 @@ class UserKnowledgeManager:
             and len(c) >= 3
             and not c.lower().startswith("solved:")
         ]
-        return valid
+        # Revocable certification: ever_certified only makes a concept a CANDIDATE;
+        # keep it in the "known" set only if it is certified RIGHT NOW. Under the
+        # earned_credentials ablation (asserted mode) is_current_certified falls back
+        # to the sticky flag, so this preserves the pre-revocation behaviour exactly.
+        from app.core.bkt_model import is_current_certified
+        return [c for c in valid if is_current_certified(username, c)]
 
     def clear_concepts(self, username: str):
         """Removes ALL mastery records for a user (used by test agent for clean runs)."""
@@ -168,10 +173,14 @@ class UserKnowledgeManager:
         """
         Checks if a concept has ever been certified (fuzzy match, garbage-aware).
 
-        Fix #5: uses ever_certified=1 flag rather than row existence so that
-        forgetting-decay cannot re-lock earned prerequisites. A concept that was
-        once mastered stays 'known' to the prerequisite gate regardless of current
-        decayed P̃ values; only the review scheduler uses the live BKT posterior.
+        Revocable certification: ever_certified selects the CANDIDATE set (topics
+        once certified), but the gate only passes if the matched prerequisite is
+        certified RIGHT NOW — routed through bkt.is_current_certified, the single
+        source of truth. A prerequisite whose mastery has decayed below the
+        de-certify threshold therefore re-locks its dependents. This supersedes the
+        historical Fix #5 ("decay cannot re-lock earned prerequisites"); under the
+        earned_credentials ablation (asserted mode) is_current_certified reverts to
+        the sticky flag, reproducing the old non-revocable behaviour.
         """
         concept_lower = concept.lower()
         if concept_lower in self._garbage_concepts:
@@ -184,7 +193,12 @@ class UserKnowledgeManager:
         )
         # Token-set match (not loose substring): 'char' no longer matches 'character',
         # but a stored 'Variables' still satisfies a prereq named 'Variables and Types'.
-        return any(self._concepts_match(concept, r['concept']) for r in rows)
+        from app.core.bkt_model import is_current_certified
+        return any(
+            self._concepts_match(concept, r['concept'])
+            and is_current_certified(username, r['concept'])
+            for r in rows
+        )
     
     def set_goal(self, username: str, goal: str):
         """Upsert user goal."""

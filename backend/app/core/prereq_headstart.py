@@ -117,7 +117,11 @@ def _prereq_strength(username: str, prereq: str) -> float:
     from app.core import bkt_model
 
     row = bkt_model._read_row(username, prereq)
-    if not row or not row["ever_certified"]:
+    # Rule 1 gate through the single source of truth: only a CURRENTLY-certified
+    # prerequisite transfers a head start, so a decayed prerequisite stops seeding
+    # its dependents (consistent with the revocable access gate). Under the
+    # earned_credentials ablation this reverts to the sticky ever_certified flag.
+    if not row or not bkt_model.is_current_certified(username, prereq):
         return 0.0
     eff = bkt_model.get_effective_mastery(username, prereq)
     composite = eff.get("composite", 0.0)  # ∈ [0, 0.95]

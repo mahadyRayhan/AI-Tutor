@@ -425,6 +425,34 @@ def is_mastered(username: str, concept: str) -> bool:
     return newly_mastered
 
 
+def is_current_certified(username: str, concept: str) -> bool:
+    """Single source of truth for whether `concept` is certified RIGHT NOW.
+
+    This is the one function every behaviour-affecting consumer (the prerequisite
+    access gate, response adaptation, Socratic withholding, head-start seeding)
+    must route through, so that a certification which has decayed below the
+    de-certify threshold stops granting certified-level treatment everywhere at
+    once — the sticky ever_certified flag no longer leaks past a lapse.
+
+    Policy is selected by the `earned_credentials` ablation switch:
+      • enabled  (default, EARNED)   → live, decay-aware is_mastered(): a lapsed
+        certification reverts. This deliberately supersedes the historical Fix #5
+        "decay cannot re-lock earned prerequisites" invariant — revocability is
+        the intended behaviour, and the reversal is a conscious, switchable choice.
+      • disabled (ASSERTED)          → the sticky ever_certified flag alone, i.e.
+        the pre-revocation behaviour, for controlled ablation comparison.
+
+    is_mastered() is the correct oracle rather than the raw is_certified column:
+    the column is only reconciled lazily, so a decayed-but-unswept row still reads
+    1, whereas is_mastered() recomputes with decay and self-heals the flag.
+    """
+    from app.core import config
+    if not config.feature_enabled("earned_credentials"):
+        row = _read_row(username, concept)
+        return bool(row and row["ever_certified"])
+    return is_mastered(username, concept)
+
+
 def reconcile_certifications(username: str | None = None) -> dict:
     """Clear stale is_certified flags that time-decay has silently lapsed.
 
@@ -565,6 +593,7 @@ bkt = type("BKTModel", (), {
     "get_mastery":           staticmethod(get_mastery),
     "get_effective_mastery": staticmethod(get_effective_mastery),
     "is_mastered":           staticmethod(is_mastered),
+    "is_current_certified":  staticmethod(is_current_certified),
     "mastery_ledger":        staticmethod(mastery_ledger),
     "reconcile_certifications": staticmethod(reconcile_certifications),
 })()

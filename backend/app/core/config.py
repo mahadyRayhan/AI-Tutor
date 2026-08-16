@@ -168,6 +168,61 @@ MAX_MESSAGE_CHARS   = int(os.getenv("MAX_MESSAGE_CHARS", "8000"))   # max chat m
 # returns None and the tutor behaves exactly as before.
 MCN_ENABLED = os.getenv("MCN_ENABLED", "false").lower() == "true"
 
+# =========================================================
+# SECURITY-COMPONENT ABLATION SWITCHES
+# =========================================================
+# Controlled on/off switches for the four journal-extension security components,
+# so the system can be run with any single component disabled for a controlled
+# comparison. Everything NOT being ablated behaves identically across arms — a
+# disabled component is a no-op (its effect is skipped in place), never a deleted
+# or branched-around code path.
+#
+#   session_monitor    — cross-turn risk accumulation + trajectory escalation
+#   judge_escalation   — escalate to the LLM adjudicator (semantic safety judge)
+#   context_gating     — state/context-conditioned keyword gating (vs unconditioned)
+#   earned_credentials — attribute check reads the CERTIFIED set (vs asserted/sticky)
+#
+# Single run parameter — a comma-separated list of components to DISABLE:
+#     SAGE_ABLATE="session_monitor,judge_escalation" uvicorn app.main:app --reload
+#
+# Per-component env override (wins over SAGE_ABLATE) for scripted sweeps:
+#     SAGE_SESSION_MONITOR_ENABLED=false
+#
+# All default to ENABLED: with no env set, behaviour is the full system. The
+# active configuration is stamped into the audit log once per session (Sentinel),
+# so every run is attributable after the fact.
+SECURITY_FEATURE_NAMES = (
+    "session_monitor",
+    "judge_escalation",
+    "context_gating",
+    "earned_credentials",
+)
+
+_ABLATE_DISABLED = {
+    s.strip().lower()
+    for s in os.getenv("SAGE_ABLATE", "").split(",")
+    if s.strip()
+}
+
+def _resolve_feature(name: str) -> bool:
+    """Enabled unless individually overridden or named in SAGE_ABLATE."""
+    override = os.getenv(f"SAGE_{name.upper()}_ENABLED")
+    if override is not None:
+        return override.strip().lower() in ("1", "true", "yes", "on")
+    return name not in _ABLATE_DISABLED
+
+SECURITY_FEATURES = {name: _resolve_feature(name) for name in SECURITY_FEATURE_NAMES}
+
+def feature_enabled(name: str) -> bool:
+    """True if the named security component is active. Unknown names default to
+    enabled — an unrecognised component is never silently disabled (fail-safe)."""
+    return SECURITY_FEATURES.get(name, True)
+
+def active_ablation_config() -> dict:
+    """Snapshot of the active ablation configuration for the per-session audit
+    record. Keys are SECURITY_FEATURE_NAMES; values are booleans."""
+    return dict(SECURITY_FEATURES)
+
 # --- Enhanced Logging Settings ---
 ENTITY_EXTRACTION_LOG_LEVEL = os.getenv("ENTITY_EXTRACTION_LOG_LEVEL", DEFAULT_LOG_LEVEL)
 RELATIONSHIP_EXTRACTION_LOG_LEVEL = os.getenv("RELATIONSHIP_EXTRACTION_LOG_LEVEL", DEFAULT_LOG_LEVEL)
