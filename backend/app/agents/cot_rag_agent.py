@@ -1906,32 +1906,66 @@ class ChainOfThoughtRAGAgent:
             
         user_msg_count = sum(1 for m in msg_list if m.get("role") == "user")
 
-        # FIX: Don't hijack learning requests OR struggling students with a quiz.
-        # Use 'in' instead of 'startswith' to catch rephrased questions like
-        # "can you give me just one simple example of a variable?"
+        # ── CONTENT-AWARE POP-QUIZ TRIGGER ──────────────────────────────────
+        # A pop quiz must slot into a natural LULL — it must never interrupt an open
+        # question. The old trigger fired on a blind `msg_count % 5` counter and
+        # leaned on one keyword list to avoid hijacking; any rephrased question that
+        # slipped the list got its answer parked and (often) silently lost. The rule
+        # is now inverted: quiz ONLY when the current turn is a short acknowledgement
+        # / "keep going" beat that carries no request of its own — so a real question
+        # is never swapped out for a quiz, regardless of how it is phrased.
         q_lower_quiz = query.lower().strip()
+        q_bare = q_lower_quiz.rstrip(".!? ")
+
+        # Signals the student is ASKING for something this turn → never quiz.
         learning_phrases = (
-            "explain", "how do", "how to", "what is", "what are", "tell me",
-            "write a", "create a", "build a", "describe", "define", "help",
-            "can you", "give me", "show me", "example", "simple",
-            "don't understand", "don't get", "confused", "struggling", "teach me"
+            "explain", "how do", "how to", "what is", "what are", "what's", "why",
+            "tell me", "write a", "create a", "build a", "describe", "define",
+            "help", "can you", "could you", "give me", "show me", "example",
+            "simple", "don't understand", "don't get", "confused", "struggling",
+            "teach me", "difference between", "kinds of", "types of", "when do",
+            "when to", "which", "where",
         )
-        # --- FLEXIBLE POP QUIZ TRIGGER ---
         is_learning_request = any(p in q_lower_quiz for p in learning_phrases)
+        is_question = "?" in q_lower_quiz
+        is_coding = ("{" in query or "}" in query or ";" in query
+                     or state.intent in ["DEBUG", "REVIEW", "PROBLEM", "COMPLEX_PROBLEM"])
         is_frustrated = learning_profile.get("frustration_level") in ["high", "rage"]
-        is_coding = state.intent in ["DEBUG", "REVIEW", "PROBLEM"]
-        
-        # Only quiz if they are in a normal state, not actively coding/debugging, and not asking for help
-        should_trigger_quiz = (
-            user_msg_count > 0 and 
-            user_msg_count % 5 == 0 and 
-            not is_in_quiz and 
-            not is_in_plan and 
-            not is_learning_request and 
-            not is_frustrated and 
-            not is_coding
+        in_quiz_flow = is_in_quiz or bool(current_state.get("awaiting_confidence_rating"))
+
+        # A "lull": a brief acknowledgement / continuation that carries no request.
+        _lull_cues = {
+            "ok", "okay", "k", "kk", "thanks", "thank you", "thx", "ty", "got it",
+            "cool", "nice", "great", "makes sense", "i see", "understood", "next",
+            "continue", "go on", "sure", "yes", "yep", "yeah", "alright", "done",
+            "sounds good", "gotcha", "right", "perfect", "good", "awesome",
+        }
+        _words = q_bare.split()
+        is_lull_turn = bool(q_bare) and len(_words) <= 4 and any(
+            q_bare == c or q_bare.startswith(c + " ") or q_bare.startswith(c + ",")
+            for c in _lull_cues
         )
-        
+
+        # Cadence: at least N turns since the last pop quiz. Tracked as an absolute
+        # turn index (not a modulo) so a turn we correctly *skip* because the student
+        # was mid-question doesn't shove the next eligible quiz 5 more turns away.
+        last_quiz_at = current_state.get("last_popquiz_at", 0) if current_state else 0
+        POPQUIZ_MIN_GAP = 5
+        cadence_ok = (user_msg_count - last_quiz_at) >= POPQUIZ_MIN_GAP
+
+        # Quiz only at a genuine lull, spaced out, and never over an open request.
+        should_trigger_quiz = (
+            user_msg_count > 0 and
+            cadence_ok and
+            is_lull_turn and
+            not in_quiz_flow and
+            not is_in_plan and
+            not is_learning_request and
+            not is_question and
+            not is_coding and
+            not is_frustrated
+        )
+
         if should_trigger_quiz:
             self.logger.info("🎯 Triggering Proactive Pop Quiz!")
             
@@ -1943,9 +1977,16 @@ class ChainOfThoughtRAGAgent:
             if recent_topic:
                 # Push the current query onto the goals stack
                 goals_stack = current_state.get("pending_goals", []) if current_state else []
-                if state.query not in goals_stack:
-                    goals_stack.append(state.query)
-                history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
+                # Park the RAW question (original_query), not a possibly-rewritten
+                # search query, so what resumes after the quiz is what the student
+                # actually asked.
+                parked = state.original_query or state.query
+                if parked not in goals_stack:
+                    goals_stack.append(parked)
+                history_manager.update_session_state(username, session_id, {
+                    "pending_goals": goals_stack,
+                    "last_popquiz_at": user_msg_count,   # cadence anchor (content-aware trigger)
+                })
                 state.query = f"know {recent_topic} (verify)"
                 state.intent = "QUIZ"
                 state.entities = [recent_topic]

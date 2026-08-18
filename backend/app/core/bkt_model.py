@@ -135,8 +135,12 @@ def _apply_decay(p_tilde: float, tier: str, last_at: datetime | None,
     return round(max(decayed, p0), 6)
 
 
+from app.core.concept_canon import canonical_concept
+
+
 def _read_row(username: str, concept: str):
     """Fetch full BKT state row for (username, concept)."""
+    concept = canonical_concept(concept)
     return db.fetch_one(
         "SELECT p_mastery_quiz, p_mastery_micro, p_mastery_code, "
         "last_quiz_at, last_micro_at, last_code_at, "
@@ -152,6 +156,7 @@ def _read_row(username: str, concept: str):
 def _get_user_params(username: str, concept: str, tier: str) -> dict:
     """Return BKT parameters for this user+concept+tier.
     Uses adapted P_G from SRL calibration if it exists, otherwise global defaults."""
+    concept = canonical_concept(concept)
     cfg = dict(EVIDENCE_CONFIG[tier])
     row = db.fetch_one(
         "SELECT adapted_P_G FROM user_bkt_calibration "
@@ -169,6 +174,7 @@ def get_effective_mastery(username: str, concept: str) -> dict:
     never for certification."""
     from app.core.srl_calibration import ALPHA
 
+    concept = canonical_concept(concept)
     row = _read_row(username, concept)
     if not row:
         return {
@@ -216,6 +222,7 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
         logger.warning(f"[BKT] Unknown evidence_type '{evidence_type}', defaulting to quiz")
         evidence_type = "quiz"
 
+    concept = canonical_concept(concept)
     cfg    = _get_user_params(username, concept, evidence_type)
     col    = cfg["col"]
     ts_col = _TS_COL[evidence_type]
@@ -373,6 +380,7 @@ def is_mastered(username: str, concept: str) -> bool:
     the prerequisite gate uses ever_certified so decay cannot re-lock earned
     prerequisites.
     """
+    concept = canonical_concept(concept)
     row = _read_row(username, concept)
     if not row:
         return False
@@ -527,6 +535,7 @@ def mastery_ledger(username: str, concept: str) -> str:
     if not concept or concept.strip().lower() in ("", "general", "code submission"):
         return ""
 
+    concept = canonical_concept(concept)
     row = _read_row(username, concept)
 
     def _bar(frac: float, cells: int = 4) -> str:

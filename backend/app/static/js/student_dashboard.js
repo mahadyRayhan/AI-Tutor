@@ -363,7 +363,7 @@ function renderMasterySliders(panel, safeId, concept, data) {
     tiers.forEach(tier => {
         const t = data.tiers[tier];
         const pBkt = t.p_bkt;
-        const pSelf = t.self_assessment !== null ? t.self_assessment : pBkt;
+        const pSelf = t.p_self != null ? t.p_self : pBkt;
         const pEff = t.p_effective;
         const adapted = t.adapted_P_G !== null;
         const maxVal = pBkt;
@@ -386,7 +386,7 @@ function renderMasterySliders(panel, safeId, concept, data) {
                 <span>${tierLabels[tier]}</span>
                 <span class="mastery-tier-values">
                     BKT: <strong>${(pBkt * 100).toFixed(0)}%</strong>
-                    ${t.self_assessment !== null ? ` | Self: <strong>${(pSelf * 100).toFixed(0)}%</strong>` : ''}
+                    ${t.p_self != null ? ` | Self: <strong>${(pSelf * 100).toFixed(0)}%</strong>` : ''}
                     | Eff: <strong id="eff-${safeId}-${tier}">${(pEff * 100).toFixed(0)}%</strong>
                     ${adapted ? ' <span class="mastery-adapted-badge">P_G adapted</span>' : ''}
                 </span>

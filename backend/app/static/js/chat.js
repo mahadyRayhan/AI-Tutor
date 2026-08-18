@@ -478,6 +478,15 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             // Telemetry: AI finished — start the dwell-time clock for the next reply
             markAiResponded();
 
+            // --- AUTO-RESUME A PARKED QUESTION AFTER A POP QUIZ ---
+            // When a surprise quiz interrupted a real question, the backend parks it
+            // and sends `auto_resume` ("📌 Back to: <goal>"). Re-send it hidden so the
+            // tutor continues on its own — keeping the "I'll help with that next!"
+            // promise without the student having to click the fallback chip.
+            if (data.data.auto_resume) {
+                setTimeout(() => window.sendMessage(data.data.auto_resume, true), 900);
+            }
+
             if (data.data.warmup_topic) {
                 const topicSpan = document.getElementById('warmupTopicName');
                 const modal = document.getElementById('warmupModal');
