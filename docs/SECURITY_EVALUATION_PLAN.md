@@ -10,13 +10,37 @@ and labeled as such.*
 
 ## 1. Scope
 
-Evaluate the SAGE safety architecture as a layered control system against four adversaries
-(A1–A4), and — equally — measure its **cost to legitimate use**. Every attack-success number
-is reported next to a false-positive number on the same corpus; a gate that blocks honest
-debugging is a regression, not a win.
+**Purpose:** evaluate the SAGE safety architecture as a layered control system against four
+adversaries (A1–A4), and close the security gaps left open by the conference version.
 
-Two properties are evaluated as **proofs, not averages**: structural invariants (property
-tests) and side-effect-freedom of the detector.
+**Guiding principles**
+- Every attack-success number is reported next to a **false-positive number on the same corpus** — a gate that blocks honest debugging is a regression, not a win.
+- Two properties are evaluated as **proofs, not averages**: structural invariants (property tests) and side-effect-freedom of the detector.
+
+### Core gaps — the novelty (what prior tutoring-security work lacked)
+
+These are the research contributions: gaps relative to *prior work*, not just our own deployment.
+
+- **Session-level, multi-turn security.** Prior LLM-tutor guards screen each turn in isolation, so a harmful goal *assembled across turns* (crescendo) slips through. → **Contribution:** session-level trajectory risk — accumulate per-turn risk, escalate to a judge. *[✅ built + evaluated — E3; re-confirm under hardened judge]*
+- **Learner-model state as a security signal.** No prior tutor used the *learner's own mastery state* as a security input — access, latitude, and anomaly detection were never keyed on per-skill competence. → **Contribution (umbrella):** the learner model does double duty, instantiated three ways:
+  - **ABAC on the certified set K** — unlock a topic only if its prerequisites are *currently* certified.
+  - **Mastery-earned security latitude** — competence is the currency that buys latitude on risky asks.
+  - **Consistency detector** — the learner model as an intrusion/integrity sensor (surprise vs. the student's own trajectory; review-not-block). *[detector 🔧 to build — E7; latitude 📊 to measure — E6]*
+- **A threat model for the educational-tutor setting.** Adversaries in this domain were never formalized. → **Contribution:** a **STRIDE**-organized taxonomy of four adversaries (A1 credential inflater · A2 asset extractor · A3 harm proxy · A4 state spoofer) mapped to controls (§2). *[📝 framing]*
+
+### Security build-in (hardening + evaluation rigor)
+
+These make the novelty *sound* and *measurable*. They are engineering/robustness gaps in our own deployment, not contributions to the field.
+
+- **Revocable certification** — a decayed credential can no longer keep granting access/adaptation; makes the K-based novelty honest. *[✅ Task 1]*
+- **Hardened adjudicator** — delimited + data-labelled input, fixed-schema verdict, **fail-closed** on error/timeout. *[✅ Task 3]*
+- **Ablation switches + study** — isolate each layer's marginal contribution (ΔASR / ΔFPR). *[✅ switches — Task 2; 📊 study — E1]*
+- **Instructor review surface** — the human landing spot for detector flags (avoids "computed-but-never-surfaced"). *[🔧 to build]*
+- **Structural invariant tests** — hard-block precedence at max |K|, latitude floor, detector side-effect-free. *[🔧 to add — E8]*
+- **Usability / over-block measurement** — XSTest, reported beside every block rate. *[📊 to measure — E4]*
+- **Auditability & determinism** — completeness, reproducibility, run-attribution (STRIDE Repudiation). *[✅ ablation-config stamping; 📊 track — E9]*
+- **Output-side check** — inspect the *generated* answer, not just the request. **Out of current scope, flagged honestly.** *[⚠️ open]*
+- **Adaptive-adversary testing** — evasion-aware probing (slow-burn under threshold, gamed self-assessment). *[🔧 optional — E10]*
 
 ### Architecture (security view)
 
