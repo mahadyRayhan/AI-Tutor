@@ -13,33 +13,44 @@ and labeled as such.*
 **Purpose:** evaluate the SAGE safety architecture as a layered control system against four
 adversaries (A1–A4), and close the security gaps left open by the conference version.
 
-**Guiding principles**
+**Boundary — built vs. buildable**
+- **In scope · the novelty** — the learner model as a security instrument (→ *Core gaps*). *Built:* competence-keyed access + latitude. *To build:* the consistency detector. *[E6 ✅ · E7 🔧]*
+- **In scope · hardening** — the engineering that makes the novelty sound and measurable (→ *Security build-in*). *[mostly ✅]*
+- **Out of scope · flagged** — the **output-side check** (inspect the *generated answer*, not the request). Proposed, not attempted. *[⚠️ open]*
+
+**Reporting rules**
 - Every attack-success number is reported next to a **false-positive number on the same corpus** — a gate that blocks honest debugging is a regression, not a win.
 - Two properties are evaluated as **proofs, not averages**: structural invariants (property tests) and side-effect-freedom of the detector.
+- Where no public suite fits the domain (A1/A2), corpora are **self-authored** and labeled as such.
 
-### Core gaps — the novelty (what prior tutoring-security work lacked)
+### Core gaps — the focus of this work
 
-These are the research contributions: gaps relative to *prior work*, not just our own deployment.
+*One contribution, not three:* **the learner model as a security instrument** — the first tutor to
+use the student's *own mastery state* as a live security signal. Prior work could not: general LLM
+security has no per-user competence model; tutoring research has the model but never wired it to
+security.
 
-- **Session-level, multi-turn security.** Prior LLM-tutor guards screen each turn in isolation, so a harmful goal *assembled across turns* (crescendo) slips through. → **Contribution:** session-level trajectory risk — accumulate per-turn risk, escalate to a judge. *[✅ built + evaluated — E3; re-confirm under hardened judge]*
-- **Learner-model state as a security signal.** No prior tutor used the *learner's own mastery state* as a security input — access, latitude, and anomaly detection were never keyed on per-skill competence. → **Contribution (umbrella):** the learner model does double duty, instantiated three ways:
-  - **ABAC on the certified set K** — unlock a topic only if its prerequisites are *currently* certified.
-  - **Mastery-earned security latitude** — competence is the currency that buys latitude on risky asks.
-  - **Consistency detector** — the learner model as an intrusion/integrity sensor (surprise vs. the student's own trajectory; review-not-block). *[detector 🔧 to build — E7; latitude 📊 to measure — E6]*
-- **A threat model for the educational-tutor setting.** Adversaries in this domain were never formalized. → **Contribution:** a **STRIDE**-organized taxonomy of four adversaries (A1 credential inflater · A2 asset extractor · A3 harm proxy · A4 state spoofer) mapped to controls (§2). *[📝 framing]*
+It manifests three ways:
+- **Access — ABAC on the certified set K.** Unlock a topic only if its prerequisites are *currently* certified. *[✅ built]*
+- **Latitude — competence buys latitude.** Earned mastery is the currency for risky asks. *[📊 measure — E6]*
+- **Anomaly — consistency detector.** Surprise vs. the student's *own* trajectory; review-not-block. *[🔧 build — E7]*
 
-### Security build-in (hardening + evaluation rigor)
+Supporting framing (rides on the spine — not a peer claim):
+- **Multi-turn, session-level defense** — crescendo risk accumulated across the session, escalated to a judge, with latitude keyed to K. *The multi-turn technique itself is borrowed from LLM red-teaming; the tutor-specific twist is tying it to competence.* *[✅ E3; re-confirm under hardened judge]*
+- **Tutor threat model** — STRIDE taxonomy of four adversaries targeting the tutor's unique asset, the mastery/certification record (A1 credential inflater · A2 asset extractor · A3 harm proxy · A4 state spoofer). *[📝 §2]*
 
-These make the novelty *sound* and *measurable*. They are engineering/robustness gaps in our own deployment, not contributions to the field.
+### Security build-in — byproduct hardening (not a contribution)
 
-- **Revocable certification** — a decayed credential can no longer keep granting access/adaptation; makes the K-based novelty honest. *[✅ Task 1]*
+Enabling work: it makes the novelty *honest, sound, and measurable*, and would not stand as a
+field contribution on its own. Listed here for reproducibility, not for the claims table.
+
+- **Revocable certification** — a decayed credential stops granting access; keeps the K-based novelty honest. *[✅ Task 1]*
 - **Hardened adjudicator** — delimited + data-labelled input, fixed-schema verdict, **fail-closed** on error/timeout. *[✅ Task 3]*
-- **Ablation switches + study** — isolate each layer's marginal contribution (ΔASR / ΔFPR). *[✅ switches — Task 2; 📊 study — E1]*
+- **Ablation switches + study** — each layer's marginal ΔASR / ΔFPR. *[✅ switches — Task 2; 📊 study — E1]*
 - **Instructor review surface** — the human landing spot for detector flags (avoids "computed-but-never-surfaced"). *[🔧 to build]*
 - **Structural invariant tests** — hard-block precedence at max |K|, latitude floor, detector side-effect-free. *[🔧 to add — E8]*
-- **Usability / over-block measurement** — XSTest, reported beside every block rate. *[📊 to measure — E4]*
-- **Auditability & determinism** — completeness, reproducibility, run-attribution (STRIDE Repudiation). *[✅ ablation-config stamping; 📊 track — E9]*
-- **Output-side check** — inspect the *generated* answer, not just the request. **Out of current scope, flagged honestly.** *[⚠️ open]*
+- **Over-block measurement** — XSTest, reported beside every block rate. *[📊 to measure — E4]*
+- **Auditability & determinism** — completeness, reproducibility, run-attribution (STRIDE Repudiation). *[✅ config stamping; 📊 track — E9]*
 - **Adaptive-adversary testing** — evasion-aware probing (slow-burn under threshold, gamed self-assessment). *[🔧 optional — E10]*
 
 ### Architecture (security view)
