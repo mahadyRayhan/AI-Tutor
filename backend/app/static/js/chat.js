@@ -1068,7 +1068,14 @@ function initializeApp() {
     }
 }
 
-function logout() { localStorage.removeItem('c_tutor_user'); location.reload(); }
+async function logout() {
+    // Clear the SERVER session first. Dropping localStorage alone left the signed
+    // cookie live: "logged out" in the UI, still fully authenticated to the API.
+    try { await fetch('/api/v1/auth/logout', { method: 'POST' }); }
+    catch (e) { console.warn('Logout request failed; clearing local state anyway.', e); }
+    localStorage.removeItem('c_tutor_user');
+    location.reload();
+}
 function openDashboard() { window.location.href = currentUser.role === 'teacher' ? 'teacher_dashboard.html' : 'student_dashboard.html'; }
 
 // --- Instructor-assigned material: a dismissable banner at the top of the chat ---
@@ -2499,8 +2506,36 @@ function renderMarkdownCr(text) {
 
 // Init
 initAuthUI();
-const stored = localStorage.getItem('c_tutor_user');
-if (stored) { currentUser = JSON.parse(stored); routeUser(); }
+
+// Rehydrate identity from the SERVER, not from localStorage.
+//
+// localStorage is a display cache that the user can edit. Booting from it made
+// the client and the server disagree about who you are, and the disagreement
+// looped: a tampered {"role":"teacher"} sent routeUser() to teacher_dashboard.html,
+// the server refused with a 303 back to "/", this file re-read the same tampered
+// value, and redirected again — hundreds of requests a second.
+//
+// /auth/me answers from the signed cookie, so the tamper is corrected instead of
+// retried. A stale cache (e.g. a session that expired) resolves to the login
+// screen rather than a redirect loop.
+(async function bootstrapSession() {
+    try {
+        const res = await fetch('/api/v1/auth/me');
+        if (!res.ok) {                       // no session, or it expired
+            localStorage.removeItem('c_tutor_user');
+            return;                          // initAuthUI() already shows login
+        }
+        const { user } = await res.json();
+        currentUser = user;
+        localStorage.setItem('c_tutor_user', JSON.stringify(user));
+        routeUser();
+    } catch (e) {
+        // Network/server down: fail closed to the login screen. Booting from the
+        // cache here would reintroduce the loop the moment the server returns.
+        console.warn('Session check failed; showing login.', e);
+        localStorage.removeItem('c_tutor_user');
+    }
+})();
 
 let currentSolveTopic = "";
 

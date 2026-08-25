@@ -19,13 +19,14 @@ import csv
 from pyinstrument import Profiler
 from fastapi.staticfiles import StaticFiles # Needed to serve the reports
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi import Header, Depends
-from fastapi import Request
+from fastapi import Request, Response
 from pathlib import Path
 
 # Import components
 from app.core import config
+from app.core import auth
 from app.core.rate_limiter import rate_limit
 from app.db.llm_interface import LLMInterface
 from app.db.vector_store import ChromaVectorStore
@@ -281,15 +282,20 @@ def _bkt_topic_mastery(username: str) -> Dict[str, float]:
     return out
 
 
-async def verify_teacher(x_user_role: str = Header(None, alias="X-User-Role")):
+async def verify_teacher(user: dict = Depends(auth.require_teacher)):
+    """Authorize a teacher. The role is read from the SIGNED SESSION COOKIE.
+
+    This previously compared a client-supplied `X-User-Role` header against
+    "teacher". The frontend sourced that header from localStorage, so editing
+    `c_tutor_user` in devtools to {"role":"teacher"} both unlocked the teacher UI
+    and satisfied this check — a reported and confirmed privilege escalation.
+    A signed token cannot be forged from the browser, and the cookie carrying it is
+    httpOnly so page JavaScript cannot read or alter it.
+
+    Kept as a thin wrapper so the six existing Depends(verify_teacher) call sites
+    keep working unchanged.
     """
-    Simple header check. In a real app, use JWT tokens.
-    For this prototype, the Frontend must send 'X-User-Role: teacher' 
-    and the Backend trusts it (weak security) OR we validate session.
-    """
-    # Since we are stateless, this is a basic check.
-    if x_user_role != "teacher":
-        raise HTTPException(status_code=403, detail="Not authorized")
+    return user
 
 @app.on_event("startup")
 async def startup_event():
@@ -370,12 +376,29 @@ async def read_root(request: Request):
         context={"request": request}
     )
 
+# Pages that require a teacher/admin session to be served at all.
+_STAFF_PAGES = {"teacher_dashboard"}
+
+
 # 4. Dynamic Page Endpoint
 @app.get("/{page_name}.html", response_class=HTMLResponse)
 async def serve_specific_html(request: Request, page_name: str):
     """ Dynamically serves teacher_dashboard.html, student_dashboard.html, etc. """
     file_name = f"{page_name}.html"
     file_path = TEMPLATES_DIR / file_name
+
+    # Gate staff-only pages on the SESSION, not on client-side JS. The in-page
+    # check can only run after the browser has already been handed the markup, so
+    # a student could read the dashboard's structure (and its inline JS) before
+    # being redirected. The APIs behind it already return 403, so this leaks no
+    # student data — but the page should not be served in the first place.
+    if page_name in _STAFF_PAGES:
+        viewer = auth.get_current_user_optional(request)
+        if not viewer or viewer["role"] not in ("teacher", "admin"):
+            # Send them home rather than showing a bare 403: an unauthenticated
+            # teacher just needs to log in, and a student clicked something they
+            # shouldn't have seen.
+            return RedirectResponse(url="/", status_code=303)
 
     # Check if file exists using the Path object
     if file_path.exists():
@@ -393,7 +416,15 @@ async def health():
 
 @app.post("/api/v1/chat/stream",
           dependencies=[Depends(rate_limit("chat", config.RATE_LIMIT_CHAT_MAX, 60))])
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: overwrite the client-supplied identity with the session's.
+    # `username` and `user_role` arrive in the request BODY, and everything
+    # downstream — chat history, BKT evidence, session state — keys off them. A
+    # student could therefore POST as another student and write to that account.
+    # The body values are now ignored entirely rather than merely validated.
+    request.username = _caller["username"]
+    request.user_role = _caller["role"]
+
     # --- 1. START PROFILER ---
     profiler = None
     if config.ENABLE_PROFILING:
@@ -689,8 +720,12 @@ async def chat_stream(request: ChatRequest):
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
 @app.get("/api/v1/analytics/student/{username}")
-async def get_student_stats(username: str):
+async def get_student_stats(username: str, _caller: dict = Depends(auth.get_current_user)):
     """FAST Endpoint: Returns charts data only."""
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     history = history_manager.get_student_history(username)
     goal = knowledge_manager.get_goal(username)
 
@@ -717,8 +752,12 @@ async def get_student_stats(username: str):
     }
 
 @app.get("/api/v1/analytics/report/{username}")
-def get_student_report(username: str):
+def get_student_report(username: str, _caller: dict = Depends(auth.get_current_user)):
     """SLOW Endpoint: Returns LLM advice using the Smart Model."""
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     history = history_manager.get_student_history(username)
     recent_logs = history[-15:]
     
@@ -828,16 +867,38 @@ async def update_topic(update: TopicUpdate):
 
 @app.post("/api/v1/auth/login",
           dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
-async def login(creds: LoginRequest):
+async def login(creds: LoginRequest, response: Response):
     try:
         user = user_manager.authenticate(creds.username, creds.password)
         if user:
+            # Issue a signed session cookie. The returned `user` object is for
+            # DISPLAY ONLY — the browser copy is advisory and is never trusted for
+            # authorization again. Identity and role now come from this token.
+            token = auth.create_token(user["username"], user["role"], user.get("name", ""))
+            auth.set_session_cookie(response, token)
             return {"status": "success", "user": user}
         else:
             raise HTTPException(status_code=401, detail="Invalid credentials")
+    except HTTPException:
+        raise
     except Exception as e:
         # Catch the "Account Blocked" exception from user_manager
         raise HTTPException(status_code=403, detail=str(e))
+
+
+@app.post("/api/v1/auth/logout")
+async def logout(response: Response):
+    """Clear the session cookie. The client cannot do this itself — the cookie is
+    httpOnly by design."""
+    auth.clear_session_cookie(response)
+    return {"status": "success"}
+
+
+@app.get("/api/v1/auth/me")
+async def whoami(user: dict = Depends(auth.get_current_user)):
+    """Who does the SERVER think you are? The frontend calls this on load to
+    rehydrate its display state from the token rather than from localStorage."""
+    return {"user": user}
 
 @app.post("/api/v1/auth/signup",
           dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
@@ -888,7 +949,10 @@ async def get_users_paginated(page: int = 1, page_size: int = 10):
     }
 
 @app.post("/api/v1/admin/users/update")
-async def update_user(req: AdminUserUpdate):
+async def update_user(req: AdminUserUpdate, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     # In a real app, verify the caller is an admin here
     success = user_manager.update_user_status(
         username=req.target_username,
@@ -900,7 +964,11 @@ async def update_user(req: AdminUserUpdate):
     raise HTTPException(status_code=404, detail="User not found")
 
 @app.get("/api/v1/analytics/learning_path/{username}")
-def get_learning_path_endpoint(username: str):
+def get_learning_path_endpoint(username: str, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     import string
     import json
     
@@ -1033,7 +1101,11 @@ def get_learning_path_endpoint(username: str):
         return {"goal": goal, "path": []}
 
 @app.get("/api/v1/analytics/student/{username}")
-def get_student_analytics(username: str):
+def get_student_analytics(username: str, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     # Start timer
     import time
     t0 = time.time()
@@ -1174,7 +1246,10 @@ async def upload_resource(
     }
 
 @app.get("/api/v1/analytics/teacher/overview")
-async def get_teacher_analytics():
+async def get_teacher_analytics(_t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Returns global class stats using SQL aggregation.
     """
@@ -1228,7 +1303,10 @@ async def get_teacher_analytics():
     }
     
 @app.get("/api/v1/analytics/teacher/detailed")
-async def get_teacher_detailed_analytics(page: int = 1, page_size: int = 10):
+async def get_teacher_detailed_analytics(page: int = 1, page_size: int = 10, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Returns calculated matrix with Pagination.
     Optimization: Only runs heavy calculations for the requested page of students.
@@ -1349,7 +1427,10 @@ async def get_teacher_detailed_analytics(page: int = 1, page_size: int = 10):
     }
 
 @app.get("/api/v1/analytics/teacher/risk_matrix")
-async def get_risk_matrix(days: int = 14):
+async def get_risk_matrix(days: int = 14, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Risk Matrix (Action 5): flags students by HIGH FRUSTRATION + LOW MASTERY using
     the affect_log (frustration trajectory) and BKT mastery telemetry.
@@ -1452,7 +1533,10 @@ async def get_risk_matrix(days: int = 14):
 
 
 @app.get("/api/v1/analytics/teacher/triage")
-async def get_teacher_triage():
+async def get_teacher_triage(_t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Action Triage (landing view): one row per learner, flagged by a SINGLE named
     mechanism derived from the 3-tier BKT in user_knowledge — not a composite risk
@@ -1556,7 +1640,10 @@ async def get_teacher_triage():
 
 
 @app.get("/api/v1/analytics/teacher/decert_forecast")
-async def get_decert_forecast(horizon: int = 14):
+async def get_decert_forecast(horizon: int = 14, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Decertification Forecast: which certified learner-concepts will decay below
     THETA_DECERTIFY within the horizon, and in how many days — projected from the
@@ -1700,7 +1787,10 @@ def _class_tier_matrix():
 
 
 @app.get("/api/v1/analytics/teacher/class_standing")
-async def get_class_standing():
+async def get_class_standing(_t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     CLASS / "Where the class stands": one row per topic, split into the three things a
     learner can do — Can explain it / Can complete code / Can write it from scratch —
@@ -1782,7 +1872,10 @@ class CalendarEntryRequest(BaseModel):
 
 
 @app.get("/api/v1/analytics/teacher/calendar")
-async def get_course_calendar():
+async def get_course_calendar(_t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """The course schedule: dated entries of what's taught/assigned. Time-anchors the
     other panels (a signal is only interpretable once it's aligned to instruction)."""
     import json
@@ -1803,7 +1896,10 @@ async def get_course_calendar():
 
 
 @app.post("/api/v1/analytics/teacher/calendar")
-async def add_course_calendar_entry(req: CalendarEntryRequest):
+async def add_course_calendar_entry(req: CalendarEntryRequest, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     import json
     from datetime import datetime as _dt
     _ensure_calendar_table()
@@ -1818,14 +1914,20 @@ async def add_course_calendar_entry(req: CalendarEntryRequest):
 
 
 @app.delete("/api/v1/analytics/teacher/calendar/{entry_id}")
-async def delete_course_calendar_entry(entry_id: int):
+async def delete_course_calendar_entry(entry_id: int, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     _ensure_calendar_table()
     db.execute("DELETE FROM course_calendar WHERE id = ?", (entry_id,))
     return {"status": "deleted", "id": entry_id}
 
 
 @app.get("/api/v1/analytics/teacher/readiness")
-async def get_readiness(topic: str = None):
+async def get_readiness(topic: str = None, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     NEXT / "Ready for what's coming": pick the topic you plan to teach; this walks the
     Neo4j prerequisite DAG (REQUIRES_UNDERSTANDING_OF) and reports what share of the class
@@ -1931,7 +2033,10 @@ def _topic_materials(topic: str):
 
 
 @app.get("/api/v1/analytics/teacher/prep_list")
-async def get_prep_list():
+async def get_prep_list(_t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     NEXT / "What to prepare next": turns class standing into a to-do for the instructor.
     Per topic it emits ONE prep action (re-explain / coding session / first exposure /
@@ -2034,7 +2139,10 @@ class GroupAssignRequest(BaseModel):
 
 
 @app.post("/api/v1/analytics/teacher/assign_group")
-async def assign_to_group(req: GroupAssignRequest):
+async def assign_to_group(req: GroupAssignRequest, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Assign the same material/task to a whole group at once (a Prep List row's students).
     Records one append-only event per learner in event_log, capturing which material and
@@ -2079,7 +2187,10 @@ _UPLOAD_EXTS = {".pdf", ".md", ".txt", ".docx", ".pptx", ".c", ".h", ".png", ".j
 
 
 @app.post("/api/v1/analytics/teacher/upload_material")
-async def upload_teacher_material(file: UploadFile = File(...)):
+async def upload_teacher_material(file: UploadFile = File(...), _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """Teacher uploads their own handout/assignment file to attach to a group assignment.
     Saved under resources/assignments/ (separate from the ingested curriculum resources)."""
     ext = Path(file.filename or "").suffix.lower()
@@ -2124,7 +2235,10 @@ async def material_done(req: MaterialDoneRequest):
 
 
 @app.get("/api/v1/analytics/teacher/assignment_status")
-async def get_assignment_status():
+async def get_assignment_status(_t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     NEXT / "Did assignments land?": the follow-through half of the Prep List. Each material
     assignment sent (grouped by topic + material + day) with how many of the assigned
@@ -2170,7 +2284,10 @@ async def get_assignment_status():
 
 
 @app.get("/api/v1/analytics/teacher/model_health")
-async def get_model_health():
+async def get_model_health(_t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Model Health: how well the mastery model's pre-update predictions have matched the
     observed outcomes recorded in prediction_log. Surfaces the Brier score (raw BKT vs
@@ -2262,7 +2379,10 @@ async def get_model_health():
 
 
 @app.get("/api/v1/analytics/teacher/security_ledger")
-async def get_security_ledger():
+async def get_security_ledger(_t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Security Ledger (aggregate-first): cohort counts of gated turns, with the EVASION
     case (Sentinel security block) visually separated from CURRICULUM / pedagogical
@@ -2367,7 +2487,7 @@ async def get_security_ledger():
 
 
 @app.get("/api/v1/analytics/student_detail/{username}")
-async def get_student_detail_view(username: str):
+async def get_student_detail_view(username: str, _caller: dict = Depends(auth.get_current_user)):
     """
     Fetches deep-dive data: real 3-tier BKT mastery + full session list + last 2 transcripts.
 
@@ -2376,6 +2496,10 @@ async def get_student_detail_view(username: str):
     last "modal disagrees with the cohort panels" gap: a learner shown decertified in
     Triage now reads decertified here too.
     """
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     from app.core.bkt_model import (reconcile_certifications, _apply_decay, _parse_ts,
                                      _TS_COL, _LAM_COL, _N_COL, EVIDENCE_CONFIG, N_MIN)
 
@@ -2512,13 +2636,17 @@ async def get_student_detail_view(username: str):
     }
 
 @app.get("/api/v1/analytics/student_trajectory/{username}")
-async def get_student_trajectory(username: str):
+async def get_student_trajectory(username: str, _caller: dict = Depends(auth.get_current_user)):
     """
     Per-concept mastery trajectory for one learner, reconstructed from bkt_history.
     Three tier series (quiz/micro/code) over time + certification/decertification event
     markers — so a snapshot's "50%" can be told apart from a learner climbing vs one who
     has lapsed. Pure read of the existing telemetry stream; no new logging.
     """
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     rows = db.fetch_all(
         "SELECT concept, tier, p_tilde, n_evidence, is_certified, ts_utc "
         "FROM bkt_history WHERE username=? ORDER BY ts_utc ASC", (username,))
@@ -2564,7 +2692,10 @@ class InstructorActionRequest(BaseModel):
 
 
 @app.post("/api/v1/analytics/teacher/log_action")
-async def log_instructor_action(req: InstructorActionRequest):
+async def log_instructor_action(req: InstructorActionRequest, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     """
     Append-only record of an instructor acting on a learner from the dashboard.
     Logging is the point (the agent flagged this as irreversible-if-missed before
@@ -2591,14 +2722,21 @@ async def log_instructor_action(req: InstructorActionRequest):
 
 
 @app.get("/api/v1/history/sessions")
-async def get_sessions(username: str):
+async def get_sessions(username: str,
+                       _caller: dict = Depends(auth.get_current_user)):
     """Get list of past conversations for sidebar."""
+    # AUTHZ: `username` arrives as a QUERY parameter here, not a path parameter.
+    # That is the only reason these three routes survived the {username} audit —
+    # ?username=someone-else returned their whole conversation history.
+    auth.require_self_or_teacher(username, _caller)
     return history_manager.get_user_sessions_list(username)
 
 # 1. GET Endpoint (For Loading Chat)
 @app.get("/api/v1/history/session/{session_id}")
-async def get_session_chat(session_id: str, username: str):
+async def get_session_chat(session_id: str, username: str,
+                           _caller: dict = Depends(auth.get_current_user)):
     """Get full chat log for a specific session."""
+    auth.require_self_or_teacher(username, _caller)
     session = history_manager.get_session_details(username, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -2606,8 +2744,10 @@ async def get_session_chat(session_id: str, username: str):
 
 # 2. DELETE Endpoint (For Deleting Chat)
 @app.delete("/api/v1/history/session/{session_id}")
-async def delete_session(session_id: str, username: str):
+async def delete_session(session_id: str, username: str,
+                         _caller: dict = Depends(auth.get_current_user)):
     """Soft deletes a session."""
+    auth.require_self_or_teacher(username, _caller)
     success = history_manager.delete_session(username, session_id)
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -2615,7 +2755,12 @@ async def delete_session(session_id: str, username: str):
 
 
 @app.post("/api/v1/user/goal")
-async def set_user_goal(req: GoalRequest):
+async def set_user_goal(req: GoalRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     # =========================================================
     # META-SECURITY: PREVENT GOAL POISONING
     # Ensure the student isn't setting a malicious goal to bypass S_goal
@@ -2654,7 +2799,12 @@ class ResetKnowledgeRequest(BaseModel):
     username: str
 
 @app.post("/api/v1/user/reset-knowledge")
-async def reset_user_knowledge(req: ResetKnowledgeRequest):
+async def reset_user_knowledge(req: ResetKnowledgeRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     """Clear all mastery data for a user (used by test agent for clean runs)."""
     from app.core.user_knowledge_manager import knowledge_manager
     knowledge_manager.clear_concepts(req.username)
@@ -2670,8 +2820,12 @@ class SelfAssessmentRequest(BaseModel):
     self_assessment: float
 
 @app.get("/api/v1/mastery/{username}/{concept}")
-async def get_mastery_detail(username: str, concept: str):
+async def get_mastery_detail(username: str, concept: str, _caller: dict = Depends(auth.get_current_user)):
     """Return per-tier mastery breakdown with BKT, self-assessment, and effective scores."""
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     from app.core.bkt_model import (bkt, EVIDENCE_CONFIG, _read_row, _apply_decay, _parse_ts,
                                     _TS_COL, _LAM_COL, _get_user_params, answers_to_certify,
                                     calibrator)
@@ -2725,7 +2879,12 @@ async def get_mastery_detail(username: str, concept: str):
 
 
 @app.post("/api/v1/mastery/self-assess")
-async def submit_self_assessment(req: SelfAssessmentRequest):
+async def submit_self_assessment(req: SelfAssessmentRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     """Student adjusts mastery for a specific tier (downward-only)."""
     from app.core.bkt_model import EVIDENCE_CONFIG, _read_row, _apply_decay, _parse_ts, _TS_COL, _LAM_COL
     from app.core.srl_calibration import record_self_assessment
@@ -2759,9 +2918,13 @@ async def submit_self_assessment(req: SelfAssessmentRequest):
 # ── Prerequisite-coupled priors ("head start") ───────────────────────────────
 
 @app.get("/api/v1/head-start/{username}/{concept}")
-async def get_head_start(username: str, concept: str):
+async def get_head_start(username: str, concept: str, _caller: dict = Depends(auth.get_current_user)):
     """Explain the head start for one topic: prerequisites, which are certified,
     the resulting seeded priors, and the certification wall a head start can't cross."""
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     from app.core import prereq_headstart
     return prereq_headstart.explain(username, concept)
 
@@ -2783,10 +2946,14 @@ CANONICAL_PREREQ_EDGES = [
 
 
 @app.get("/api/v1/skill-network/{username}")
-async def get_skill_network(username: str):
+async def get_skill_network(username: str, _caller: dict = Depends(auth.get_current_user)):
     """Prerequisite network for the skill-progress dashboard: one node per topic
     (with mastery state, certification, and head-start flags) plus prerequisite edges.
     This is the visual face of the same graph the head-start mechanism runs on."""
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     from app.core import bkt_model
 
     nodes = []
@@ -2820,13 +2987,17 @@ async def get_skill_network(username: str):
 
 
 @app.get("/api/v1/mcn/calibration/{username}")
-async def get_calibration_map(username: str):
+async def get_calibration_map(username: str, _caller: dict = Depends(auth.get_current_user)):
     """
     Metacognitive Calibration Network readout for the dashboard: per-topic calibration
     state (over / calibrated / under) fused from self-report, performance, behaviour,
     and BKT knowledge. Flag-gated — returns enabled:false and an empty list when the
     MCN feature is off, so the panel simply hides itself.
     """
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     from app.core import mcn_service
 
     if not mcn_service.is_enabled():
@@ -2856,8 +3027,12 @@ async def get_calibration_map(username: str):
 # ── Unified Learner Model + Motivational Self-Report ─────────────────────────
 
 @app.get("/api/v1/learner-model/{username}")
-async def get_learner_model(username: str):
+async def get_learner_model(username: str, _caller: dict = Depends(auth.get_current_user)):
     """Full multidimensional learner profile (cognitive/metacognitive/affective/motivational)."""
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     from app.core.learner_model import get_learner_profile
     return get_learner_profile(username)
 
@@ -2871,7 +3046,12 @@ class SelfReportRequest(BaseModel):
     items: List[SelfReportItem]
 
 @app.post("/api/v1/self-report")
-async def submit_self_report(req: SelfReportRequest):
+async def submit_self_report(req: SelfReportRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     """Store a motivational self-report survey (Tier 2)."""
     from app.core import telemetry
     for it in req.items:
@@ -2890,7 +3070,12 @@ class BehaviorEventRequest(BaseModel):
     message_id: Optional[str] = None
 
 @app.post("/api/v1/telemetry/behavior")
-async def log_behavior_event(req: BehaviorEventRequest):
+async def log_behavior_event(req: BehaviorEventRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     """Frontend-driven behavioral telemetry: copy-code clicks, dwell time, etc."""
     from app.core import telemetry
     telemetry.log_behavior(req.username, req.session_id, req.event,
@@ -2898,7 +3083,12 @@ async def log_behavior_event(req: BehaviorEventRequest):
     return {"status": "ok"}
 
 @app.post("/api/v1/chat/feedback")
-async def handle_feedback(req: FeedbackRequest):
+async def handle_feedback(req: FeedbackRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     """
     Logs feedback to SQL and optionally returns a trigger for a new answer.
     """
@@ -2957,12 +3147,19 @@ async def handle_feedback(req: FeedbackRequest):
     return {"status": "recorded"}
 
 @app.post("/api/v1/assignments/create")
-async def create_assignment(req: ChallengeRequest):
+async def create_assignment(req: ChallengeRequest, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     aid = assignment_manager.create_challenge(req.teacher, req.student, req.question)
     return {"status": "success", "id": aid}
 
 @app.get("/api/v1/assignments/student/{username}")
-async def get_student_assignments(username: str):
+async def get_student_assignments(username: str, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     return assignment_manager.get_by_student(username)
 
 @app.post("/api/v1/assignments/submit")
@@ -2971,7 +3168,10 @@ async def submit_assignment(req: SubmissionRequest):
     return {"status": "success"}
 
 @app.get("/api/v1/assignments/teacher/pending")
-async def get_pending_reviews(username: str):
+async def get_pending_reviews(username: str, _t: dict = Depends(verify_teacher)):
+    # AUTHZ: teacher-only. These endpoints expose whole-class data and admin
+    # actions and previously had NO guard at all — reachable by anyone who
+    # could reach the port.
     return assignment_manager.get_pending_reviews(username)
 
 @app.post("/api/v1/assignments/grade")
@@ -2980,10 +3180,14 @@ async def grade_assignment(req: AssignmentGradeRequest):
     return {"status": "success"}
 
 @app.get("/api/v1/analytics/active_time")
-async def get_active_time_stats(username: str, days: int = 7):
+async def get_active_time_stats(username: str, days: int = 7,
+                                _caller: dict = Depends(auth.get_current_user)):
     """
     Calculates active time on the fly.
     """
+    # AUTHZ: username arrives as a QUERY parameter here rather than in the path,
+    # but it leaks exactly the same way without an ownership check.
+    auth.require_self_or_teacher(username, _caller)
     duration_str = history_manager.calculate_active_time(username, days)
     return {"username": username, "days": days, "active_time": duration_str}
 
@@ -3018,7 +3222,11 @@ async def ai_check_assignment(req: SubmissionRequest):
     return {"ai_feedback": feedback}
 
 @app.get("/api/v1/user/preferences/{username}")
-async def get_user_preferences(username: str):
+async def get_user_preferences(username: str, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: the path parameter selects WHICH record; the signed session decides
+    # whether this caller may see it. Without this, any username in the URL
+    # returned that student's data to anyone who asked.
+    auth.require_self_or_teacher(username, _caller)
     row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (username,))
     profile = {}
     if row and row['learning_profile']:
@@ -3039,7 +3247,12 @@ async def get_user_preferences(username: str):
     })
 
 @app.post("/api/v1/user/preferences")
-async def update_user_preferences(req: PreferencesUpdateRequest):
+async def update_user_preferences(req: PreferencesUpdateRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     row = db.fetch_one("SELECT learning_profile FROM users WHERE username = ?", (req.username,))
     profile = {}
     if row and row['learning_profile']:
@@ -3056,7 +3269,12 @@ async def update_user_preferences(req: PreferencesUpdateRequest):
 
 # --- VIDEO CHAT ENDPOINTS ---
 @app.post("/api/v1/video/chat")
-async def video_chat_stream(request: VideoChatRequest):
+async def video_chat_stream(request: VideoChatRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `request.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    request.username = _caller["username"]
+
     """
     Stream an AI response to a student question about video content.
     Uses transcript up to the student's current timestamp as PRIMARY context,
@@ -3219,7 +3437,12 @@ IMPORTANT RULES:
 
 
 @app.post("/api/v1/history/save-classroom")
-async def save_classroom_history(req: ClassroomHistoryRequest):
+async def save_classroom_history(req: ClassroomHistoryRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     """
     Saves a classroom Q&A pair directly to history without going through the AI pipeline.
     Creates a new session titled '📹 {video_title}' on first call, reuses it on subsequent calls.
@@ -3574,7 +3797,12 @@ async def get_video_checkpoints(video_filename: str):
 
 
 @app.post("/api/v1/video/checkpoint/answer")
-async def answer_video_checkpoint(req: VideoMCQAnswerRequest):
+async def answer_video_checkpoint(req: VideoMCQAnswerRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     """Grade a checkpoint MCQ, feed BKT (quiz tier), and log telemetry."""
     from app.core import telemetry
     from app.core.bkt_model import bkt
@@ -3612,7 +3840,12 @@ async def answer_video_checkpoint(req: VideoMCQAnswerRequest):
 
 
 @app.post("/api/v1/video/engagement")
-async def log_video_engagement_event(req: VideoEngagementRequest):
+async def log_video_engagement_event(req: VideoEngagementRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     from app.core import telemetry
     telemetry.log_video_engagement(req.username, req.video_filename, req.event,
                                    req.position_sec, req.detail)
@@ -3620,7 +3853,12 @@ async def log_video_engagement_event(req: VideoEngagementRequest):
 
 
 @app.post("/api/v1/video/coverage")
-async def update_video_coverage_summary(req: VideoCoverageRequest):
+async def update_video_coverage_summary(req: VideoCoverageRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     from app.core import telemetry
     telemetry.update_video_coverage(req.username, req.video_filename,
                                     req.duration_sec, req.watched_sec, req.hidden_sec)
@@ -3628,7 +3866,12 @@ async def update_video_coverage_summary(req: VideoCoverageRequest):
 
 
 @app.post("/api/v1/video/reflection")
-async def submit_video_reflection(req: VideoReflectionRequest):
+async def submit_video_reflection(req: VideoReflectionRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     from app.core import telemetry
     telemetry.log_video_reflection(req.username, req.video_filename, req.phase,
                                    req.prompt or "", req.response)
@@ -3662,7 +3905,12 @@ class PrelabStartRequest(BaseModel):
     problem: str
 
 @app.post("/api/v1/video/prelab-start")
-async def log_prelab_start(req: PrelabStartRequest):
+async def log_prelab_start(req: PrelabStartRequest, _caller: dict = Depends(auth.get_current_user)):
+    # AUTHZ: identity comes from the session, not the body. `req.username`
+    # is client-controlled, and this endpoint WRITES to that account — so a
+    # student could post as anyone by editing one JSON field.
+    req.username = _caller["username"]
+
     """Log that a student chose to solve a prelab problem in SAGE (SRL transfer signal)."""
     from app.core import telemetry
     telemetry.log_event(req.username, "prelab_started", {

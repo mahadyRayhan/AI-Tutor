@@ -1,7 +1,10 @@
 const API_URL = "";
-const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
+let currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
 
-// Auth Guard
+// Auth Guard — provisional only. localStorage says who we *were*; the panels below
+// call per-student APIs that now authorize against the session cookie, so a stale
+// or edited cache produces a dashboard full of 401s. bootstrapSession() replaces
+// this with the server's answer before any of those calls go out.
 if (!currentUser) window.location.href = 'index.html';
 
 const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings",
@@ -802,5 +805,22 @@ async function markMaterialDone(id) {
     } catch (e) { console.error("Mark done failed", e); }
 }
 
-// Start!
-initDashboard();
+// Start! — but confirm identity with the server before requesting any student data.
+(async function bootstrapSession() {
+    try {
+        const res = await fetch('/api/v1/auth/me');
+        if (!res.ok) {                        // no session, or it expired
+            localStorage.removeItem('c_tutor_user');
+            window.location.href = 'index.html';
+            return;
+        }
+        const { user } = await res.json();
+        currentUser = user;                   // the server's answer wins
+        localStorage.setItem('c_tutor_user', JSON.stringify(user));
+    } catch (e) {
+        console.warn('Session check failed; returning to login.', e);
+        window.location.href = 'index.html';
+        return;
+    }
+    initDashboard();
+})();

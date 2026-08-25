@@ -693,11 +693,35 @@
     };
 
     // --- AUTH CHECK ---
+    // localStorage is a DISPLAY cache, not a credential. This early check only
+    // avoids a pointless render; the authoritative check is verifyTeacherSession()
+    // below, and every teacher endpoint independently re-checks the signed cookie.
     if (!currentUser || currentUser.role !== 'teacher') {
         window.location.href = 'index.html';
     }
 
-    function logout() {
+    // Ask the SERVER who we are. Editing c_tutor_user in devtools to
+    // {"role":"teacher"} used to render this whole dashboard; now the page is only
+    // shown if the session cookie actually carries a teacher role.
+    async function verifyTeacherSession() {
+        try {
+            const res = await fetch(`${API_URL}/api/v1/auth/me`);
+            if (!res.ok) throw new Error('no session');
+            const { user } = await res.json();
+            if (!user || (user.role !== 'teacher' && user.role !== 'admin')) {
+                throw new Error('not a teacher');
+            }
+            // Re-sync the display cache with the server's view.
+            localStorage.setItem('c_tutor_user', JSON.stringify(user));
+        } catch (e) {
+            localStorage.removeItem('c_tutor_user');
+            window.location.href = 'index.html';
+        }
+    }
+
+    async function logout() {
+        // The session cookie is httpOnly, so only the server can clear it.
+        try { await fetch(`${API_URL}/api/v1/auth/logout`, { method: 'POST' }); } catch (e) {}
         localStorage.removeItem('c_tutor_user');
         window.location.href = 'index.html';
     }
@@ -2809,6 +2833,7 @@
     }
 
     window.onload = function() {
+        verifyTeacherSession();   // server-side role check; redirects if not a teacher
         loadData(); // Your existing load function
         updateUploadRules(); // Initialize file input
         // Default landing is NOW (or the last tab this browser used).
