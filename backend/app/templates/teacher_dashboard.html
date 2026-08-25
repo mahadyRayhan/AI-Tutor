@@ -313,6 +313,7 @@
         <button class="tab-btn" data-tabkey="NOW"    onclick="showTab('NOW')">Now<small>Who needs me today</small></button>
         <button class="tab-btn" data-tabkey="CLASS"  onclick="showTab('CLASS')">Class<small>Where everyone stands</small></button>
         <button class="tab-btn" data-tabkey="NEXT"   onclick="showTab('NEXT')">Next<small>What to teach &amp; prepare</small></button>
+        <button class="tab-btn" data-tabkey="CONTENT" onclick="showTab('CONTENT')">Content<small>Lecture videos</small></button>
         <button class="tab-btn" data-tabkey="SETUP"  onclick="showTab('SETUP')">Setup<small>Course &amp; users</small></button>
         <button class="tab-btn" data-tabkey="SYSTEM" onclick="showTab('SYSTEM')">System<small>Is the model trustworthy</small></button>
     </nav>
@@ -341,6 +342,45 @@
     </div>
 
     <!-- 1. USER MANAGEMENT (New & Improved) -->
+    <!-- ================= CONTENT: lecture catalog ================= -->
+    <div class="grid-container" data-tab="CONTENT">
+        <div class="card full-width">
+            <h2>🎬 Upload a Lecture Recording</h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 14px;">
+                Large files are sent in chunks, so a 140&nbsp;MB lecture uploads without timing out.
+                After uploading, attach the file to a video slot in the chapter list below.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <input type="file" id="videoFile" accept="video/mp4,video/x-matroska,video/quicktime,video/webm,.mp4,.mkv,.mov,.webm"
+                       style="flex:1; min-width:260px; padding:8px; background:#0f1115; border:1px solid #2a2f3a; border-radius:8px; color:#e2e8f0;">
+                <button class="btn" id="videoUploadBtn" onclick="uploadVideo()">Upload</button>
+            </div>
+            <div id="uploadProgressWrap" style="display:none; margin-top:14px;">
+                <div style="height:8px; background:#1e2430; border-radius:6px; overflow:hidden;">
+                    <div id="uploadProgressBar" style="height:100%; width:0%; background:#60a5fa; transition:width .2s;"></div>
+                </div>
+                <div id="uploadStatus" style="font-size:12px; color:#94a3b8; margin-top:6px;"></div>
+            </div>
+        </div>
+
+        <div class="card full-width">
+            <h2>📁 Unassigned Recordings <span id="unassignedCount" style="color:#94a3b8; font-weight:400; font-size:13px;"></span></h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                Uploaded files not yet attached to any chapter. Students cannot see these.
+            </p>
+            <div id="unassignedList" style="display:grid; gap:8px;"></div>
+        </div>
+
+        <div class="card full-width">
+            <h2>📚 Course Chapters</h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                From the Flipped Classroom Lecture Recording Plan. A slot with no recording shows as
+                <em>planned</em> — students see it as upcoming rather than missing.
+            </p>
+            <div id="chapterList" style="display:grid; gap:14px;"></div>
+        </div>
+    </div>
+
     <div class="grid-container" data-tab="SETUP">
         <div class="card full-width">
             <h2>📬 Pending Reviews</h2>
@@ -2586,7 +2626,178 @@
     // Initialize rules on page load
     // ── Tab navigation (NOW / CLASS / NEXT / SETUP / SYSTEM) ──
     const TAB_KEY = 'sage_teacher_tab';
+    // ================= CONTENT TAB: lecture catalog =================
+    const TEACHER_HDR = () => ({ 'X-User-Role': currentUser.role });
+    // 5 MB slices: large enough that a 140 MB lecture is ~28 requests, small enough
+    // that no single request is at risk of a proxy timeout.
+    const VIDEO_CHUNK = 5 * 1024 * 1024;
+    let CATALOG = { chapters: [] };
+    let UNASSIGNED = [];
+
+    async function loadContentTab() {
+        try {
+            const [cat, un] = await Promise.all([
+                fetch(`${API_URL}/api/v1/video/catalog`).then(r => r.json()),
+                fetch(`${API_URL}/api/v1/video/unassigned`, { headers: TEACHER_HDR() }).then(r => r.json())
+            ]);
+            CATALOG = cat; UNASSIGNED = un.files || [];
+            renderUnassigned();
+            renderChapters();
+        } catch (e) {
+            console.error('Content load failed', e);
+        }
+    }
+
+    function renderUnassigned() {
+        const el = document.getElementById('unassignedList');
+        const count = document.getElementById('unassignedCount');
+        if (!el) return;
+        count.textContent = UNASSIGNED.length ? `(${UNASSIGNED.length})` : '';
+        if (!UNASSIGNED.length) {
+            el.innerHTML = `<div style="color:#64748b; font-size:13px;">Every uploaded recording is assigned to a chapter.</div>`;
+            return;
+        }
+        el.innerHTML = UNASSIGNED.map(f => `
+            <div style="display:flex; align-items:center; gap:12px; padding:10px 12px;
+                        background:#0f1115; border:1px solid #2a2f3a; border-radius:8px;">
+                <span style="flex:1; font-family:monospace; font-size:13px;">${escapeHtml(f.filename)}</span>
+                <span style="color:#64748b; font-size:12px;">${f.size_mb} MB</span>
+            </div>`).join('');
+    }
+
+    function renderChapters() {
+        const el = document.getElementById('chapterList');
+        if (!el) return;
+        // Options for the assign dropdowns: unassigned files only, so one recording
+        // cannot be silently attached to two slots.
+        const opts = UNASSIGNED.map(f =>
+            `<option value="${escapeHtml(f.filename)}">${escapeHtml(f.filename)}</option>`).join('');
+
+        el.innerHTML = (CATALOG.chapters || []).map(c => {
+            const badge = c.status
+                ? `<span style="margin-left:8px; font-size:11px; color:#34d399;">${escapeHtml(c.status)}</span>` : '';
+            const done = c.total > 0 && c.recorded === c.total;
+            const counter = c.total === 0
+                ? `<span style="color:#64748b; font-size:12px;">no videos planned</span>`
+                : `<span style="color:${done ? '#34d399' : '#94a3b8'}; font-size:12px;">${c.recorded}/${c.total} recorded</span>`;
+
+            const rows = (c.videos || []).map(v => {
+                const live = v.available;
+                const missing = v.filename && !v.available;
+                const state = live
+                    ? `<span style="color:#34d399; font-size:12px;">🎬 ${escapeHtml(v.filename)}</span>`
+                    : missing
+                        ? `<span style="color:#f87171; font-size:12px;" title="Row points at a file that is not on disk">⚠ missing: ${escapeHtml(v.filename)}</span>`
+                        : `<span style="color:#64748b; font-size:12px;">planned</span>`;
+                const action = live || missing
+                    ? `<button class="btn btn-sm" style="background:#334155;" onclick="assignSlot(${v.id}, null)">Unassign</button>`
+                    : (UNASSIGNED.length
+                        ? `<select id="sel-${v.id}" style="background:#0f1115; color:#e2e8f0; border:1px solid #2a2f3a; border-radius:6px; padding:4px 6px; font-size:12px;">
+                               <option value="">— choose file —</option>${opts}
+                           </select>
+                           <button class="btn btn-sm" onclick="assignSlot(${v.id}, document.getElementById('sel-${v.id}').value)">Attach</button>`
+                        : `<span style="color:#475569; font-size:12px;">upload a file first</span>`);
+                const meta = [v.slides, v.sections].filter(Boolean).join(' · ');
+                return `
+                <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
+                            border-top:1px solid #1e2430;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:13px;">
+                            <strong>Video ${v.video_number ?? '—'}</strong> · ${escapeHtml(v.title)}
+                        </div>
+                        ${meta ? `<div style="color:#64748b; font-size:11px; margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
+                    </div>
+                    <div style="flex:0 0 auto;">${state}</div>
+                    <div style="flex:0 0 auto; display:flex; gap:6px; align-items:center;">${action}</div>
+                </div>`;
+            }).join('');
+
+            return `
+            <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:10px; overflow:hidden;">
+                <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:#141821;">
+                    <div style="flex:1;">
+                        <strong>Chapter ${c.number}</strong> · ${escapeHtml(c.title)}${badge}
+                    </div>
+                    ${counter}
+                </div>
+                ${rows || `<div style="padding:12px 14px; color:#64748b; font-size:13px;">No videos planned for this chapter yet.</div>`}
+            </div>`;
+        }).join('');
+    }
+
+    async function assignSlot(catalogId, filename) {
+        if (filename === '') { alert('Pick a file to attach first.'); return; }
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/catalog/assign`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify({ catalog_id: catalogId, filename: filename || null })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(err.detail || 'Could not update that video.');
+                return;
+            }
+            await loadContentTab();
+        } catch (e) {
+            alert('Could not reach the server.');
+        }
+    }
+
+    async function uploadVideo() {
+        const input = document.getElementById('videoFile');
+        const btn = document.getElementById('videoUploadBtn');
+        const wrap = document.getElementById('uploadProgressWrap');
+        const bar = document.getElementById('uploadProgressBar');
+        const status = document.getElementById('uploadStatus');
+        const file = input.files && input.files[0];
+        if (!file) { alert('Choose a video file first.'); return; }
+
+        const uploadId = 'u' + Date.now() + Math.random().toString(36).slice(2, 8);
+        const total = Math.max(1, Math.ceil(file.size / VIDEO_CHUNK));
+
+        btn.disabled = true;
+        wrap.style.display = 'block';
+        bar.style.width = '0%';
+
+        try {
+            for (let i = 0; i < total; i++) {
+                const slice = file.slice(i * VIDEO_CHUNK, (i + 1) * VIDEO_CHUNK);
+                const fd = new FormData();
+                fd.append('file', slice, file.name);
+                fd.append('upload_id', uploadId);
+                fd.append('chunk_index', i);
+                fd.append('total_chunks', total);
+                fd.append('filename', file.name);
+
+                const res = await fetch(`${API_URL}/api/v1/video/upload-chunk`, {
+                    method: 'POST', headers: TEACHER_HDR(), body: fd
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.detail || `Upload failed on part ${i + 1} of ${total}`);
+                }
+                const pct = Math.round(((i + 1) / total) * 100);
+                bar.style.width = pct + '%';
+                status.textContent = `Uploading ${file.name} — ${pct}% (part ${i + 1} of ${total})`;
+            }
+            status.innerHTML = `<span style="color:#34d399;">✓ ${escapeHtml(file.name)} uploaded. Attach it to a chapter below.</span>`;
+            input.value = '';
+            await loadContentTab();
+        } catch (e) {
+            status.innerHTML = `<span style="color:#f87171;">${escapeHtml(e.message)}</span>`;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function escapeHtml(s) {
+        return String(s ?? '').replace(/[&<>"']/g,
+            m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+
     function showTab(name) {
+        if (name === 'CONTENT') loadContentTab();
         document.querySelectorAll('.grid-container[data-tab]').forEach(sec => {
             sec.classList.toggle('tab-visible', sec.dataset.tab === name);
         });

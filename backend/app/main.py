@@ -3295,6 +3295,190 @@ async def trigger_transcription(video_filename: str = Form(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =========================================================
+# LECTURE CATALOG — chapters → numbered videos
+# =========================================================
+# Mirrors the flipped-classroom plan. Videos used to be "whatever .mp4 files are in
+# the directory", ordered by filename with the topic guessed from that filename — so
+# chapter order, slide ranges, and not-yet-recorded lectures had nowhere to live.
+
+_VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
+_UPLOAD_TMP = "_uploads"          # partial chunk files live here until finalised
+
+
+@app.get("/api/v1/video/catalog")
+async def get_video_catalog(include_planned: bool = True):
+    """Full chapter → video catalog for the classroom and the teacher content tab.
+
+    `include_planned=False` returns only slots that actually have a recording, which
+    is what a student browsing available lectures wants.
+    """
+    chapters = db.fetch_all(
+        "SELECT number, title, status FROM video_chapter ORDER BY sort_order, number"
+    ) or []
+    rows = db.fetch_all(
+        "SELECT id, chapter_number, video_number, title, slides, sections, "
+        "filename, topic, status FROM video_catalog ORDER BY sort_order, video_number"
+    ) or []
+
+    by_chapter: Dict[int, List[Dict]] = {}
+    for r in rows:
+        d = dict(r)
+        if not include_planned and not d.get("filename"):
+            continue
+        # A row can claim a filename that has since been deleted from disk; report it
+        # rather than handing the player a 404.
+        d["available"] = bool(d.get("filename")) and (VIDEO_DIR / d["filename"]).exists()
+        by_chapter.setdefault(d["chapter_number"], []).append(d)
+
+    out = []
+    for c in chapters:
+        vids = by_chapter.get(c["number"], [])
+        out.append({
+            "number": c["number"],
+            "title": c["title"],
+            "status": c["status"] or "",
+            "videos": vids,
+            "recorded": sum(1 for v in vids if v["available"]),
+            "total": len(vids),
+        })
+    return {"chapters": out}
+
+
+@app.get("/api/v1/video/unassigned")
+async def get_unassigned_videos(_: str = Depends(verify_teacher)):
+    """Recordings present on disk that no catalog slot claims."""
+    claimed = {r["filename"] for r in (db.fetch_all(
+        "SELECT filename FROM video_catalog WHERE filename IS NOT NULL") or [])}
+    files = []
+    if VIDEO_DIR.exists():
+        for f in sorted(VIDEO_DIR.iterdir()):
+            if f.is_file() and f.suffix.lower() in _VIDEO_EXTS and f.name not in claimed:
+                files.append({"filename": f.name,
+                              "size_mb": round(f.stat().st_size / 1_048_576, 1)})
+    return {"files": files}
+
+
+@app.post("/api/v1/video/upload-chunk")
+async def upload_video_chunk(
+    file: UploadFile = File(...),
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    filename: str = Form(...),
+    _: str = Depends(verify_teacher),
+):
+    """Receive one chunk of a lecture recording.
+
+    Lecture files run 20-140MB, which a single multipart POST tends to lose to proxy
+    and client timeouts, so the browser slices the file and sends it in parts. Chunks
+    are appended to a temp file and only promoted into VIDEO_DIR once the final chunk
+    arrives — an interrupted upload therefore never leaves a truncated .mp4 that the
+    catalog would happily serve as a real lecture.
+    """
+    safe_name = os.path.basename(filename or "")
+    ext = Path(safe_name).suffix.lower()
+    if ext not in _VIDEO_EXTS:
+        raise HTTPException(status_code=400,
+                            detail=f"Unsupported video type '{ext}'. Allowed: {', '.join(sorted(_VIDEO_EXTS))}")
+    # upload_id lands in a filesystem path — keep it to an opaque token.
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", upload_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid upload id")
+
+    tmp_dir = VIDEO_DIR / _UPLOAD_TMP
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    part = tmp_dir / f"{upload_id}.part"
+
+    try:
+        # Chunks arrive in order; index 0 truncates any stale partial from a retry.
+        mode = "wb" if chunk_index == 0 else "ab"
+        with open(part, mode) as buf:
+            shutil.copyfileobj(file.file, buf)
+    except Exception as e:
+        logger.error(f"[video upload] chunk {chunk_index} failed: {e}")
+        raise HTTPException(status_code=500, detail="Chunk write failed")
+
+    if chunk_index + 1 < total_chunks:
+        return {"status": "partial", "received": chunk_index + 1, "total": total_chunks}
+
+    dest = VIDEO_DIR / safe_name
+    if dest.exists():
+        stem, suffix = Path(safe_name).stem, Path(safe_name).suffix
+        dest = VIDEO_DIR / f"{stem}_{datetime.now():%Y%m%d%H%M%S}{suffix}"
+    try:
+        shutil.move(str(part), str(dest))
+    except Exception as e:
+        logger.error(f"[video upload] finalise failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not save video")
+
+    size_mb = round(dest.stat().st_size / 1_048_576, 1)
+    logger.info(f"🎬 [CLASSROOM] Uploaded '{dest.name}' ({size_mb} MB)")
+    return {"status": "complete", "filename": dest.name, "size_mb": size_mb}
+
+
+class CatalogAssign(BaseModel):
+    catalog_id: int
+    filename: Optional[str] = None      # None unassigns the slot
+
+
+@app.post("/api/v1/video/catalog/assign")
+async def assign_video_to_slot(req: CatalogAssign, _: str = Depends(verify_teacher)):
+    """Attach an uploaded recording to a planned catalog slot (or clear it)."""
+    slot = db.fetch_one("SELECT id FROM video_catalog WHERE id=?", (req.catalog_id,))
+    if not slot:
+        raise HTTPException(status_code=404, detail="Catalog entry not found")
+
+    fname = os.path.basename(req.filename) if req.filename else None
+    if fname:
+        if not (VIDEO_DIR / fname).exists():
+            raise HTTPException(status_code=404, detail=f"No such recording: {fname}")
+        taken = db.fetch_one(
+            "SELECT id FROM video_catalog WHERE filename=? AND id<>?", (fname, req.catalog_id))
+        if taken:
+            raise HTTPException(status_code=409,
+                                detail="That recording is already assigned to another video")
+
+    db.execute(
+        "UPDATE video_catalog SET filename=?, status=?, updated_at=? WHERE id=?",
+        (fname, "complete" if fname else "planned", datetime.now(), req.catalog_id))
+    return {"status": "success", "catalog_id": req.catalog_id, "filename": fname}
+
+
+class CatalogEntry(BaseModel):
+    chapter_number: int
+    video_number: Optional[int] = None
+    title: str
+    slides: str = ""
+    sections: str = ""
+
+
+@app.post("/api/v1/video/catalog/add")
+async def add_catalog_entry(req: CatalogEntry, _: str = Depends(verify_teacher)):
+    """Add a video slot to a chapter (for lectures beyond the seeded plan)."""
+    ch = db.fetch_one("SELECT number FROM video_chapter WHERE number=?", (req.chapter_number,))
+    if not ch:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    nxt = db.fetch_one("SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM video_catalog") or {"n": 1}
+    now = datetime.now()
+    db.execute(
+        "INSERT INTO video_catalog (chapter_number,video_number,title,slides,sections,"
+        "status,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (req.chapter_number, req.video_number, req.title.strip(), req.slides,
+         req.sections, "planned", nxt["n"], now, now))
+    return {"status": "success"}
+
+
+@app.delete("/api/v1/video/catalog/{catalog_id}")
+async def delete_catalog_entry(catalog_id: int, _: str = Depends(verify_teacher)):
+    """Remove a catalog slot. The video FILE on disk is left untouched — deleting a
+    plan entry should never destroy a recording."""
+    row = db.fetch_one("SELECT filename FROM video_catalog WHERE id=?", (catalog_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Catalog entry not found")
+    db.execute("DELETE FROM video_catalog WHERE id=?", (catalog_id,))
+    return {"status": "success", "file_kept": row["filename"]}
+
+
 @app.get("/api/v1/video/transcript/{video_filename}")
 async def get_video_transcript(video_filename: str):
     """Returns the full transcript segments for a video (for synced display)."""

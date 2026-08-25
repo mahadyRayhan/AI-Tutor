@@ -110,33 +110,71 @@ document.addEventListener('DOMContentLoaded', () => {
 // ═══════════════════════════════════
 async function loadVideoList() {
     try {
-        const resp = await fetch('/api/v1/video/list');
-        const data = await resp.json();
-        
-        videoSelect.innerHTML = '<option value="">— Select a lecture —</option>';
-        
-        for (const v of data.videos) {
+        // Prefer the chapter catalog: lectures belong to a numbered course structure,
+        // so the picker groups them by chapter and orders them by video number rather
+        // than listing raw filenames alphabetically.
+        const catResp = await fetch('/api/v1/video/catalog?include_planned=false');
+        if (catResp.ok) {
+            const cat = await catResp.json();
+            const chapters = (cat.chapters || []).filter(c => (c.videos || []).length);
+            if (chapters.length) {
+                renderCatalogOptions(chapters);
+                return;
+            }
+        }
+        await loadFlatVideoList();   // catalog empty / not seeded yet
+    } catch (err) {
+        console.error('Failed to load video catalog:', err);
+        try { await loadFlatVideoList(); } catch (e) { /* already logged */ }
+    }
+}
+
+function renderCatalogOptions(chapters) {
+    videoSelect.innerHTML = '<option value="">— Select a lecture —</option>';
+    let only = null, count = 0;
+
+    for (const c of chapters) {
+        const group = document.createElement('optgroup');
+        group.label = `Chapter ${c.number}: ${c.title}`;
+        for (const v of c.videos) {
             const opt = document.createElement('option');
             opt.value = v.filename;
-            
-            // Clean up filename for display
-            const displayName = v.filename
-                .replace(/\.[^.]+$/, '')       // Remove extension
-                .replace(/_/g, ' ')            // Replace underscores
-                .replace(/([a-z])([A-Z])/g, '$1 $2');  // CamelCase → spaces
-            
-            opt.textContent = `${displayName} (${v.size_mb} MB)`;
-            if (v.has_transcript) opt.textContent += ' ✓';
-            videoSelect.appendChild(opt);
+            const num = v.video_number != null ? `Video ${v.video_number}: ` : '';
+            opt.textContent = v.slides ? `${num}${v.title} (${v.slides})` : `${num}${v.title}`;
+            group.appendChild(opt);
+            only = v.filename; count++;
         }
+        videoSelect.appendChild(group);
+    }
 
-        // Auto-select if only one video
-        if (data.videos.length === 1) {
-            videoSelect.value = data.videos[0].filename;
-            onVideoSelect(data.videos[0].filename);
-        }
-    } catch (err) {
-        console.error('Failed to load video list:', err);
+    if (count === 1) {
+        videoSelect.value = only;
+        onVideoSelect(only);
+    }
+}
+
+// Fallback for an unseeded catalog: the original flat, filename-derived list.
+async function loadFlatVideoList() {
+    const resp = await fetch('/api/v1/video/list');
+    const data = await resp.json();
+
+    videoSelect.innerHTML = '<option value="">— Select a lecture —</option>';
+
+    for (const v of data.videos) {
+        const opt = document.createElement('option');
+        opt.value = v.filename;
+        const displayName = v.filename
+            .replace(/\.[^.]+$/, '')
+            .replace(/_/g, ' ')
+            .replace(/([a-z])([A-Z])/g, '$1 $2');
+        opt.textContent = `${displayName} (${v.size_mb} MB)`;
+        if (v.has_transcript) opt.textContent += ' ✓';
+        videoSelect.appendChild(opt);
+    }
+
+    if (data.videos.length === 1) {
+        videoSelect.value = data.videos[0].filename;
+        onVideoSelect(data.videos[0].filename);
     }
 }
 

@@ -395,10 +395,28 @@ body.a11y-contrast .message.bot {
 .top-bar-right { gap: 2px; }
 
 /* Brand Mark */
+/* The brand is a link to home. It must not inherit the default anchor underline or
+   link colour — the name carries its own gradient fill. */
 .brand-mark {
     display: flex;
     align-items: center;
     gap: 6px;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 6px;
+    padding: 2px 4px;
+    margin-left: -4px;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.brand-mark:hover {
+    opacity: 0.82;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.brand-mark:focus-visible {
+    outline: 2px solid #6e9df5;
+    outline-offset: 2px;
 }
 
 .brand-icon {
@@ -1109,6 +1127,86 @@ body.a11y-contrast .message.bot {
     max-width: 900px;
     margin: 0 auto;
     width: 100%;
+}
+
+/* Chapter-grouped lecture list. The grid becomes a single column of chapter
+   blocks, each holding its own card row, so the course structure is visible
+   instead of one flat alphabetical wall of videos. */
+.picker-grid.by-chapter {
+    display: block;
+    max-width: 1100px;
+}
+
+.chapter-block { margin-bottom: 30px; }
+.chapter-block:last-child { margin-bottom: 8px; }
+
+.chapter-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding-bottom: 8px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.chapter-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex: 1;
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary, #e2e8f0);
+}
+
+.chapter-num {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #8b9dc9;
+    background: rgba(110, 157, 245, 0.12);
+    border: 1px solid rgba(110, 157, 245, 0.22);
+    border-radius: 999px;
+    padding: 3px 9px;
+    white-space: nowrap;
+}
+
+.chapter-count {
+    font-size: 12px;
+    color: var(--text-muted, #64748b);
+    white-space: nowrap;
+}
+
+.chapter-videos {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+}
+
+/* "Video 7" marker on the thumbnail — the plan numbers lectures, and that number
+   is how students and the syllabus refer to them. */
+.video-card-num {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #cbd5e1;
+    background: rgba(15, 17, 21, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+    padding: 2px 7px;
+}
+
+.video-card-slides {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted, #64748b);
+    margin-top: 2px;
 }
 
 /* Video Thumbnail Card */

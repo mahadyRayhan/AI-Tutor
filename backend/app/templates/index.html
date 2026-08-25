@@ -46,7 +46,7 @@
         window.mermaid = mermaid;
     </script>
 
-    <link rel="stylesheet" href="/static/css/chat.css?v=9">
+    <link rel="stylesheet" href="/static/css/chat.css?v=10">
     <link rel="stylesheet" href="/static/css/auth.css?v=1">
 </head>
 
@@ -165,10 +165,10 @@
                     <button class="toolbar-btn icon-only" id="sidebarToggleBtn" onclick="toggleSidebar()" title="Chat History" aria-label="Toggle chat history sidebar">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                     </button>
-                    <div class="brand-mark">
+                    <a href="/" class="brand-mark" title="Go to home" aria-label="AI Tutor — go to home">
                         <span class="brand-icon">🎓</span>
                         <span class="brand-name">AI Tutor</span>
-                    </div>
+                    </a>
                     <span id="roleBadge" class="role-badge">STUDENT</span>
                 </div>
 
@@ -531,7 +531,7 @@
         </div>
     </div>
 
-    <script src="/static/js/chat.js?v=18" defer></script>
+    <script src="/static/js/chat.js?v=19" defer></script>
 </body>
 
 </html>
