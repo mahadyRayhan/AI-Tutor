@@ -135,7 +135,7 @@ def _apply_decay(p_tilde: float, tier: str, last_at: datetime | None,
     return round(max(decayed, p0), 6)
 
 
-from app.core.concept_canon import canonical_concept
+from app.core.concept_canon import canonical_concept, is_attributable_concept
 
 
 def _read_row(username: str, concept: str):
@@ -151,6 +151,29 @@ def _read_row(username: str, concept: str):
         "FROM user_knowledge WHERE username=? AND concept=?",
         (username, concept)
     )
+
+
+def most_recent_concept(username: str) -> str:
+    """The attributable concept this student most recently produced evidence for.
+
+    Last-resort topic for a submission that names none of its own — a pasted code
+    block yields entity tokens like "printf", and the session anchor can be absent
+    or itself unusable. Attributing to what the student was just working on is far
+    better than dropping the evidence, which is what happened before this existed.
+
+    Returns "" when the student has no attributable history yet.
+    """
+    rows = db.fetch_all(
+        "SELECT concept, MAX(COALESCE(last_code_at,''), COALESCE(last_micro_at,''), "
+        "       COALESCE(last_quiz_at,'')) AS seen "
+        "FROM user_knowledge WHERE username=? ORDER BY seen DESC",
+        (username,)
+    ) or []
+    for r in rows:
+        concept = r["concept"] if not isinstance(r, tuple) else r[0]
+        if is_attributable_concept(concept):
+            return concept
+    return ""
 
 
 def _get_user_params(username: str, concept: str, tier: str) -> dict:
@@ -221,6 +244,17 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
     if evidence_type not in EVIDENCE_CONFIG:
         logger.warning(f"[BKT] Unknown evidence_type '{evidence_type}', defaulting to quiz")
         evidence_type = "quiz"
+
+    # Defense in depth: refuse to file evidence under a non-concept. Callers should
+    # resolve a real topic first, but a bare keyword slipping through here creates a
+    # permanent junk row ("printf", "int", "code submission") that no topic can ever
+    # use — and silently starves the student's real topic of the evidence they earned.
+    if not is_attributable_concept(concept):
+        logger.warning(
+            f"[BKT] refusing to record {evidence_type} evidence under "
+            f"non-concept '{concept}' for {username}"
+        )
+        return 0.0
 
     concept = canonical_concept(concept)
     cfg    = _get_user_params(username, concept, evidence_type)
@@ -342,6 +376,19 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
         )
     except Exception as e:
         logger.warning(f"[BKT] telemetry hook failed: {e}")
+
+    # --- Evaluate certification NOW that new evidence has landed ---
+    # is_certified / ever_certified are only ever written inside is_mastered(), which
+    # nothing calls on the code-review or micro-challenge paths. A student who cleared
+    # their FINAL tier by submitting code therefore stayed uncertified — every tier
+    # showing "✓ certified" in the ledger while ever_certified was still 0, and the
+    # skill graph showing no certification — until some unrelated call happened to
+    # evaluate it. Certification must follow the evidence that earns it.
+    if is_correct:
+        try:
+            is_mastered(username, concept)
+        except Exception as e:
+            logger.warning(f"[BKT] certification check failed for '{concept}': {e}")
 
     return composite
 

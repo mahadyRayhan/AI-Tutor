@@ -238,9 +238,49 @@ def _calculate_mastery(history: List[Dict]) -> Dict[str, float]:
             normalized = max(10, normalized - 10)
             
         final_scores[t] = normalized
-        
+
     return final_scores
-    
+
+
+def _bkt_topic_mastery(username: str) -> Dict[str, float]:
+    """Real 3-tier BKT mastery per dashboard topic, as 0-100.
+
+    The student dashboard used to render `_calculate_mastery` — an XP heuristic over
+    message intents — while the node detail panel and the certification ring read the
+    BKT model. The same topic therefore reported different numbers on three surfaces
+    of one screen: a fully certified topic showed as "5" on the skill graph and sat at
+    the origin of the proficiency radar.
+
+    The instructor detail modal was already migrated off that heuristic for exactly
+    this reason (see analytics/student_detail); this is the student-side equivalent.
+
+    A topic with NO evidence returns 0, never its Cromwell prior — the prior is a
+    starting belief, not progress, and rendering ~19% for an untouched topic is the
+    same "baseline looks like progress" confusion the priors already cause elsewhere.
+    """
+    from app.core import bkt_model
+
+    out: Dict[str, float] = {}
+    for topic in SKILL_TOPICS:
+        try:
+            row = bkt_model._read_row(username, topic)
+            n_ev = 0 if not row else (
+                (row["n_evidence_quiz"] or 0)
+                + (row["n_evidence_micro"] or 0)
+                + (row["n_evidence_code"] or 0)
+            )
+            if not row or n_ev == 0:
+                out[topic] = 0.0
+                continue
+            # composite ∈ [0, 0.95] (the tier ceilings sum to 0.95) → 0-100
+            composite = bkt_model.get_mastery(username, topic)
+            out[topic] = round(min(100.0, composite / 0.95 * 100), 1)
+        except Exception as e:
+            logger.warning(f"[dashboard] mastery read failed for '{topic}': {e}")
+            out[topic] = 0.0
+    return out
+
+
 async def verify_teacher(x_user_role: str = Header(None, alias="X-User-Role")):
     """
     Simple header check. In a real app, use JWT tokens.
@@ -487,6 +527,22 @@ async def chat_stream(request: ChatRequest):
                             from collections import Counter
                             # Pick most common topic from the retrieved chunks
                             detected_topic = Counter(topics).most_common(1)[0][0]
+
+                    # 5. Last resort: the session's remembered topic.
+                    # The keyword map above runs over EXTRACTED ENTITIES, and a pasted
+                    # code block yields tokens like "printf" that match none of them —
+                    # so every REVIEW landed on "General". REVIEW is the highest-weighted
+                    # activity on the skill graph (+15) and none of it ever reached a
+                    # node; it also made the analytics history unusable for code work.
+                    if detected_topic == "General":
+                        try:
+                            _sess = history_manager.get_session_state(request.username, session_id) or {}
+                            _anchor = _sess.get("last_valid_topic")
+                            from app.core.concept_canon import is_attributable_concept
+                            if _anchor and is_attributable_concept(_anchor):
+                                detected_topic = _anchor
+                        except Exception as e:
+                            logger.warning(f"[analytics] topic anchor fallback failed: {e}")
                     try:
                         if user_msg_id is not None:
                             # 1. Save the interaction (Concept, Problem, Review, etc.)
@@ -637,16 +693,25 @@ async def get_student_stats(username: str):
     """FAST Endpoint: Returns charts data only."""
     history = history_manager.get_student_history(username)
     goal = knowledge_manager.get_goal(username)
-    
-    mastery = _calculate_mastery(history)
+
+    # `mastery` drives BOTH the proficiency radar and the skill-graph node numbers, so
+    # it must be the same model the detail panel and the certification ring read —
+    # otherwise one screen reports a topic as certified, "5", and ~0 simultaneously.
+    mastery = _bkt_topic_mastery(username)
+    # The old intent-XP heuristic is kept as a SEPARATE, honestly-named field: it
+    # measures activity, not knowledge, and it silently drops every code review
+    # (those messages are tagged topic="General", so +15 XP lands on no node).
+    activity_xp = _calculate_mastery(history)
+
     stats = {"CONCEPT": 0, "PROBLEM": 0, "DEBUG": 0, "REVIEW": 0}
     for h in history:
         i = h.get('intent', 'UNKNOWN')
         if i in stats: stats[i] += 1
-        
+
     return {
         "stats": stats,
-        "mastery": mastery, 
+        "mastery": mastery,
+        "activity_xp": activity_xp,
         "total_queries": len(history),
         "goal": goal
     }

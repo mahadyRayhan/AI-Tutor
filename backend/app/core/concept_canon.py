@@ -65,3 +65,47 @@ def canonical_concept(name: str) -> str:
 def is_canonical_topic(name: str) -> bool:
     """True if `name` is (a variant of) one of the nine coarse dashboard topics."""
     return _tokens(name) in _REGISTRY
+
+
+# ── Evidence attribution guard ────────────────────────────────────────────────
+# Tokens that are legitimate C vocabulary but are NOT things a student can be
+# certified in. Entity extraction over a pasted code block returns exactly these
+# ("printf", "int", "fork"), and the code-review path then filed mastery evidence
+# under them — so a student's real topic never advanced while junk rows piled up
+# in user_knowledge. Evidence must never be attributed to one of these.
+#
+# Deliberately narrow: it lists only bare keywords, type names, stdlib calls and
+# routing placeholders. Anything that names a genuine curriculum concept —
+# including "malloc" / "free" (Memory Allocation) — is absent on purpose.
+_NON_TOPIC_TOKENS = {
+    # bare type names / keywords
+    "int", "char", "float", "double", "void", "long", "short", "unsigned",
+    "signed", "const", "static", "extern", "return", "sizeof", "typedef",
+    "main", "include", "stdio", "stdlib", "true", "false", "null",
+    # stdlib calls that name no concept on their own
+    "printf", "scanf", "puts", "gets", "putchar", "getchar", "fork", "exit",
+    # routing placeholders / conversational filler seen in the wild
+    "code", "code submission", "codesubmission", "general", "unknown",
+    "question", "declare", "write", "explain", "rewritten", "this concept",
+}
+
+
+def is_attributable_concept(name: str) -> bool:
+    """True if mastery evidence may be filed under `name`.
+
+    Rejects empty names, bare C keywords / stdlib calls, and routing
+    placeholders. A caller that gets False MUST skip the write rather than
+    substituting a placeholder — an unattributable submission should record
+    nothing, because a junk row is worse than a missing one: it inflates the
+    ledger with evidence no topic can ever use.
+    """
+    if not name or not name.strip():
+        return False
+    cleaned = name.strip().lower()
+    if cleaned in _NON_TOPIC_TOKENS:
+        return False
+    # Single bare token that is a non-topic keyword (e.g. "printf", "  Int ").
+    toks = _tokens(name)
+    if len(toks) == 1 and next(iter(toks)) in _NON_TOPIC_TOKENS:
+        return False
+    return True

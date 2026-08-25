@@ -161,12 +161,22 @@ function renderCharts(data) {
         data: {
             labels: TOPICS,
             datasets: [{
-                label: 'Proficiency Level',
+                label: 'Mastery',
                 data: masteryScores,
-                backgroundColor: 'rgba(52, 211, 153, 0.15)',
-                borderColor: '#34d399',
-                pointBackgroundColor: '#34d399',
-                borderWidth: 2
+                // Stronger fill and a closed outline: this reads as a SHAPE showing
+                // coverage across the curriculum. It previously looked like a stray
+                // dot near the origin because it was plotting the intent-XP heuristic
+                // (values of 0-20) rather than real mastery.
+                backgroundColor: 'rgba(96, 165, 250, 0.22)',
+                borderColor: '#60a5fa',
+                borderWidth: 2,
+                fill: true,
+                tension: 0,
+                pointBackgroundColor: '#60a5fa',
+                pointBorderColor: '#0f1115',
+                pointBorderWidth: 2,
+                pointRadius: 3,
+                pointHoverRadius: 5
             }]
         },
         options: {
@@ -175,13 +185,30 @@ function renderCharts(data) {
                 r: {
                     min: 0,
                     max: 100,
-                    ticks: { display: false },
+                    beginAtZero: true,
+                    // Show the scale — an unlabelled radar gives no sense of whether
+                    // the shape is large or small.
+                    ticks: {
+                        display: true,
+                        stepSize: 25,
+                        showLabelBackdrop: false,
+                        color: '#64748b',
+                        font: { size: 9, family: 'Inter' },
+                        callback: v => (v === 0 ? '' : v + '%')
+                    },
                     grid: { color: 'rgba(255,255,255,0.06)' },
                     pointLabels: { color: '#94a3b8', font: { size: 11, family: 'Inter' } },
                     angleLines: { color: 'rgba(255,255,255,0.04)' }
                 }
             },
-            plugins: { legend: { display: false } }
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: c => `${c.label}: ${c.raw}% mastery`
+                    }
+                }
+            }
         }
     });
 }
@@ -202,10 +229,14 @@ const NET_POS = {
 const NET_R = 30;                       // node radius
 const NET_CIRC = 2 * Math.PI * NET_R;   // ring circumference
 
+// Colour encodes STATE; the ring's arc length already encodes magnitude, so grading
+// the colour by score too was doubling up on one variable — and doing it badly: any
+// topic under 30 came out red, so an untouched topic read as "failing" and a new
+// student's graph was a wall of alarm. Red also meant "Debug" in the habits legend
+// one card over. Reserve it for nothing here; no topic state warrants it.
 function scoreColor(score) {
-    if (score > 70) return '#34d399';
-    if (score > 30) return '#fbbf24';
-    return '#f87171';
+    if (score <= 0) return '#475569';   // no evidence yet — neutral slate
+    return '#60a5fa';                   // in progress (the legend's "mastery ring")
 }
 
 async function renderSkillNetwork(mastery) {
@@ -257,7 +288,10 @@ function drawNetwork(mastery, net) {
         let ring = scoreColor(score);
         if (certified) ring = '#34d399';
         else if (headStart) ring = '#fbbf24';
-        const dash = (score / 100) * NET_CIRC;
+        // A certified topic draws a FULL ring. The arc length otherwise comes from
+        // the XP score, which is an activity heuristic — so a certified node was
+        // rendering a 5%-long green stub that read as "barely started".
+        const dash = (certified ? 1 : score / 100) * NET_CIRC;
         const badge = certified
             ? `<text class="snode-badge" y="-${NET_R + 8}" fill="#34d399">✓ certified</text>`
             : (headStart ? `<text class="snode-badge" y="-${NET_R + 8}" fill="#fbbf24">+ head start</text>` : '');
@@ -269,7 +303,7 @@ function drawNetwork(mastery, net) {
             <circle class="snode-ring" r="${NET_R}" transform="rotate(-90)"
                     stroke="${ring}" stroke-dasharray="${dash} ${NET_CIRC}"></circle>
             <circle class="snode-core" r="${NET_R - 6}"></circle>
-            <text class="snode-pct" y="5">${score}</text>
+            <text class="snode-pct" y="5">${score}%</text>
             <text class="snode-lbl" y="${NET_R + 20}">${concept}</text>
         </g>`;
     });
@@ -303,8 +337,9 @@ function drawLegend() {
     if (!el) return;
     el.innerHTML = `
         <span class="leg"><i class="dot" style="background:#34d399"></i>certified</span>
+        <span class="leg"><i class="dot" style="background:#60a5fa"></i>in progress</span>
         <span class="leg"><i class="dot" style="background:#fbbf24"></i>head start</span>
-        <span class="leg"><i class="dot" style="background:#60a5fa"></i>mastery ring</span>
+        <span class="leg"><i class="dot" style="background:#475569"></i>not started</span>
         <span class="leg"><i class="arrowhint"></i>requires →</span>`;
 }
 

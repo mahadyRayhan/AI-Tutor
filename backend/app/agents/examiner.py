@@ -549,7 +549,6 @@ class ExaminerAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"LLM Grade Error: {e}")
             return {"is_correct": False, "feedback": f"Not quite. ({vector_score}%)"}
-    
     def _fast_grade_answer(self, student_answer: str, correct_vector_google: list, correct_vector_local: list = None) -> dict:
         """
         Computes cosine similarity between student answer and correct answer.
