@@ -27,8 +27,24 @@ import sys
 from datetime import datetime
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(REPO, "backend", "database", "ai_tutor.db")
-VIDEO_DIR = os.path.join(REPO, "backend", "database", "video")
+
+# Resolve paths from the app's own config when it is importable, so this works
+# unchanged under Docker (where ./backend/database is mounted at /backend/database)
+# and on any host whose layout differs from a plain checkout. Falls back to the
+# repo-relative location when the app package cannot be imported.
+def _resolve_paths():
+    for candidate in (REPO, os.path.join(REPO, "backend")):
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+    try:
+        from app.core import config  # noqa: WPS433 (deliberate late import)
+        return str(config.DB_DIR / "ai_tutor.db"), str(config.DB_DIR / "video")
+    except Exception:
+        base = os.path.join(REPO, "backend", "database")
+        return os.path.join(base, "ai_tutor.db"), os.path.join(base, "video")
+
+
+DB_PATH, VIDEO_DIR = _resolve_paths()
 
 # (number, title, status)
 CHAPTERS = [
@@ -106,6 +122,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
     args = ap.parse_args()
+
+    # Print the resolved paths: the usual failure on a remote host is seeding the
+    # wrong database or scanning the wrong video directory, and both are silent.
+    print(f"database    : {DB_PATH}")
+    print(f"video dir   : {VIDEO_DIR}"
+          f"{'' if os.path.isdir(VIDEO_DIR) else '   ⚠ NOT FOUND'}\n")
 
     if not os.path.exists(DB_PATH):
         sys.exit(f"database not found: {DB_PATH}")

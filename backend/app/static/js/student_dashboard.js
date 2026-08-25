@@ -402,6 +402,12 @@ function renderMasterySliders(panel, safeId, concept, data) {
         const pEff = t.p_effective;
         const adapted = t.adapted_P_G !== null;
         const maxVal = pBkt;
+        // With no evidence, p_bkt is the Cromwell PRIOR (quiz 30% / micro 5% / code 1%)
+        // — a starting belief, not something the student demonstrated. Printing it as
+        // "BKT: 30%" next to "evidence 0/3" reads as a third of the way done on a topic
+        // never opened (F2-04). Show 0 and name the prior for what it is; the skill
+        // graph already reports 0% for these topics, so the two now agree.
+        const noEvidence = !t.n_evidence;
 
         // How many correct-in-a-row still needed to certify this tier.
         const need = (typeof t.answers_to_master === 'number') ? t.answers_to_master : null;
@@ -420,18 +426,20 @@ function renderMasterySliders(panel, safeId, concept, data) {
             <div class="mastery-tier-label">
                 <span>${tierLabels[tier]}</span>
                 <span class="mastery-tier-values">
-                    BKT: <strong>${(pBkt * 100).toFixed(0)}%</strong>
-                    ${t.p_self != null ? ` | Self: <strong>${(pSelf * 100).toFixed(0)}%</strong>` : ''}
-                    | Eff: <strong id="eff-${safeId}-${tier}">${(pEff * 100).toFixed(0)}%</strong>
-                    ${adapted ? ' <span class="mastery-adapted-badge">P_G adapted</span>' : ''}
+                    ${noEvidence
+                        ? `<span class="mastery-tier-unstarted">not started</span>`
+                        : `BKT: <strong>${(pBkt * 100).toFixed(0)}%</strong>
+                           ${t.p_self != null ? ` | Self: <strong>${(pSelf * 100).toFixed(0)}%</strong>` : ''}
+                           | Eff: <strong id="eff-${safeId}-${tier}">${(pEff * 100).toFixed(0)}%</strong>
+                           ${adapted ? ' <span class="mastery-adapted-badge">P_G adapted</span>' : ''}`}
                 </span>
             </div>
             <div class="mastery-slider-row">
                 <input type="range" class="mastery-slider" id="slider-${safeId}-${tier}"
                     min="0" max="${(maxVal * 100).toFixed(0)}" step="1"
-                    value="${(pSelf * 100).toFixed(0)}"
+                    value="${noEvidence ? 0 : (pSelf * 100).toFixed(0)}"
                     oninput="onSliderMove('${safeId}', '${tier}', this.value, ${pBkt})">
-                <span class="mastery-slider-value" id="val-${safeId}-${tier}">${(pSelf * 100).toFixed(0)}%</span>
+                <span class="mastery-slider-value" id="val-${safeId}-${tier}">${noEvidence ? 0 : (pSelf * 100).toFixed(0)}%</span>
             </div>
             <div class="mastery-tier-foot">
                 <span class="mastery-tier-evidence">evidence ${t.n_evidence}/3</span>
