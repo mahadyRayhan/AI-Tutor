@@ -55,6 +55,8 @@ def record_self_assessment(
             f"BKT estimate ({p_bkt_current:.3f}). Upward adjustment not allowed."
         )
 
+    from app.core.concept_canon import canonical_concept
+    concept = canonical_concept(concept)
     now = datetime.now(timezone.utc).isoformat()
 
     existing = db.fetch_one(

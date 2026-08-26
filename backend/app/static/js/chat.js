@@ -478,6 +478,15 @@ window.sendMessage = async function (overrideText = null, hidden = false) {
             // Telemetry: AI finished — start the dwell-time clock for the next reply
             markAiResponded();
 
+            // --- AUTO-RESUME A PARKED QUESTION AFTER A POP QUIZ ---
+            // When a surprise quiz interrupted a real question, the backend parks it
+            // and sends `auto_resume` ("📌 Back to: <goal>"). Re-send it hidden so the
+            // tutor continues on its own — keeping the "I'll help with that next!"
+            // promise without the student having to click the fallback chip.
+            if (data.data.auto_resume) {
+                setTimeout(() => window.sendMessage(data.data.auto_resume, true), 900);
+            }
+
             if (data.data.warmup_topic) {
                 const topicSpan = document.getElementById('warmupTopicName');
                 const modal = document.getElementById('warmupModal');
@@ -1059,7 +1068,14 @@ function initializeApp() {
     }
 }
 
-function logout() { localStorage.removeItem('c_tutor_user'); location.reload(); }
+async function logout() {
+    // Clear the SERVER session first. Dropping localStorage alone left the signed
+    // cookie live: "logged out" in the UI, still fully authenticated to the API.
+    try { await fetch('/api/v1/auth/logout', { method: 'POST' }); }
+    catch (e) { console.warn('Logout request failed; clearing local state anyway.', e); }
+    localStorage.removeItem('c_tutor_user');
+    location.reload();
+}
 function openDashboard() { window.location.href = currentUser.role === 'teacher' ? 'teacher_dashboard.html' : 'student_dashboard.html'; }
 
 // --- Instructor-assigned material: a dismissable banner at the top of the chat ---
@@ -1640,16 +1656,72 @@ function formatDuration(sec) {
     return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// Build one lecture card. Shared by the chapter-grouped view and the flat fallback.
+function buildVideoCard(v, meta) {
+    const topic = v.topic || meta.topic || 'General';
+    const icon = TOPIC_ICONS[topic] || '📹';
+    const dur = formatDuration(meta.duration_sec);
+    const transcriptBadge = meta.has_transcript ? '<span class="video-card-transcript-badge">✓ Ready</span>' : '';
+    const title = v.title || meta.title || v.filename;
+    const label = v.video_number != null ? `Video ${v.video_number}` : '';
+
+    const card = document.createElement('button');
+    card.className = 'video-card';
+    card.setAttribute('aria-label', `Watch ${title}`);
+    card.setAttribute('tabindex', '0');
+    card.onclick = () => onClassroomVideoSelect(v.filename, title);
+
+    card.innerHTML = `
+        <div class="video-card-thumb" style="background: linear-gradient(135deg, rgba(110,157,245,0.06), rgba(167,139,250,0.06));">
+            <div class="video-card-thumb-bg">${icon}</div>
+            ${label ? `<div class="video-card-num">${label}</div>` : ''}
+            <div class="video-card-play-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+        </div>
+        <div class="video-card-body">
+            <span class="video-card-title">${escapeHtmlCr(title)}</span>
+            ${v.slides ? `<span class="video-card-slides">${escapeHtmlCr(v.slides)}</span>` : ''}
+            <div class="video-card-meta">
+                <span class="video-card-topic ${topicClass(topic)}">${topic}</span>
+                ${dur ? `<span class="video-card-duration">⏱ ${dur}</span>` : ''}
+                ${meta.size_mb ? `<span class="video-card-size">${meta.size_mb} MB</span>` : ''}
+                ${transcriptBadge}
+            </div>
+        </div>
+    `;
+    return card;
+}
+
 async function loadClassroomVideoList() {
+    const grid = document.getElementById('classroomVideoGrid');
+    if (!grid) return;
+
     try {
-        const resp = await fetch('/api/v1/video/list');
-        const data = await resp.json();
-        classroomVideoData = data.videos || [];
-        
-        const grid = document.getElementById('classroomVideoGrid');
-        if (!grid) return;
-        
-        if (classroomVideoData.length === 0) {
+        // Lectures belong to a numbered course structure, so group them by chapter
+        // rather than presenting one flat alphabetical wall of cards. The flat
+        // /video/list is still fetched for per-file metadata (duration, size,
+        // transcript state) that the catalog does not store.
+        const [catResp, listResp] = await Promise.all([
+            fetch('/api/v1/video/catalog?include_planned=false'),
+            fetch('/api/v1/video/list')
+        ]);
+        const listData = listResp.ok ? await listResp.json() : { videos: [] };
+        const metaBy = {};
+        for (const v of (listData.videos || [])) metaBy[v.filename] = v;
+
+        let chapters = [];
+        if (catResp.ok) {
+            const cat = await catResp.json();
+            chapters = (cat.chapters || []).filter(c => (c.videos || []).length);
+        }
+
+        // Keep the flat array in sync — other handlers still read it.
+        classroomVideoData = chapters.length
+            ? chapters.flatMap(c => c.videos)
+            : (listData.videos || []);
+
+        if (!classroomVideoData.length) {
             grid.innerHTML = `
                 <div class="picker-empty">
                     <div class="picker-empty-icon">📭</div>
@@ -1658,47 +1730,44 @@ async function loadClassroomVideoList() {
             classroomVideosLoaded = true;
             return;
         }
-        
+
         grid.innerHTML = '';
-        
-        for (const v of classroomVideoData) {
-            const topic = v.topic || 'General';
-            const icon = TOPIC_ICONS[topic] || '📹';
-            const dur = formatDuration(v.duration_sec);
-            const transcriptBadge = v.has_transcript ? '<span class="video-card-transcript-badge">✓ Ready</span>' : '';
-            
-            const card = document.createElement('button');
-            card.className = 'video-card';
-            card.setAttribute('aria-label', `Watch ${v.title}`);
-            card.setAttribute('tabindex', '0');
-            card.onclick = () => onClassroomVideoSelect(v.filename, v.title);
-            
-            card.innerHTML = `
-                <div class="video-card-thumb" style="background: linear-gradient(135deg, rgba(110,157,245,0.06), rgba(167,139,250,0.06));">
-                    <div class="video-card-thumb-bg">${icon}</div>
-                    <div class="video-card-play-icon">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    </div>
-                </div>
-                <div class="video-card-body">
-                    <span class="video-card-title">${escapeHtmlCr(v.title || v.filename)}</span>
-                    <div class="video-card-meta">
-                        <span class="video-card-topic ${topicClass(topic)}">${topic}</span>
-                        ${dur ? `<span class="video-card-duration">⏱ ${dur}</span>` : ''}
-                        <span class="video-card-size">${v.size_mb} MB</span>
-                        ${transcriptBadge}
-                    </div>
-                </div>
-            `;
-            
-            grid.appendChild(card);
+
+        if (!chapters.length) {
+            // Catalog not seeded — fall back to the original flat grid.
+            grid.classList.remove('by-chapter');
+            for (const v of (listData.videos || [])) {
+                grid.appendChild(buildVideoCard(v, v));
+            }
+            classroomVideosLoaded = true;
+            return;
         }
-        
+
+        grid.classList.add('by-chapter');
+        for (const c of chapters) {
+            const section = document.createElement('section');
+            section.className = 'chapter-block';
+            const count = c.videos.length;
+            section.innerHTML = `
+                <header class="chapter-head">
+                    <h3 class="chapter-title">
+                        <span class="chapter-num">Chapter ${c.number}</span>
+                        ${escapeHtmlCr(c.title)}
+                    </h3>
+                    <span class="chapter-count">${count} lecture${count === 1 ? '' : 's'}</span>
+                </header>
+                <div class="chapter-videos"></div>`;
+            const row = section.querySelector('.chapter-videos');
+            for (const v of c.videos) {
+                row.appendChild(buildVideoCard(v, metaBy[v.filename] || {}));
+            }
+            grid.appendChild(section);
+        }
+
         classroomVideosLoaded = true;
     } catch (err) {
         console.error('Failed to load classroom videos:', err);
-        const grid = document.getElementById('classroomVideoGrid');
-        if (grid) grid.innerHTML = '<div class="picker-empty"><div class="picker-empty-icon">⚠️</div><p>Failed to load videos. Please try again.</p></div>';
+        grid.innerHTML = '<div class="picker-empty"><div class="picker-empty-icon">⚠️</div><p>Failed to load videos. Please try again.</p></div>';
     }
 }
 
@@ -2437,8 +2506,36 @@ function renderMarkdownCr(text) {
 
 // Init
 initAuthUI();
-const stored = localStorage.getItem('c_tutor_user');
-if (stored) { currentUser = JSON.parse(stored); routeUser(); }
+
+// Rehydrate identity from the SERVER, not from localStorage.
+//
+// localStorage is a display cache that the user can edit. Booting from it made
+// the client and the server disagree about who you are, and the disagreement
+// looped: a tampered {"role":"teacher"} sent routeUser() to teacher_dashboard.html,
+// the server refused with a 303 back to "/", this file re-read the same tampered
+// value, and redirected again — hundreds of requests a second.
+//
+// /auth/me answers from the signed cookie, so the tamper is corrected instead of
+// retried. A stale cache (e.g. a session that expired) resolves to the login
+// screen rather than a redirect loop.
+(async function bootstrapSession() {
+    try {
+        const res = await fetch('/api/v1/auth/me');
+        if (!res.ok) {                       // no session, or it expired
+            localStorage.removeItem('c_tutor_user');
+            return;                          // initAuthUI() already shows login
+        }
+        const { user } = await res.json();
+        currentUser = user;
+        localStorage.setItem('c_tutor_user', JSON.stringify(user));
+        routeUser();
+    } catch (e) {
+        // Network/server down: fail closed to the login screen. Booting from the
+        // cache here would reintroduce the loop the moment the server returns.
+        console.warn('Session check failed; showing login.', e);
+        localStorage.removeItem('c_tutor_user');
+    }
+})();
 
 let currentSolveTopic = "";
 

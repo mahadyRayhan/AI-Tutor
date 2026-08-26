@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- LINK TO YOUR NEW CSS FILE -->
-    <link rel="stylesheet" href="/static/css/student_dashboard.css?v=net6">
+    <link rel="stylesheet" href="/static/css/student_dashboard.css?v=net9">
 </head>
 
 <body>
@@ -91,8 +91,12 @@
                     ⚖️ Topic Proficiency Radar
                     <div class="info-icon">ⓘ
                         <span class="tooltip-text">
-                            Visualizes the <strong>balance</strong> of your skills.<br>
-                            A balanced shape means you are learning all topics equally. Spikes indicate specialization.
+                            Visualizes the <strong>balance</strong> of your skills. Each spoke is a
+                            topic, and the distance from the centre is your verified mastery —
+                            the same number the skill graph shows.<br><br>
+                            A balanced shape means you are learning all topics equally; spikes
+                            indicate specialization. Your goal is to grow the shape outward until
+                            it fills the chart.
                         </span>
                     </div>
                 </h2>
@@ -102,13 +106,18 @@
             <!-- 4. Skill Network -->
             <div class="card full-width">
                 <h2>
-                    🕸️ Skill Progress (XP)
+                    🕸️ Skill Progress
                     <div class="info-icon">ⓘ
                         <span class="tooltip-text">
                             <strong>Your knowledge graph.</strong><br>
                             Each node is a topic; arrows point from a topic to the ones that build on it.
-                            The ring shows mastery. <span style="color:#34d399;">Green</span> = certified,
-                            <span style="color:#fbbf24;">amber</span> = head start from a mastered prerequisite.<br><br>
+                            The number and ring length show your verified mastery across all three
+                            evidence tiers.<br><br>
+                            <span style="color:#34d399;">Green</span> = certified,
+                            <span style="color:#60a5fa;">blue</span> = in progress,
+                            <span style="color:#fbbf24;">amber</span> = head start from a mastered
+                            prerequisite,
+                            <span style="color:#94a3b8;">grey</span> = not started yet.<br><br>
                             <strong>Click any node</strong> to self-assess — lower a tier if the tutor
                             overestimates what you know.
                         </span>
@@ -165,7 +174,7 @@
         </div>
     </div>
 
-    <script src="/static/js/student_dashboard.js?v=net7" defer></script>
+    <script src="/static/js/student_dashboard.js?v=auth1" defer></script>
 </body>
 
 </html>

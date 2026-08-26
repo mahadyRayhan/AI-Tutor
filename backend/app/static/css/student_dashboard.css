@@ -321,6 +321,21 @@ h2 {
     color: var(--text-primary);
 }
 
+/* A tier with no evidence. Deliberately quiet: it replaces a bold "BKT: 30%" that
+   was really the model's starting prior, not earned progress. The prior stays an
+   internal model parameter — there is nothing on screen for a student to reconcile
+   it against, so it needs no explanation here. */
+.mastery-tier-unstarted {
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    cursor: help;
+}
+
 .mastery-adapted-badge {
     background: rgba(167, 139, 250, 0.15);
     color: #a78bfa;

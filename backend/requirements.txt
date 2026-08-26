@@ -41,3 +41,6 @@ openai-whisper
 
 # --- Environment and Configuration ---
 python-dotenv
+# --- Authentication ---
+PyJWT
+passlib[bcrypt]

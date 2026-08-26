@@ -23,6 +23,56 @@ class CodeReviewerAgent(BaseAgent):
         super().__init__(llm, logger)
         self.vector_store = vector_store
 
+    def _resolve_evidence_topic(self, state: AgentState) -> str:
+        """Which concept should this submission's code-tier evidence be filed under?
+
+        `entities` is extracted from the student's text, and for a pasted code block
+        that yields tokens like "printf", "int" or "fork" — so the old
+        `state.entities[0]` filed real evidence under non-concepts while the
+        student's actual topic stayed at 0/3. Resolution order:
+
+          1. `state.evidence_topic` — a caller that KNOWS the topic (micro-challenge
+             router) said so explicitly.
+          2. `entities[0]`, but only if it names something attributable.
+          3. The session's remembered topic — what the student is actually working
+             on, which is the right answer for a bare code paste.
+          4. The student's most recently active concept, from the mastery store.
+             Needed because the session anchor can itself be junk: sessions in the
+             wild carried `last_valid_topic = "code submission"`, which made steps
+             1-3 all fail and silently dropped every code submission.
+
+        Returns "" when nothing attributable resolves, which means record NO
+        evidence: a junk row is worse than a missing one.
+        """
+        from app.core.concept_canon import is_attributable_concept
+
+        candidates = []
+        if state.evidence_topic:
+            candidates.append(state.evidence_topic)
+        if state.entities:
+            candidates.append(state.entities[0])
+        if state.session_id and state.user_id:
+            from app.core.history_manager import history_manager
+            sess = history_manager.get_session_state(state.user_id, state.session_id) or {}
+            remembered = sess.get("last_valid_topic")
+            if remembered:
+                candidates.append(remembered)
+        if state.user_id:
+            from app.core.bkt_model import most_recent_concept
+            recent = most_recent_concept(state.user_id)
+            if recent:
+                candidates.append(recent)
+
+        for c in candidates:
+            if is_attributable_concept(c):
+                return c
+
+        self.logger.warning(
+            f"📐 [BKT/CODE] no attributable topic for {state.user_id} "
+            f"(candidates={candidates!r}) — no evidence recorded"
+        )
+        return ""
+
     async def process(self, state: AgentState) -> AsyncGenerator[dict, None]:
         if state.intent != "REVIEW":
             return
@@ -62,24 +112,49 @@ class CodeReviewerAgent(BaseAgent):
         state.final_response = full_response
         state.stop_processing = True
 
-        # BKT code evidence: heuristic pass/fail from review content
-        if state.user_id and state.entities:
-            review_topic = state.entities[0] if state.entities else None
+        # BKT code evidence: grade the student's CODE, not the review prose.
+        # This previously keyword-scanned `full_response` for phrases like "infinite
+        # loop" — which graded the tutor's own wording rather than the submission. A
+        # review that merely cautioned "watch for an infinite loop if n grows" scored
+        # the student as failing, while any logic error outside that keyword list
+        # scored as passing.
+        if state.user_id:
+            review_topic = self._resolve_evidence_topic(state)
+            if not review_topic:
+                # Say so. Skipping silently is what made 10 consecutive correct
+                # submissions look like they "didn't count" — no ledger, no error,
+                # no change. The student has no way to diagnose that.
+                full_response += (
+                    "\n\n---\n⚠️ *I couldn't tell which topic this code belongs to, so "
+                    "it wasn't added to your mastery evidence. Tell me the topic first "
+                    "(e.g. \"I'm practising Strings\") and paste it again.*"
+                )
             if review_topic:
-                _error_keywords = (
-                    "compilation error", "syntax error", "will not compile",
-                    "won't compile", "does not compile", "missing semicolon",
-                    "undefined variable", "segmentation fault", "memory leak",
-                    "infinite loop", "out of bounds", "buffer overflow",
-                )
-                resp_lower = full_response.lower()
-                has_errors = any(kw in resp_lower for kw in _error_keywords)
+                submitted_code = state.original_query or state.query
+                _res = await self._llm_grade_code(submitted_code, review_topic, tier="code")
+                _ok = _res["is_correct"]
                 from app.core.bkt_model import bkt as _bkt_code
-                _bkt_code.update(state.user_id, review_topic, not has_errors, evidence_type="code")
-                self.logger.info(
-                    f"📐 [BKT/CODE] '{review_topic}' for {state.user_id}: "
-                    f"{'PASS' if not has_errors else 'FAIL'}"
-                )
+                # _ok is None when the judge was unreachable → record no evidence at
+                # all rather than a failure, so an outage never penalises real work.
+                if _ok is not None:
+                    _bkt_code.update(state.user_id, review_topic, _ok, evidence_type="code")
+                    self.logger.info(
+                        f"📐 [BKT/CODE] '{review_topic}' for {state.user_id}: "
+                        f"{'PASS' if _ok else 'FAIL'}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"📐 [BKT/CODE] '{review_topic}' ungradable — no evidence recorded"
+                    )
+                    # Say so. Rendering the ledger silently after a dropped write makes
+                    # an unchanged "~2 more" look like the submission simply didn't
+                    # count — the student re-pastes correct code indefinitely with no
+                    # idea anything is wrong.
+                    full_response += (
+                        "\n\n---\n⚠️ *I couldn't verify this submission just now, so it "
+                        "wasn't added to your mastery evidence. Your code review above "
+                        "still stands — please submit again to have it counted.*"
+                    )
                 # F2-05: show updated per-tier mastery progress after the review.
                 # Append to full_response (not a separate token) so it survives in the
                 # final 'complete' event's answer field below.
@@ -126,8 +201,11 @@ class CodeReviewerAgent(BaseAgent):
                 
                 # Also offer to explain recently visited prereqs
                 if visited_prereqs:
-                    last_prereq = visited_prereqs[-1]
-                    if f"Explain {last_prereq}" not in suggestions:
+                    # Entries are {"prereq": name, "for": topic}; older sessions may
+                    # still hold plain strings.
+                    _last = visited_prereqs[-1]
+                    last_prereq = _last.get("prereq", "") if isinstance(_last, dict) else _last
+                    if last_prereq and f"Explain {last_prereq}" not in suggestions:
                         suggestions.append(f"Explain {last_prereq}")
 
         yield {

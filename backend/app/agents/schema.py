@@ -36,6 +36,14 @@ class AgentState(BaseModel):
     # Internal State (Passed between agents)
     intent: Optional[str] = None
     entities: List[str] = []
+
+    # Concept that mastery evidence for this turn belongs to, when a caller KNOWS
+    # it (e.g. the micro-challenge router, which is answering a challenge issued
+    # about a specific topic). Set this rather than relying on `entities[0]`:
+    # entities are extracted from the user's text, and for a pasted code block
+    # that yields tokens like "printf" — which is how code-tier evidence ended up
+    # filed under non-concepts. None means "infer it".
+    evidence_topic: Optional[str] = None
     history: List[Dict] = [] 
     
     # Flags

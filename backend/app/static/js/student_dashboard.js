@@ -1,7 +1,10 @@
 const API_URL = "";
-const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
+let currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
 
-// Auth Guard
+// Auth Guard — provisional only. localStorage says who we *were*; the panels below
+// call per-student APIs that now authorize against the session cookie, so a stale
+// or edited cache produces a dashboard full of 401s. bootstrapSession() replaces
+// this with the server's answer before any of those calls go out.
 if (!currentUser) window.location.href = 'index.html';
 
 const TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings",
@@ -161,12 +164,22 @@ function renderCharts(data) {
         data: {
             labels: TOPICS,
             datasets: [{
-                label: 'Proficiency Level',
+                label: 'Mastery',
                 data: masteryScores,
-                backgroundColor: 'rgba(52, 211, 153, 0.15)',
-                borderColor: '#34d399',
-                pointBackgroundColor: '#34d399',
-                borderWidth: 2
+                // Stronger fill and a closed outline: this reads as a SHAPE showing
+                // coverage across the curriculum. It previously looked like a stray
+                // dot near the origin because it was plotting the intent-XP heuristic
+                // (values of 0-20) rather than real mastery.
+                backgroundColor: 'rgba(96, 165, 250, 0.22)',
+                borderColor: '#60a5fa',
+                borderWidth: 2,
+                fill: true,
+                tension: 0,
+                pointBackgroundColor: '#60a5fa',
+                pointBorderColor: '#0f1115',
+                pointBorderWidth: 2,
+                pointRadius: 3,
+                pointHoverRadius: 5
             }]
         },
         options: {
@@ -175,13 +188,30 @@ function renderCharts(data) {
                 r: {
                     min: 0,
                     max: 100,
-                    ticks: { display: false },
+                    beginAtZero: true,
+                    // Show the scale — an unlabelled radar gives no sense of whether
+                    // the shape is large or small.
+                    ticks: {
+                        display: true,
+                        stepSize: 25,
+                        showLabelBackdrop: false,
+                        color: '#64748b',
+                        font: { size: 9, family: 'Inter' },
+                        callback: v => (v === 0 ? '' : v + '%')
+                    },
                     grid: { color: 'rgba(255,255,255,0.06)' },
                     pointLabels: { color: '#94a3b8', font: { size: 11, family: 'Inter' } },
                     angleLines: { color: 'rgba(255,255,255,0.04)' }
                 }
             },
-            plugins: { legend: { display: false } }
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: c => `${c.label}: ${c.raw}% mastery`
+                    }
+                }
+            }
         }
     });
 }
@@ -202,10 +232,14 @@ const NET_POS = {
 const NET_R = 30;                       // node radius
 const NET_CIRC = 2 * Math.PI * NET_R;   // ring circumference
 
+// Colour encodes STATE; the ring's arc length already encodes magnitude, so grading
+// the colour by score too was doubling up on one variable — and doing it badly: any
+// topic under 30 came out red, so an untouched topic read as "failing" and a new
+// student's graph was a wall of alarm. Red also meant "Debug" in the habits legend
+// one card over. Reserve it for nothing here; no topic state warrants it.
 function scoreColor(score) {
-    if (score > 70) return '#34d399';
-    if (score > 30) return '#fbbf24';
-    return '#f87171';
+    if (score <= 0) return '#475569';   // no evidence yet — neutral slate
+    return '#60a5fa';                   // in progress (the legend's "mastery ring")
 }
 
 async function renderSkillNetwork(mastery) {
@@ -257,7 +291,10 @@ function drawNetwork(mastery, net) {
         let ring = scoreColor(score);
         if (certified) ring = '#34d399';
         else if (headStart) ring = '#fbbf24';
-        const dash = (score / 100) * NET_CIRC;
+        // A certified topic draws a FULL ring. The arc length otherwise comes from
+        // the XP score, which is an activity heuristic — so a certified node was
+        // rendering a 5%-long green stub that read as "barely started".
+        const dash = (certified ? 1 : score / 100) * NET_CIRC;
         const badge = certified
             ? `<text class="snode-badge" y="-${NET_R + 8}" fill="#34d399">✓ certified</text>`
             : (headStart ? `<text class="snode-badge" y="-${NET_R + 8}" fill="#fbbf24">+ head start</text>` : '');
@@ -269,7 +306,7 @@ function drawNetwork(mastery, net) {
             <circle class="snode-ring" r="${NET_R}" transform="rotate(-90)"
                     stroke="${ring}" stroke-dasharray="${dash} ${NET_CIRC}"></circle>
             <circle class="snode-core" r="${NET_R - 6}"></circle>
-            <text class="snode-pct" y="5">${score}</text>
+            <text class="snode-pct" y="5">${score}%</text>
             <text class="snode-lbl" y="${NET_R + 20}">${concept}</text>
         </g>`;
     });
@@ -303,8 +340,9 @@ function drawLegend() {
     if (!el) return;
     el.innerHTML = `
         <span class="leg"><i class="dot" style="background:#34d399"></i>certified</span>
+        <span class="leg"><i class="dot" style="background:#60a5fa"></i>in progress</span>
         <span class="leg"><i class="dot" style="background:#fbbf24"></i>head start</span>
-        <span class="leg"><i class="dot" style="background:#60a5fa"></i>mastery ring</span>
+        <span class="leg"><i class="dot" style="background:#475569"></i>not started</span>
         <span class="leg"><i class="arrowhint"></i>requires →</span>`;
 }
 
@@ -363,10 +401,16 @@ function renderMasterySliders(panel, safeId, concept, data) {
     tiers.forEach(tier => {
         const t = data.tiers[tier];
         const pBkt = t.p_bkt;
-        const pSelf = t.self_assessment !== null ? t.self_assessment : pBkt;
+        const pSelf = t.p_self != null ? t.p_self : pBkt;
         const pEff = t.p_effective;
         const adapted = t.adapted_P_G !== null;
         const maxVal = pBkt;
+        // With no evidence, p_bkt is the Cromwell PRIOR (quiz 30% / micro 5% / code 1%)
+        // — a starting belief, not something the student demonstrated. Printing it as
+        // "BKT: 30%" next to "evidence 0/3" reads as a third of the way done on a topic
+        // never opened (F2-04). Show 0 and name the prior for what it is; the skill
+        // graph already reports 0% for these topics, so the two now agree.
+        const noEvidence = !t.n_evidence;
 
         // How many correct-in-a-row still needed to certify this tier.
         const need = (typeof t.answers_to_master === 'number') ? t.answers_to_master : null;
@@ -385,18 +429,20 @@ function renderMasterySliders(panel, safeId, concept, data) {
             <div class="mastery-tier-label">
                 <span>${tierLabels[tier]}</span>
                 <span class="mastery-tier-values">
-                    BKT: <strong>${(pBkt * 100).toFixed(0)}%</strong>
-                    ${t.self_assessment !== null ? ` | Self: <strong>${(pSelf * 100).toFixed(0)}%</strong>` : ''}
-                    | Eff: <strong id="eff-${safeId}-${tier}">${(pEff * 100).toFixed(0)}%</strong>
-                    ${adapted ? ' <span class="mastery-adapted-badge">P_G adapted</span>' : ''}
+                    ${noEvidence
+                        ? `<span class="mastery-tier-unstarted">not started</span>`
+                        : `BKT: <strong>${(pBkt * 100).toFixed(0)}%</strong>
+                           ${t.p_self != null ? ` | Self: <strong>${(pSelf * 100).toFixed(0)}%</strong>` : ''}
+                           | Eff: <strong id="eff-${safeId}-${tier}">${(pEff * 100).toFixed(0)}%</strong>
+                           ${adapted ? ' <span class="mastery-adapted-badge">P_G adapted</span>' : ''}`}
                 </span>
             </div>
             <div class="mastery-slider-row">
                 <input type="range" class="mastery-slider" id="slider-${safeId}-${tier}"
                     min="0" max="${(maxVal * 100).toFixed(0)}" step="1"
-                    value="${(pSelf * 100).toFixed(0)}"
+                    value="${noEvidence ? 0 : (pSelf * 100).toFixed(0)}"
                     oninput="onSliderMove('${safeId}', '${tier}', this.value, ${pBkt})">
-                <span class="mastery-slider-value" id="val-${safeId}-${tier}">${(pSelf * 100).toFixed(0)}%</span>
+                <span class="mastery-slider-value" id="val-${safeId}-${tier}">${noEvidence ? 0 : (pSelf * 100).toFixed(0)}%</span>
             </div>
             <div class="mastery-tier-foot">
                 <span class="mastery-tier-evidence">evidence ${t.n_evidence}/3</span>
@@ -759,5 +805,22 @@ async function markMaterialDone(id) {
     } catch (e) { console.error("Mark done failed", e); }
 }
 
-// Start!
-initDashboard();
+// Start! — but confirm identity with the server before requesting any student data.
+(async function bootstrapSession() {
+    try {
+        const res = await fetch('/api/v1/auth/me');
+        if (!res.ok) {                        // no session, or it expired
+            localStorage.removeItem('c_tutor_user');
+            window.location.href = 'index.html';
+            return;
+        }
+        const { user } = await res.json();
+        currentUser = user;                   // the server's answer wins
+        localStorage.setItem('c_tutor_user', JSON.stringify(user));
+    } catch (e) {
+        console.warn('Session check failed; returning to login.', e);
+        window.location.href = 'index.html';
+        return;
+    }
+    initDashboard();
+})();

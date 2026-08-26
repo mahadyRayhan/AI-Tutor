@@ -42,15 +42,20 @@ class ExaminerAgent(BaseAgent):
             history_manager.update_session_state(state.user_id, state.session_id, {
                 "awaiting_confidence_rating": False,
                 "awaiting_quiz_answer": True,
-                "student_confidence": state.query, # Save their rating for future analytics
+                # Capture the RAW user rating (state.original_query), never state.query:
+                # a query-rewriter upstream can replace state.query with the prompt text
+                # ("On a scale of 1 to 5…"), whose first digit is 1 — which the grader's
+                # `\d+` parse then read as a 1/5 confidence regardless of what the student
+                # actually chose. original_query is the untouched input ("3 - Somewhat").
+                "student_confidence": state.original_query or state.query,
                 "quiz_shown_at": _time.time()  # telemetry: start time-to-answer clock
             })
-            
+
             # Retrieve the question we stored earlier
             question = current_session_state.get("pending_quiz_question")
-            
+
             # Briefly acknowledge their confidence and ask the question
-            ack = await asyncio.to_thread(self.llm.generate_response, f"The student rated their confidence as: '{state.query}'. Write a 1-sentence supportive acknowledgment.")
+            ack = await asyncio.to_thread(self.llm.generate_response, f"The student rated their confidence as: '{state.original_query or state.query}'. Write a 1-sentence supportive acknowledgment.")
             
             msg = f"{ack}\n\n**Here is the question:**\n{question}\n\n👉 *Type your answer below!*"
             
@@ -205,6 +210,29 @@ class ExaminerAgent(BaseAgent):
         except Exception:
             return None
 
+    def _resume_payload(self, goals_stack):
+        """Build the auto-resume payload for a question parked by a pop quiz.
+
+        A surprise quiz interrupts the student's real question by pushing it onto
+        `pending_goals` and promising "I'll help with that next!". Nothing used to
+        keep that promise automatically — the goal was only offered as a manual
+        "Back to:" chip and was lost if never clicked. This returns:
+          • prefix      — text appended to the grade so the student sees the hand-off,
+          • suggestion  — the manual "Back to: …" chip (fallback if auto-resume can't run),
+          • auto_resume — a "📌 Back to: <goal>" message the frontend re-sends on its
+                          own; the existing "📌 Back to:" handler then pops the goal and
+                          answers it, so the parked question is never stranded.
+        Returns None when there is no parked goal.
+        """
+        if not goals_stack:
+            return None
+        last_goal = goals_stack[-1]
+        return {
+            "prefix": f"\n\n---\n🔙 Now, back to your question — **\"{last_goal}\"**:",
+            "suggestion": f"Back to: {last_goal}",
+            "auto_resume": f"📌 Back to: {last_goal}",
+        }
+
     async def _grade_quiz(self, state: AgentState, session_state):
         """
         Grades the pending quiz answer and compares it to their prior confidence.
@@ -358,13 +386,17 @@ class ExaminerAgent(BaseAgent):
                 msg += f"Want to keep going and lock it in?"
                 suggestions = ["Try another question", "What should I learn next?"]
 
-            if goals_stack:
-                last_goal = goals_stack[-1]
-                msg += f"\n\nOr, if you prefer, shall we go back to your goal: **\"{last_goal}\"**?"
-                suggestions.append(f"Back to: {last_goal}")
+            resume = self._resume_payload(goals_stack)
+            if resume:
+                msg += resume["prefix"]
+                suggestions.append(resume["suggestion"])  # manual fallback
 
             msg += bkt.mastery_ledger(state.user_id, check_topic)  # F2-05: show tier progress
-            yield {"type": "complete", "data": {"answer": msg, "sources": [], "suggestions": suggestions, "intent": "EVALUATION", "entities": state.entities}}
+            data = {"answer": msg, "sources": [], "suggestions": suggestions,
+                    "intent": "EVALUATION", "entities": state.entities}
+            if resume:
+                data["auto_resume"] = resume["auto_resume"]  # frontend continues automatically
+            yield {"type": "complete", "data": data}
         else:
             # =========================================================
             # SAGE PDF PAGE 2: CALIBRATION ACCURACY (FAIL SCENARIOS)
@@ -388,14 +420,24 @@ class ExaminerAgent(BaseAgent):
                 "Try another question"
             ]
 
+            # Even on a miss, the student's parked question must not be stranded —
+            # resume it after the remediation so "I'll help with that next" is kept.
+            resume = self._resume_payload(goals_stack)
+            if resume:
+                msg += resume["prefix"]
+                suggestions.append(resume["suggestion"])  # manual fallback
+
             msg += bkt.mastery_ledger(state.user_id, check_topic)  # F2-05: show tier progress
-            yield {"type": "complete", "data": {
+            data = {
                 "answer": msg,
                 "sources": [],
                 "suggestions": suggestions,
                 "intent": "EVALUATION",
-                "entities": state.entities
-            }}
+                "entities": state.entities,
+            }
+            if resume:
+                data["auto_resume"] = resume["auto_resume"]  # frontend continues automatically
+            yield {"type": "complete", "data": data}
 
     async def _smart_grade_answer(self, student_answer: str, vec_google, vec_local, correct_text: str) -> dict:
         # 1. Surrender Check — only explicit "I don't know" phrases, not just short answers
@@ -507,7 +549,6 @@ class ExaminerAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"LLM Grade Error: {e}")
             return {"is_correct": False, "feedback": f"Not quite. ({vector_score}%)"}
-    
     def _fast_grade_answer(self, student_answer: str, correct_vector_google: list, correct_vector_local: list = None) -> dict:
         """
         Computes cosine similarity between student answer and correct answer.

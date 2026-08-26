@@ -250,7 +250,11 @@ class ChainOfThoughtRAGAgent:
         if not session_id:
             return ""
         topic = self._best_topic(entities)
-        if topic and len(topic) >= 3:
+        # Never cache a non-concept as the session's anchor. "code submission" and
+        # "printf" reached this cache, and once anchored they became the fallback
+        # topic for everything downstream — including mastery-evidence attribution.
+        from app.core.concept_canon import is_attributable_concept
+        if topic and len(topic) >= 3 and is_attributable_concept(topic):
             history_manager.update_session_state(username, session_id, {"last_valid_topic": topic})
             self.logger.info(f"🗂️ [TOPIC CACHE] Anchor remembered: '{topic}'")
             return topic
@@ -958,9 +962,20 @@ class ChainOfThoughtRAGAgent:
         all_prereqs = self._check_prerequisites(query, entities)
         
         # --- C1 FIX: GET PREVIOUSLY VISITED PREREQS TO PREVENT LOOPS ---
+        # Each entry records which TARGET topic the prereq was surfaced for, because
+        # the suppression below must only fire for a *different* target. Re-asking the
+        # same question ("explain pointers", then "how do pointers work?") is not a
+        # redirect loop — it is the same question, and it has to produce the same gate.
+        # A flat session-wide list made the gate single-shot per prereq: the first
+        # phrasing got the roadmap and every rephrase after it walked straight through
+        # to the full answer. Legacy plain-string entries carry no target and keep the
+        # original behaviour.
         current_state = history_manager.get_session_state(username, session_id) if session_id else {}
         visited_prereqs = current_state.get("visited_prereqs", [])
-        visited_lower = [v.lower() for v in visited_prereqs]
+        visited_entries = [
+            v if isinstance(v, dict) else {"prereq": v, "for": None}
+            for v in visited_prereqs
+        ]
         # ---------------------------------------------------------------
         
         target_concepts = [e.lower() for e in entities]
@@ -990,7 +1005,9 @@ class ChainOfThoughtRAGAgent:
             except Exception as e:
                 self.logger.error(f"Graph validation error in gatekeeping: {e}")
         # --- END A1 FIX ---
-        
+
+        topic_lower = (topic_name or "").strip().lower()
+
         unknown = []
         for p in all_prereqs:
             p_norm = p.lower()
@@ -1009,15 +1026,25 @@ class ChainOfThoughtRAGAgent:
             if is_same_topic:
                 continue
             
-            # C. C1 FIX: Skip prereqs the student was already redirected through
-            already_visited = False
-            for v in visited_lower:
-                if v in p_norm or p_norm in v:
-                    already_visited = True
-                    break
-            
-            if already_visited:
-                self.logger.info(f"⏭️ Skipping already-visited prereq: '{p}'")
+            # C. C1 FIX: Skip prereqs the student was redirected through for ANOTHER
+            # topic. A prereq surfaced for THIS same topic is shown again, so an
+            # identical question always yields an identical gate — the explicit
+            # "Teach me X anyway" override stays the only way past it.
+            seen_for_this_topic = False
+            seen_for_other_topic = False
+            for v in visited_entries:
+                v_name = (v.get("prereq") or "").strip().lower()
+                if not v_name:
+                    continue
+                if v_name in p_norm or p_norm in v_name:
+                    v_for = (v.get("for") or "").strip().lower()
+                    if v_for and (v_for in topic_lower or topic_lower in v_for):
+                        seen_for_this_topic = True
+                    else:
+                        seen_for_other_topic = True
+
+            if seen_for_other_topic and not seen_for_this_topic:
+                self.logger.info(f"⏭️ Skipping prereq '{p}' (visited for another topic)")
                 continue
                 
             unknown.append(p)
@@ -1028,7 +1055,13 @@ class ChainOfThoughtRAGAgent:
             # Only push if this query isn't already in the stack
             if query not in existing_goals:
                 existing_goals.append(query)
-            new_visited = visited_prereqs + unknown
+            # Record the target alongside each prereq, and de-duplicate so a repeated
+            # question does not grow the list without bound.
+            new_visited = list(visited_prereqs)
+            for p in unknown:
+                entry = {"prereq": p, "for": topic_lower}
+                if entry not in new_visited:
+                    new_visited.append(entry)
             history_manager.update_session_state(username, session_id, {
                 "pending_goals": existing_goals,
                 "visited_prereqs": new_visited
@@ -1381,34 +1414,42 @@ class ChainOfThoughtRAGAgent:
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM", "suggestions": []}}
             return
 
-        # --- STAGE 2: MICRO (attempt-with-code = evidence) ---
+        # --- STAGE 2: MICRO (graded: valid C AND actually uses the concept) ---
         if stage == "micro":
-            has_code = any(c in q for c in CODE_CHARS)
-            bkt.update(username, concept, has_code, evidence_type="micro")
-            exam["score"]["micro"] = has_code
+            res = await self.examiner._llm_grade_code(q, concept, tier="micro")
+            ok = res["is_correct"]
+            # ok is None when the judge was unreachable → record no evidence at all
+            # rather than a failure, so an outage never penalises a real answer.
+            if ok is not None:
+                bkt.update(username, concept, ok, evidence_type="micro")
+            exam["score"]["micro"] = bool(ok)
             exam["stage"] = "code"
             history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
-            fb = "✅ **Nice — that's valid C.**" if has_code else "⚠️ That didn't look like code, but let's finish."
+            fb = res["feedback"]
             msg = (f"{fb}\n\n**Step 3 of 3 · Code**\n\n"
                    f"Write a short C snippet (2–4 lines) that demonstrates **{concept}** in action.\n\n👉 *Type your code.*")
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM", "suggestions": []}}
             return
 
-        # --- STAGE 3: CODE (final) ---
+        # --- STAGE 3: CODE (graded: valid C AND actually uses the concept) ---
         if stage == "code":
-            has_code = any(c in q for c in [";", "{", "}"])
-            bkt.update(username, concept, has_code, evidence_type="code")
-            exam["score"]["code"] = has_code
+            res = await self.examiner._llm_grade_code(q, concept, tier="code")
+            ok = res["is_correct"]
+            if ok is not None:
+                bkt.update(username, concept, ok, evidence_type="code")
+            exam["score"]["code"] = bool(ok)
             history_manager.update_session_state(username, session_id, {"mastery_exam": None})
             passed = sum(1 for v in exam["score"].values() if v)
             certified = bkt.is_mastered(username, concept)
-            head = (f"## 🎓 Mastery Exam Complete — {concept}\n\n"
+            head = (f"{res['feedback']}\n\n"
+                    f"## 🎓 Mastery Exam Complete — {concept}\n\n"
                     f"You cleared **{passed}/3** steps this round.\n")
             if certified:
                 head += f"\n🏆 **{concept} is now certified!** Outstanding work.\n"
             else:
-                head += ("\nEach step added evidence to its tier. **Retake the exam** to add more — "
-                         "certification needs sustained correct performance across all three tiers.\n")
+                head += ("\nEach step you got **right** added evidence to its tier. "
+                         "**Retake the exam** to add more — certification needs sustained "
+                         "correct performance across all three tiers.\n")
             head += bkt.mastery_ledger(username, concept)
             yield {"type": "complete", "data": {"answer": head, "sources": [], "intent": "EXAM",
                                                 "suggestions": [f"Retake exam: {concept}", "What should I learn next?"]}}
@@ -1911,32 +1952,66 @@ class ChainOfThoughtRAGAgent:
             
         user_msg_count = sum(1 for m in msg_list if m.get("role") == "user")
 
-        # FIX: Don't hijack learning requests OR struggling students with a quiz.
-        # Use 'in' instead of 'startswith' to catch rephrased questions like
-        # "can you give me just one simple example of a variable?"
+        # ── CONTENT-AWARE POP-QUIZ TRIGGER ──────────────────────────────────
+        # A pop quiz must slot into a natural LULL — it must never interrupt an open
+        # question. The old trigger fired on a blind `msg_count % 5` counter and
+        # leaned on one keyword list to avoid hijacking; any rephrased question that
+        # slipped the list got its answer parked and (often) silently lost. The rule
+        # is now inverted: quiz ONLY when the current turn is a short acknowledgement
+        # / "keep going" beat that carries no request of its own — so a real question
+        # is never swapped out for a quiz, regardless of how it is phrased.
         q_lower_quiz = query.lower().strip()
+        q_bare = q_lower_quiz.rstrip(".!? ")
+
+        # Signals the student is ASKING for something this turn → never quiz.
         learning_phrases = (
-            "explain", "how do", "how to", "what is", "what are", "tell me",
-            "write a", "create a", "build a", "describe", "define", "help",
-            "can you", "give me", "show me", "example", "simple",
-            "don't understand", "don't get", "confused", "struggling", "teach me"
+            "explain", "how do", "how to", "what is", "what are", "what's", "why",
+            "tell me", "write a", "create a", "build a", "describe", "define",
+            "help", "can you", "could you", "give me", "show me", "example",
+            "simple", "don't understand", "don't get", "confused", "struggling",
+            "teach me", "difference between", "kinds of", "types of", "when do",
+            "when to", "which", "where",
         )
-        # --- FLEXIBLE POP QUIZ TRIGGER ---
         is_learning_request = any(p in q_lower_quiz for p in learning_phrases)
+        is_question = "?" in q_lower_quiz
+        is_coding = ("{" in query or "}" in query or ";" in query
+                     or state.intent in ["DEBUG", "REVIEW", "PROBLEM", "COMPLEX_PROBLEM"])
         is_frustrated = learning_profile.get("frustration_level") in ["high", "rage"]
-        is_coding = state.intent in ["DEBUG", "REVIEW", "PROBLEM"]
-        
-        # Only quiz if they are in a normal state, not actively coding/debugging, and not asking for help
-        should_trigger_quiz = (
-            user_msg_count > 0 and 
-            user_msg_count % 5 == 0 and 
-            not is_in_quiz and 
-            not is_in_plan and 
-            not is_learning_request and 
-            not is_frustrated and 
-            not is_coding
+        in_quiz_flow = is_in_quiz or bool(current_state.get("awaiting_confidence_rating"))
+
+        # A "lull": a brief acknowledgement / continuation that carries no request.
+        _lull_cues = {
+            "ok", "okay", "k", "kk", "thanks", "thank you", "thx", "ty", "got it",
+            "cool", "nice", "great", "makes sense", "i see", "understood", "next",
+            "continue", "go on", "sure", "yes", "yep", "yeah", "alright", "done",
+            "sounds good", "gotcha", "right", "perfect", "good", "awesome",
+        }
+        _words = q_bare.split()
+        is_lull_turn = bool(q_bare) and len(_words) <= 4 and any(
+            q_bare == c or q_bare.startswith(c + " ") or q_bare.startswith(c + ",")
+            for c in _lull_cues
         )
-        
+
+        # Cadence: at least N turns since the last pop quiz. Tracked as an absolute
+        # turn index (not a modulo) so a turn we correctly *skip* because the student
+        # was mid-question doesn't shove the next eligible quiz 5 more turns away.
+        last_quiz_at = current_state.get("last_popquiz_at", 0) if current_state else 0
+        POPQUIZ_MIN_GAP = 5
+        cadence_ok = (user_msg_count - last_quiz_at) >= POPQUIZ_MIN_GAP
+
+        # Quiz only at a genuine lull, spaced out, and never over an open request.
+        should_trigger_quiz = (
+            user_msg_count > 0 and
+            cadence_ok and
+            is_lull_turn and
+            not in_quiz_flow and
+            not is_in_plan and
+            not is_learning_request and
+            not is_question and
+            not is_coding and
+            not is_frustrated
+        )
+
         if should_trigger_quiz:
             self.logger.info("🎯 Triggering Proactive Pop Quiz!")
             
@@ -1948,9 +2023,16 @@ class ChainOfThoughtRAGAgent:
             if recent_topic:
                 # Push the current query onto the goals stack
                 goals_stack = current_state.get("pending_goals", []) if current_state else []
-                if state.query not in goals_stack:
-                    goals_stack.append(state.query)
-                history_manager.update_session_state(username, session_id, {"pending_goals": goals_stack})
+                # Park the RAW question (original_query), not a possibly-rewritten
+                # search query, so what resumes after the quiz is what the student
+                # actually asked.
+                parked = state.original_query or state.query
+                if parked not in goals_stack:
+                    goals_stack.append(parked)
+                history_manager.update_session_state(username, session_id, {
+                    "pending_goals": goals_stack,
+                    "last_popquiz_at": user_msg_count,   # cadence anchor (content-aware trigger)
+                })
                 state.query = f"know {recent_topic} (verify)"
                 state.intent = "QUIZ"
                 state.entities = [recent_topic]
@@ -2008,10 +2090,14 @@ class ChainOfThoughtRAGAgent:
         #   (2) as a last-resort safety net, fall back to the remembered anchor
         #       if the pipeline produced no usable topic at all.
         # =========================================================
+        from app.core.concept_canon import is_attributable_concept as _attributable
         is_real_topic = (
             len(state.entities) > 0
             and state.entities[0].lower() != state.original_query.lower()
             and self._best_topic(state.entities)  # must contain a genuine C concept
+            # ...and that concept must be attributable — "printf"/"code submission"
+            # passed the check above and poisoned the anchor for the whole session.
+            and _attributable(self._best_topic(state.entities))
         )
 
         if is_real_topic:
@@ -2156,10 +2242,28 @@ class ChainOfThoughtRAGAgent:
                     # generic "code submission"), so code-tier evidence AND the mastery
                     # ledger land on this topic (Module-B F2-05).
                     state.entities = [challenge_topic]
-                    # BKT micro evidence: student attempted procedural code → always counts as attempt
-                    from app.core.bkt_model import bkt as _bkt_micro
-                    _bkt_micro.update(username, challenge_topic, True, evidence_type="micro")
-                    self.logger.info(f"📐 [BKT/MICRO] '{challenge_topic}' updated for {username}")
+                    # The challenge was issued about a known topic, so name it
+                    # explicitly — the downstream reviewer must not re-derive it
+                    # from the code (which yields "printf"/"int").
+                    state.evidence_topic = challenge_topic
+                    # BKT micro evidence: GRADED, not merely attempted. This previously
+                    # passed a hardcoded True, so any text containing ";" or "=" earned
+                    # procedural evidence without the code ever being checked.
+                    _micro_res = await self.examiner._llm_grade_code(
+                        state.original_query, challenge_topic, tier="micro"
+                    )
+                    _micro_ok = _micro_res["is_correct"]
+                    if _micro_ok is not None:
+                        from app.core.bkt_model import bkt as _bkt_micro
+                        _bkt_micro.update(username, challenge_topic, _micro_ok, evidence_type="micro")
+                        self.logger.info(
+                            f"📐 [BKT/MICRO] '{challenge_topic}' for {username}: "
+                            f"{'PASS' if _micro_ok else 'FAIL'}"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"📐 [BKT/MICRO] '{challenge_topic}' ungradable — no evidence recorded"
+                        )
                 else:
                     state.intent = "CONCEPT"
                     state.query = f"[CONTEXT: Evaluating micro-challenge answer: '{state.original_query}']. Please review this briefly."

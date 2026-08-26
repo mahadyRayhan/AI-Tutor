@@ -129,6 +129,9 @@ class UserKnowledgeManager:
             logger.warning(f"🛡️🧠 [DB Guard] '{concept_clean}' not in graph → added to blocklist")
             return
 
+        # Canonicalize so mastery flags land on the same row bkt.update() writes.
+        from app.core.concept_canon import canonical_concept
+        concept_clean = canonical_concept(concept_clean)
         db.execute("""
             INSERT OR IGNORE INTO user_knowledge (username, concept, timestamp, ever_certified)
             VALUES (?, ?, ?, 1)

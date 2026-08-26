@@ -463,6 +463,55 @@ class SQLiteDB:
                 )
             """)
 
+            # =========================================================
+            # LECTURE CATALOG (flipped-classroom plan)
+            # =========================================================
+            # The course is organised as Chapters → numbered Videos (see
+            # FS2026_CS1050_FlippedClassroomPlan). Before this, videos were whatever
+            # .mp4 files happened to sit in the video directory, ordered by filename
+            # and bucketed into the 9 skill topics by keyword-matching the filename —
+            # so chapter order, slide ranges, and not-yet-recorded videos could not be
+            # represented at all.
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS video_chapter (
+                    number      INTEGER PRIMARY KEY,   -- 0..14, as printed in the plan
+                    title       TEXT NOT NULL,
+                    status      TEXT DEFAULT '',       -- e.g. 'SLIDES UPDATED'
+                    sort_order  INTEGER,
+                    created_at  TIMESTAMP
+                )
+            """)
+
+            # One row per PLANNED video. `filename` is NULL until a recording is
+            # uploaded, so a chapter can list what is still outstanding — the plan
+            # itself contains chapters 6-11 and 14 with no videos recorded yet.
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS video_catalog (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chapter_number INTEGER NOT NULL,
+                    video_number   INTEGER,            -- "Video 14" (may repeat across chapters)
+                    title          TEXT NOT NULL,
+                    slides         TEXT DEFAULT '',    -- "Slides 1-6"
+                    sections       TEXT DEFAULT '',    -- "Section 3.1, 3.2"
+                    filename       TEXT,               -- NULL = planned, not yet recorded
+                    topic          TEXT DEFAULT '',    -- skill-graph topic, for cross-linking
+                    status         TEXT DEFAULT 'planned',  -- planned | complete
+                    sort_order     INTEGER,
+                    created_at     TIMESTAMP,
+                    updated_at     TIMESTAMP,
+                    FOREIGN KEY (chapter_number) REFERENCES video_chapter(number)
+                )
+            """)
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_catalog_chapter "
+                "ON video_catalog(chapter_number, sort_order)"
+            )
+            # A recording belongs to exactly one catalog slot.
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_filename "
+                "ON video_catalog(filename) WHERE filename IS NOT NULL"
+            )
+
             # Prerequisite-coupled priors ("head start"): every seed + clawback event.
             # Lets us prove in analysis that a head start never certified a topic.
             self.conn.execute("""
