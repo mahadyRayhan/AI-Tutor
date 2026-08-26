@@ -55,13 +55,38 @@ function postCoverage() {
             username: currentUser.username, video_filename: currentVideoFilename,
             duration_sec: videoDuration, watched_sec: watchedSec, hidden_sec: hiddenSec
         })
+    }).then(res => {
+        // fetch does NOT reject on 4xx, so a bare .catch() swallowed these: the
+        // session expired, every post 401'd, the 30s timer kept firing forever,
+        // and the student's watch data was discarded with nothing shown to them.
+        if (res.status === 401 || res.status === 403) {
+            if (coverageTimer) { clearInterval(coverageTimer); coverageTimer = null; }
+            localStorage.removeItem('c_tutor_user');
+            console.warn('Session expired — watch tracking stopped.');
+        }
     }).catch(() => {});
 }
 
 // ═══════════════════════════════════
 //  INITIALIZATION
 // ═══════════════════════════════════
+// Confirm identity with the SERVER before anything reports progress. Booting from
+// localStorage alone left this page posting telemetry as a user whose session had
+// already ended — the writes 401'd and were dropped without the student noticing.
+async function verifySession() {
+    try {
+        const res = await fetch('/api/v1/auth/me');
+        if (!res.ok) { localStorage.removeItem('c_tutor_user'); currentUser = null; return; }
+        const { user } = await res.json();
+        currentUser = user;
+        localStorage.setItem('c_tutor_user', JSON.stringify(user));
+    } catch (e) {
+        currentUser = null;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    verifySession();
     // Cache DOM elements
     videoEl          = document.getElementById('lectureVideo');
     videoSelect      = document.getElementById('videoSelect');
