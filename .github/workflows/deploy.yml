@@ -51,25 +51,25 @@ jobs:
           script_stop: true
           script: |
             # Step A: Stop current services and CREATE BACKUP (using cp, not mv)
-            if [ -d "/home/ubuntu/AI-Tutor" ]; then
-              cd /home/ubuntu/AI-Tutor
+            if [ -d "/home/admin/AI-Tutor" ]; then
+              cd /home/admin/AI-Tutor
               sudo docker-compose down || true
               cd /home/ubuntu
               # Copy the folder to keep a safe backup of both tracked and untracked files
               cp -r AI-Tutor AI-Tutor_backup_$(date +%F_%H-%M)
             else
               # If it's the very first deployment, create the folder
-              mkdir -p /home/ubuntu/AI-Tutor
+              mkdir -p /home/admin/AI-Tutor
             fi
 
             # Step B: Unzip new code OVER the existing folder
-            unzip -o /home/ubuntu/deployment.zip -d /home/ubuntu/AI-Tutor
+            unzip -o /home/ubuntu/deployment.zip -d /home/admin/AI-Tutor
             
             # Move the dynamically generated .env into the project folder
-            mv /home/ubuntu/.env /home/ubuntu/AI-Tutor/.env
+            mv /home/ubuntu/.env /home/admin/AI-Tutor/.env
 
             # Step C: Set permissions exactly as outlined in your manual guide
-            cd /home/ubuntu/AI-Tutor
+            cd /home/admin/AI-Tutor
             mkdir -p backend/database logs resources
             sudo chmod -R 777 backend/database/ logs/ resources/ || true
 
