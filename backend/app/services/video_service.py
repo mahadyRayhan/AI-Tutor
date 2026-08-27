@@ -7,6 +7,7 @@ Handles: Whisper transcription → JSON caching → timestamp-based slicing
 import json
 import os
 import logging
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -15,6 +16,13 @@ logger = logging.getLogger(__name__)
 # Lazy-load Whisper to avoid slow import at startup
 _whisper_model = None
 _MODEL_SIZE = "base"  # Options: tiny, base, small, medium
+
+# Whisper's decoder installs kv_cache hooks onto the SHARED model instance for the
+# duration of a decode. Two threads transcribing at once corrupt each other's cache
+# and one dies with "cannot reshape tensor of 0 elements". The video page requests
+# /transcript and /checkpoints simultaneously, so this was hit on every first view
+# of a new video. Serialize all transcription through one lock.
+_transcribe_lock = threading.Lock()
 
 
 def _get_whisper_model():
@@ -43,14 +51,29 @@ def transcribe_video(video_path: str, force: bool = False) -> List[Dict]:
         List of dicts: [{"start": 0.0, "end": 4.2, "text": "..."}, ...]
     """
     cache_path = _get_transcript_cache_path(video_path)
-    
-    # Check cache first
-    if not force and cache_path.exists():
-        logger.info(f"📋 Using cached transcript: {cache_path.name}")
+
+    def _read_cache():
         with open(cache_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    
-    # Transcribe with Whisper
+
+    # Fast path: cache already on disk, no lock needed.
+    if not force and cache_path.exists():
+        logger.info(f"📋 Using cached transcript: {cache_path.name}")
+        return _read_cache()
+
+    with _transcribe_lock:
+        # Re-check inside the lock. Concurrent callers both saw "no cache" above;
+        # whoever lost the race would otherwise re-transcribe the same file for
+        # nothing. By now the winner has written it.
+        if not force and cache_path.exists():
+            logger.info(f"📋 Using cached transcript (built by a concurrent request): {cache_path.name}")
+            return _read_cache()
+
+        return _transcribe_uncached(video_path, cache_path)
+
+
+def _transcribe_uncached(video_path: str, cache_path: Path) -> List[Dict]:
+    """Run Whisper and write the cache. Callers MUST hold _transcribe_lock."""
     logger.info(f"🎙️ Transcribing video: {Path(video_path).name} (this may take a minute)...")
     model = _get_whisper_model()
     
