@@ -173,3 +173,13 @@ contradicts the claim that channel 4 cannot certify. Give cognitive nodes their 
 `Phase 0` (cheap, independent) → `Phase 1` ★ → `Phase 3`. `Phase 2` runs parallel throughout.
 
 If only one phase gets built: **Phase 1**. Critical path, carries the distinguishing property, and is the only claim the code currently *contradicts*.
+
+
+NOTES:
+
+1. The novelty isn't attaching cognitive state to topics. Plenty of systems track cognitive load. The novelty is that you're attaching it to a position in a dependency structure — which means doubt can travel along prerequisite edges.
+
+An ordinary learner model says "this student has high load right now." Yours can say "this student's competence on Arrays was established under heavy scaffolding, and Strings depends on Arrays, so be slower to withdraw scaffolding on Strings."
+
+2. Dynamic graph --> learner-annotated policy graph
+
