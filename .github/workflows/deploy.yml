@@ -53,7 +53,7 @@ jobs:
             # Step A: Stop current services and CREATE BACKUP (using cp, not mv)
             if [ -d "/home/admin/AI-Tutor" ]; then
               cd /home/admin/AI-Tutor
-              sudo docker-compose down || true
+              sudo docker compose down || true
               cd /home/admin
               # Copy the folder to keep a safe backup of both tracked and untracked files
               cp -r AI-Tutor AI-Tutor_backup_$(date +%F_%H-%M)
@@ -74,7 +74,7 @@ jobs:
             sudo chmod -R 777 backend/database/ logs/ resources/ || true
 
             # Step D: Build and launch
-            sudo docker-compose up --build -d
+            sudo docker compose up --build -d
             
             # Clean up the zip file to save disk space
             rm /home/admin/deployment.zip
