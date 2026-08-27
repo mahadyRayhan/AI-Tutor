@@ -16,81 +16,85 @@ Remaining work for the journal extension. Substrate is ~80% built; claims are ~0
 
 ## Architecture
 
-Values shown are a live example: learner working on **Arrays**, mid-session.
+Learner mid-session on **Arrays**. Topic nodes are fixed; **cognitive nodes are spawned** off
+whichever topic the learner has worked, and accumulate as more signal becomes measurable.
 
 ```mermaid
-flowchart TB
+flowchart LR
 
-subgraph POLICY["① STATIC POLICY DAG · Neo4j · instructor-authored · identical for every learner · NEVER written to"]
+subgraph POLICY["① TOPIC NODES · Neo4j · instructor-authored · fixed · NEVER written to"]
 direction LR
-  Var(Variables) --> CF(Control Flow)
-  Var --> Ptr(Pointers)
-  CF --> Fun(Functions)
-  CF --> Arr(Arrays)
-  Arr --> Str(Strings)
-  Arr --> Struct(Structures)
-  Ptr --> Mem(Memory Allocation)
-  Str --> FIO(File I/O)
+  Var(("Variables<br/>K ✓ 10")) -->|requires| CF(("Control Flow<br/>0"))
+  Var -->|requires| Ptr(("Pointers<br/>0"))
+  CF -->|requires| Fun(("Functions<br/>0"))
+  CF -->|requires| Arr(("Arrays<br/>◐ 5"))
+  Arr -->|requires| Str(("Strings<br/>0"))
+  Arr -->|requires| Struct(("Structures<br/>0"))
+  Ptr -->|requires| Mem(("Memory Alloc<br/>0"))
+  Str -->|requires| FIO(("File I/O<br/>0"))
 end
 
-subgraph LEARNER["② SPAWNED PER-LEARNER LAYER · SQLite keyed (username, concept) · joined at read time · recomputed every turn"]
+subgraph SPAWNED["② COGNITIVE NODES · spawned per learner · SQLite (username, concept, signal) · joined at render · NO threshold, cannot certify"]
 direction TB
-  subgraph NODE["annotation on node in focus — Arrays"]
-  direction TB
-    T1["tier 1 · declarative<br/>P̃ 0.97 · n_eff 3.0 · b=3 ✓"]
-    T2["tier 2 · procedural<br/>P̃ 0.88 · n_eff 2.4 · b=2"]
-    T3["tier 3 · applied<br/>P̃ 0.71 · n_eff 1.2 · b=1 ⚠ blocks K"]
-    CH["channel 4 · cognitive / metacognitive<br/><b>no threshold · cannot certify</b><br/>composite restriction: HIGH"]
+  subgraph PAST["on Variables — settled, decaying"]
+    c1(["cognitive_load 0.22"])
+    c2(["frustration 0.10"])
+    c3(["goal_orientation mastery"])
   end
-  subgraph SIGNALS["channel 4 contents · live values this session"]
-  direction TB
-    SK["<b>skill-like → traced</b> (BKT-shaped)<br/>comprehension_tracing 0.62<br/>debugging_skill 0.45<br/>self_monitoring 0.71<br/>help_seeking_appropriateness 0.38 ⚠"]
-    ST2["<b>state-like → filtered</b> (no mastery)<br/>cognitive_load 0.81 ↑<br/>delta_f +0.24 rising<br/>m_state = Helplessness<br/>flow 0.19 · engagement 0.55<br/>pacing 0.43 · path_adherence 0.67<br/>automatization 0.31 · slip_vs_gap gap"]
-    TR["<b>trait-like → slow prior</b><br/>self_efficacy 2/5<br/>interest 0.60<br/>goal_orientation mastery<br/>persistence 0.52"]
-  end
-  subgraph CTX["write-time context stamp · frozen per observation"]
-  direction TB
-    BK["β bucket = worked · assisted · late<br/>bucket_version v1<br/>ω = 0.40 (hint-revealed × latency)"]
+  subgraph LIVE["on Arrays — ACTIVE, updating every turn"]
+    a1(["cognitive_load 0.81 ↑"])
+    a2(["help_seeking 0.38 ⚠"])
+    a3(["self_monitoring 0.71"])
+    a4(["m_state Helplessness"])
+    a5(["delta_f +0.24 ↑"])
+    a6(["comprehension_tracing 0.62"])
   end
 end
 
 subgraph GATES["③ GATES"]
 direction TB
-  K{{"K — certified set<br/>∀d: P̃≥θ ∧ n_eff≥N_min ∧ b≥D_min<br/>Arrays ∉ K — tier 3 fails on n_eff and b"}}
-  ABAC["ABAC — which documents retrievable"]
-  RS["R(S) emitted this turn<br/>− worked_example<br/>− hint_reveal<br/>− advanced_example"]
+  K{{"K — certified set<br/>∀d: P̃≥θ ∧ n_eff≥N_min ∧ b≥D_min<br/>Arrays ∉ K (tier 3: n_eff 1.2, b=1)"}}
+  ABAC["ABAC — documents retrievable"]
+  RS["R(S) this turn<br/>− worked_example<br/>− hint_reveal<br/>− advanced_example"]
   CAC["CAC — M = [M₀ ∪ Δ] ∖ R"]
 end
 
-Arr -.->|annotates| NODE
-CF -.->|most-restrictive inheritance| NODE
-SK --> CH
-ST2 --> CH
-TR --> CH
-BK -.->|weights the evidence| T3
+Var -. "exhibits" .-> PAST
+Arr -. "exhibits" .-> LIVE
+Arr -. "most-restrictive<br/>inheritance from CF" .-> LIVE
 
-T1 --> K
-T2 --> K
-T3 --> K
+Var ==> K
+Arr ==> K
 K --> ABAC
 K ==>|"Δ — WIDENS"| CAC
-CH --> RS
+LIVE -.-> RS
+PAST -.-> RS
 RS -.->|"NARROWS ONLY"| CAC
 
-style POLICY fill:#eef2ff,stroke:#4f5d95
-style LEARNER fill:#f2fbf6,stroke:#2c6350
-style GATES fill:#fdf1e7,stroke:#a85a2b
-style CH stroke-width:3px
-style T3 stroke:#a0322e,stroke-width:2px
+style POLICY fill:#eef2ff,stroke:#4f5d95,stroke-width:2px
+style SPAWNED fill:#f2fbf6,stroke:#2c6350,stroke-width:2px,stroke-dasharray:5 4
+style GATES fill:#fdf1e7,stroke:#a85a2b,stroke-width:2px
+style Arr stroke:#a85a2b,stroke-width:3px
 style RS stroke:#a85a2b,stroke-width:2px
+style LIVE fill:#e3f5ec,stroke:#2c6350
+style PAST fill:#f7faf8,stroke:#9bb3a8,stroke-dasharray:3 3
 ```
 
-**What the live values are saying**
+**How it evolves** — a topic with no work spawns nothing. Working on it spawns the signals that
+become measurable, which then decay when the learner moves on (`Variables`: settled and fading;
+`Arrays`: live and updating each turn). Node *count per topic* is itself the coverage signal.
 
-- Tier 3 blocks certification twice over — `n_eff 1.2 < 3` (evidence discounted by ω) and `b=1 < D_min` (all of it from one context). Tier-complete-looking, contextually degenerate.
-- `ω = 0.40` because the observation was hint-revealed and fast. Capped at 1 → gaming any input only lowers it.
-- `cognitive_load 0.81`, `delta_f` rising, `m_state = Helplessness` → channel 4 emits a HIGH restriction, and `R(S)` withholds exactly the modes that would manufacture more hollow evidence.
-- None of the channel-4 values touch `K`. They have no threshold and no path into certification.
+**Two edge types, deliberately distinct**
+
+| Edge | Between | Means | Who authors it |
+|------|---------|-------|----------------|
+| `requires` | topic → topic | prerequisite — the access-control policy | instructor, versioned |
+| `exhibits` | topic → cognitive | observed while working on this topic | spawned from telemetry |
+
+**Figure notes for the paper** — in the current dashboard render both edge types share an
+arrowhead, so the graph reads as though *Variables requires Cognitive Load*. And green is the
+certification colour in the legend while cognitive nodes are drawn green — which visually
+contradicts the claim that channel 4 cannot certify. Give cognitive nodes their own shape and hue.
 
 **Invariants**
 - ① is never written by anything downstream. Learner data in Neo4j = boundary violation.
