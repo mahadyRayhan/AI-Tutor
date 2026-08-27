@@ -39,7 +39,7 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "deployment.zip,.env"
-          target: "/home/ubuntu"
+          target: "/home/admin"
 
       # SSH into the server and execute the deployment commands
       - name: Execute remote deployment commands via SSH
@@ -54,7 +54,7 @@ jobs:
             if [ -d "/home/admin/AI-Tutor" ]; then
               cd /home/admin/AI-Tutor
               sudo docker-compose down || true
-              cd /home/ubuntu
+              cd /home/admin
               # Copy the folder to keep a safe backup of both tracked and untracked files
               cp -r AI-Tutor AI-Tutor_backup_$(date +%F_%H-%M)
             else
@@ -63,10 +63,10 @@ jobs:
             fi
 
             # Step B: Unzip new code OVER the existing folder
-            unzip -o /home/ubuntu/deployment.zip -d /home/admin/AI-Tutor
+            unzip -o /home/admin/deployment.zip -d /home/admin/AI-Tutor
             
             # Move the dynamically generated .env into the project folder
-            mv /home/ubuntu/.env /home/admin/AI-Tutor/.env
+            mv /home/admin/.env /home/admin/AI-Tutor/.env
 
             # Step C: Set permissions exactly as outlined in your manual guide
             cd /home/admin/AI-Tutor
@@ -77,4 +77,4 @@ jobs:
             sudo docker-compose up --build -d
             
             # Clean up the zip file to save disk space
-            rm /home/ubuntu/deployment.zip
+            rm /home/admin/deployment.zip
