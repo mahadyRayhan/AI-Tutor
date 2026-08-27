@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles # Needed to serve the reports
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi import Header, Depends
-from fastapi import Request, Response
+from fastapi import Request, Response, BackgroundTasks
 from pathlib import Path
 
 # Import components
@@ -3664,7 +3664,34 @@ async def assign_video_to_slot(req: CatalogAssign, _: str = Depends(verify_teach
     db.execute(
         "UPDATE video_catalog SET filename=?, status=?, updated_at=? WHERE id=?",
         (fname, "complete" if fname else "planned", datetime.now(), req.catalog_id))
-    return {"status": "success", "catalog_id": req.catalog_id, "filename": fname}
+
+    # Warm the transcript now, in the background. Otherwise the first STUDENT to
+    # open the lecture pays for it: on CPU that is minutes of an apparently frozen
+    # page. Doing it at assign time puts the wait on the teacher, who is already
+    # expecting one, and by class time the cache is on disk.
+    transcript = {"state": "absent", "position": 0}
+    if fname:
+        from app.services.video_service import enqueue_transcription
+        transcript = enqueue_transcription(str(VIDEO_DIR / fname))
+
+    return {"status": "success", "catalog_id": req.catalog_id, "filename": fname,
+            "transcript": transcript}
+
+
+def _transcript_exists(fname: str) -> bool:
+    return (VIDEO_DIR / f"{Path(fname).stem}.transcript.json").exists()
+
+
+@app.get("/api/v1/video/transcript-status/{filename}")
+async def video_transcript_status(filename: str, _: str = Depends(verify_teacher)):
+    """Where is this recording in the transcription queue?
+
+    state: ready | running | queued | absent
+    """
+    from app.services.video_service import transcription_status
+    fname = os.path.basename(filename)
+    st = transcription_status(str(VIDEO_DIR / fname))
+    return {"filename": fname, "ready": st["state"] == "ready", **st}
 
 
 class CatalogEntry(BaseModel):

@@ -24,6 +24,92 @@ _MODEL_SIZE = "base"  # Options: tiny, base, small, medium
 # of a new video. Serialize all transcription through one lock.
 _transcribe_lock = threading.Lock()
 
+# ── Transcription queue ───────────────────────────────────────────────────────
+# A teacher may assign several lectures in a minute. Handing each one to a
+# background task made every extra job sit blocked on _transcribe_lock while
+# holding a Starlette threadpool worker — assign twenty and the pool that serves
+# every other sync endpoint is starved for hours.
+#
+# Instead: enqueue instantly, and let ONE dedicated worker thread drain the queue.
+# Whisper still runs strictly one at a time, but nothing else is held up, and the
+# queue is introspectable so the dashboard can show real progress.
+import queue as _queue
+
+_job_queue: "_queue.Queue[str]" = _queue.Queue()
+_queue_lock = threading.Lock()      # guards _pending / _running
+_pending: list = []                 # filenames waiting, in order
+_running: str | None = None         # filename currently being transcribed
+_worker_thread: threading.Thread | None = None
+
+
+def _worker_loop():
+    global _running
+    while True:
+        video_path = _job_queue.get()
+        fname = Path(video_path).name
+        with _queue_lock:
+            if fname in _pending:
+                _pending.remove(fname)
+            _running = fname
+        try:
+            logger.info(f"[queue] transcribing {fname} …")
+            segs = transcribe_video(video_path)
+            logger.info(f"[queue] {fname} done — {len(segs)} segments")
+        except Exception as e:
+            # One bad file must never kill the worker; the rest of the queue
+            # still needs draining.
+            logger.error(f"[queue] {fname} FAILED: {e}")
+        finally:
+            with _queue_lock:
+                _running = None
+            _job_queue.task_done()
+
+
+def _ensure_worker():
+    global _worker_thread
+    if _worker_thread is None or not _worker_thread.is_alive():
+        _worker_thread = threading.Thread(
+            target=_worker_loop, name="whisper-transcriber", daemon=True)
+        _worker_thread.start()
+
+
+def enqueue_transcription(video_path: str) -> dict:
+    """Queue a video for transcription. Returns its queue state.
+
+    Idempotent: a file already cached, already running, or already queued is not
+    added twice — a teacher re-assigning the same recording costs nothing.
+    """
+    fname = Path(video_path).name
+    if _get_transcript_cache_path(video_path).exists():
+        return {"state": "ready", "position": 0}
+
+    with _queue_lock:
+        if fname == _running:
+            return {"state": "running", "position": 0}
+        if fname in _pending:
+            return {"state": "queued", "position": _pending.index(fname) + 1}
+        _pending.append(fname)
+        position = len(_pending)
+
+    _ensure_worker()
+    _job_queue.put(video_path)
+    logger.info(f"[queue] {fname} enqueued (position {position})")
+    return {"state": "queued", "position": position}
+
+
+def transcription_status(video_path: str) -> dict:
+    """Where is this video in the pipeline? Drives the dashboard indicator."""
+    fname = Path(video_path).name
+    if _get_transcript_cache_path(video_path).exists():
+        return {"state": "ready", "position": 0, "queue_length": _job_queue.qsize()}
+    with _queue_lock:
+        if fname == _running:
+            return {"state": "running", "position": 0, "queue_length": len(_pending)}
+        if fname in _pending:
+            return {"state": "queued", "position": _pending.index(fname) + 1,
+                    "queue_length": len(_pending)}
+    return {"state": "absent", "position": 0, "queue_length": _job_queue.qsize()}
+
 
 def _get_whisper_model():
     """Lazy-load the Whisper model on first use."""
