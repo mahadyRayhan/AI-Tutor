@@ -765,16 +765,103 @@ function autoResize(textarea) {
 }
 
 function toggleAuth(view) {
-    document.getElementById('loginForm').classList.toggle('hidden', view === 'signup');
+    document.getElementById('loginForm').classList.toggle('hidden', view !== 'login');
     document.getElementById('signupForm').classList.toggle('hidden', view !== 'signup');
+    const rec = document.getElementById('recoveryForm');
+    if (rec) rec.classList.toggle('hidden', view !== 'recovery');
     // Clear any lingering messages when switching forms
-    ['loginError', 'signupError', 'err-name', 'err-email', 'err-username',
+    ['loginError', 'signupError', 'recoveryError', 'err-name', 'err-email', 'err-username',
      'err-password', 'err-password2'].forEach(id => {
         const el = document.getElementById(id);
         if (el) { el.innerText = ''; el.classList.remove('show'); el.style.display = 'none'; }
     });
     const s = document.getElementById('signupSuccess');
     if (s) s.style.display = 'none';
+}
+
+// ── Account recovery ─────────────────────────────────────────────────────────
+let recoveryMode = 'password';   // 'password' | 'username'
+
+function openRecovery(mode) {
+    recoveryMode = mode;
+    document.getElementById('recoveryTitle').innerText =
+        mode === 'username' ? 'Forgot your username?' : 'Forgot your password?';
+    document.getElementById('recoverySub').innerText =
+        mode === 'username'
+            ? "We'll email you the username for this address."
+            : "We'll email you a link to choose a new password.";
+    document.getElementById('recoveryEmail').value = '';
+    document.getElementById('recoveryFields').style.display = '';
+    document.getElementById('recoverySent').style.display = 'none';
+    toggleAuth('recovery');
+}
+
+async function submitRecovery() {
+    const email = document.getElementById('recoveryEmail').value.trim();
+    const err   = document.getElementById('recoveryError');
+    const btn   = document.getElementById('recoveryBtn');
+    const done  = document.getElementById('recoverySent');
+
+    const showError = (text) => {
+        err.innerText = text;
+        err.style.display = 'block';
+        err.classList.add('show');
+    };
+    err.style.display = 'none';
+    err.innerText = '';
+
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        showError('Enter the email address you signed up with.');
+        return;
+    }
+
+    // Visible work state. Without this the button looks inert while the request
+    // is in flight and people click it repeatedly.
+    const label = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="rec-spinner"></span> Sending…';
+
+    const path = recoveryMode === 'username'
+        ? '/api/v1/auth/forgot-username'
+        : '/api/v1/auth/forgot-password';
+
+    try {
+        const res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+
+        if (res.status === 429) {
+            showError('Too many attempts. Wait a minute, then try again.');
+            return;
+        }
+        if (!res.ok) {
+            showError('Something went wrong. Please try again in a moment.');
+            return;
+        }
+
+        // Replace the form with a confirmation. The wording is identical whether
+        // or not the address is registered — the server will not say which, and
+        // neither will this screen.
+        document.getElementById('recoveryFields').style.display = 'none';
+        done.style.display = 'block';
+        done.innerHTML =
+            '<div class="rec-check">✓</div>' +
+            '<h3>Check your email</h3>' +
+            '<p>If <strong>' + escapeHTML(email) + '</strong> is registered, we just sent ' +
+            (recoveryMode === 'username'
+                ? 'your username to it.'
+                : 'a link to choose a new password. The link works once and expires in 1 hour.') +
+            '</p>' +
+            '<p class="rec-hint">Nothing after a few minutes? Check your spam folder, or ' +
+            'confirm you used the same address you signed up with.</p>';
+    } catch (e) {
+        showError('Network error. Please check your connection and try again.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+    }
 }
 
 function handleKeyPress(e) {

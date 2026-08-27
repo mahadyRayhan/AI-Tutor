@@ -13,6 +13,9 @@ import time
 import json
 from fastapi.responses import StreamingResponse, FileResponse
 from pathlib import Path
+import hashlib
+import secrets
+from datetime import timedelta
 from datetime import datetime
 import csv
 
@@ -884,6 +887,113 @@ async def login(creds: LoginRequest, response: Response):
     except Exception as e:
         # Catch the "Account Blocked" exception from user_manager
         raise HTTPException(status_code=403, detail=str(e))
+
+
+# ── Account recovery ──────────────────────────────────────────────────────────
+# Every endpoint here returns the SAME response whether or not the address is
+# registered. Differentiating would turn these into an account-enumeration oracle:
+# anyone could test a list of addresses and learn who has a SAGE account.
+
+class ForgotUsernameRequest(BaseModel):
+    email: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+_RESET_TTL_MINUTES = 60
+_GENERIC_RECOVERY_REPLY = {
+    "status": "success",
+    "message": "If that email is registered, we've sent instructions to it.",
+}
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+@app.post("/api/v1/auth/forgot-username",
+          dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
+async def forgot_username(req: ForgotUsernameRequest):
+    """Email the username associated with an address."""
+    from app.core import email_service
+    user = user_manager.find_by_email(req.email)
+    if user:
+        email_service.send(
+            user["email"],
+            "Your SAGE username",
+            f"Hi {user.get('name') or 'there'},\n\n"
+            f"Your SAGE username is:  {user['username']}\n\n"
+            f"Sign in at {email_service.base_url()}\n\n"
+            f"If you did not request this, you can ignore this email.\n")
+    return _GENERIC_RECOVERY_REPLY
+
+
+@app.post("/api/v1/auth/forgot-password",
+          dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
+async def forgot_password(req: ForgotPasswordRequest):
+    """Email a single-use, time-limited password reset link."""
+    from app.core import email_service
+    user = user_manager.find_by_email(req.email)
+    if user and not user.get("is_blocked"):
+        raw = secrets.token_urlsafe(32)
+        now = datetime.now()
+        # Invalidate any outstanding links for this account, so requesting a new
+        # one revokes the old — a link sitting in an old email should stop working.
+        db.execute("DELETE FROM password_reset_token WHERE username = ?", (user["username"],))
+        db.execute(
+            "INSERT INTO password_reset_token (token_hash, username, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (_hash_reset_token(raw), user["username"], now,
+             now + timedelta(minutes=_RESET_TTL_MINUTES)))
+        link = f"{email_service.base_url()}/reset_password.html?token={raw}"
+        email_service.send(
+            user["email"],
+            "Reset your SAGE password",
+            f"Hi {user.get('name') or 'there'},\n\n"
+            f"Use this link to choose a new password. It expires in "
+            f"{_RESET_TTL_MINUTES} minutes and can only be used once:\n\n"
+            f"{link}\n\n"
+            f"Your username is:  {user['username']}\n\n"
+            f"If you did not request this, ignore this email — your password is unchanged.\n")
+    return _GENERIC_RECOVERY_REPLY
+
+
+@app.post("/api/v1/auth/reset-password",
+          dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
+async def reset_password(req: ResetPasswordRequest):
+    """Consume a reset token and set a new password."""
+    from app.core import validators
+
+    row = db.fetch_one(
+        "SELECT username, expires_at, used_at FROM password_reset_token WHERE token_hash = ?",
+        (_hash_reset_token(req.token or ""),))
+    if not row:
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has already been used.")
+    if row["used_at"]:
+        raise HTTPException(status_code=400, detail="This reset link has already been used.")
+    if datetime.fromisoformat(str(row["expires_at"])) < datetime.now():
+        raise HTTPException(status_code=400, detail="This reset link has expired. Please request a new one.")
+
+    username = row["username"]
+    # Same strength rules as signup — a reset must not be a way around them.
+    err = validators.validate_password(req.new_password, username, "")
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    if not user_manager.set_password(username, req.new_password):
+        raise HTTPException(status_code=500, detail="Could not update the password. Please try again.")
+
+    db.execute("UPDATE password_reset_token SET used_at = ? WHERE token_hash = ?",
+               (datetime.now(), _hash_reset_token(req.token)))
+    logger.info(f"[recovery] password reset completed for {username}")
+    return {"status": "success", "username": username}
 
 
 @app.post("/api/v1/auth/logout")

@@ -38,6 +38,22 @@ class SQLiteDB:
                 )
             """)
             
+            # 1b. Password reset tokens
+            # Only a HASH of the token is stored: a leaked database must not yield
+            # working reset links, exactly as with passwords themselves.
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS password_reset_token (
+                    token_hash TEXT PRIMARY KEY,
+                    username   TEXT NOT NULL,
+                    created_at TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL,
+                    used_at    TIMESTAMP,
+                    FOREIGN KEY(username) REFERENCES users(username)
+                )
+            """)
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_reset_user ON password_reset_token(username)")
+
             # 2. Sessions Table (Chat Rooms)
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (

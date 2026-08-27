@@ -277,3 +277,31 @@
 @media (prefers-reduced-motion: reduce) {
     .auth-card, .pw-meter span, .auth-btn { animation: none; transition: none; }
 }
+
+/* ── Account recovery ─────────────────────────────────────────────────────── */
+.rec-spinner {
+    display: inline-block;
+    width: .85em; height: .85em;
+    margin-right: .4em;
+    vertical-align: -.1em;
+    border: 2px solid rgba(255,255,255,.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: rec-spin .7s linear infinite;
+}
+@keyframes rec-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .rec-spinner { animation-duration: 2.5s; }
+}
+
+.rec-sent { text-align: center; padding: .5rem 0 .25rem; }
+.rec-sent .rec-check {
+    width: 44px; height: 44px; margin: 0 auto .75rem;
+    border-radius: 50%;
+    background: rgba(52,211,153,.14);
+    color: #34d399;
+    font-size: 1.4rem; line-height: 44px;
+}
+.rec-sent h3 { margin: 0 0 .5rem; font-size: 1.05rem; }
+.rec-sent p { margin: 0 0 .6rem; font-size: .88rem; color: #94a3b8; line-height: 1.5; }
+.rec-sent .rec-hint { font-size: .8rem; color: #64748b; }
