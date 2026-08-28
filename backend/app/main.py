@@ -668,7 +668,15 @@ async def chat_stream(request: ChatRequest, _caller: dict = Depends(auth.get_cur
                             n_sources=len(final_sources),
                             latency_ms=int((time.time() - _turn_start) * 1000),
                             was_blocked=_was_blocked,
-                            block_reason=(final_data.get("intent") if _was_blocked else None),
+                            # The Sentinel names WHY it blocked ("Cognitive Overload",
+                            # "Academic Integrity", "Trajectory Risk", …) and puts it in
+                            # final_data["block_reason"]. Logging the intent instead
+                            # discarded all ten reasons and collapsed them into
+                            # GUIDANCE / SECURITY_RISK, so the ledger could never show
+                            # cognitive blocks. Prefer the real reason; fall back to
+                            # intent only when the block came from somewhere else.
+                            block_reason=((final_data.get("block_reason")
+                                           or final_data.get("intent")) if _was_blocked else None),
                             traj_risk=_state.get("traj_risk"),
                             traj_acc=_state.get("traj_acc"),
                             traj_peak=_state.get("traj_peak"),
@@ -2548,18 +2556,49 @@ async def get_security_ledger(_t: dict = Depends(verify_teacher)):
         "FROM turn_log WHERE was_blocked = 1 AND block_reason IS NOT NULL "
         "GROUP BY block_reason"
     )
+    # The Sentinel blocks for ten distinct reasons, and they are NOT all security.
+    # A student stopped because they are overwhelmed needs a very different response
+    # from one probing for a jailbreak, so they are counted separately here.
     SECURITY = "SECURITY_RISK"
+    SECURITY_REASONS = {
+        "security_risk", "goal-bounded security", "harmful code", "cross-user privacy",
+        "ai semantic judge", "trajectory risk", "tag bypass attempt", "security policy",
+    }
+    COGNITIVE_REASONS = {
+        # Wellbeing gates: fired by rage, escalating frustration, or the
+        # disengagement-prediction trigger — not by anything adversarial.
+        "cognitive overload",
+    }
+    FOCUS_REASONS = {"off-topic warning", "attention hijacking"}
+    INTEGRITY_REASONS = {"academic integrity"}
+    POLICY_REASONS = {"teacher lock"}
+
+    def _bucket(reason: str) -> str:
+        r = (reason or "").strip().lower()
+        if r in SECURITY_REASONS:  return "security"
+        if r in COGNITIVE_REASONS: return "cognitive"
+        if r in FOCUS_REASONS:     return "focus"
+        if r in INTEGRITY_REASONS: return "integrity"
+        if r in POLICY_REASONS:    return "policy"
+        return "pedagogical"
+
     evasion = {"count": 0, "learners": 0}
-    pedagogical = []
+    pedagogical, cognitive, focus, integrity, policy = [], [], [], [], []
+    _BUCKETS = {"cognitive": cognitive, "focus": focus,
+                "integrity": integrity, "policy": policy,
+                "pedagogical": pedagogical}
     for r in rows:
-        if r["block_reason"] == SECURITY:
-            evasion = {"count": r["n"], "learners": r["u"]}
+        raw = r["block_reason"] or ""
+        bucket = _bucket(raw)
+        entry = {"reason": raw.title().replace("_", " "),
+                 "count": r["n"], "learners": r["u"]}
+        if bucket == "security":
+            evasion = {"count": evasion["count"] + r["n"],
+                       "learners": max(evasion["learners"], r["u"])}
         else:
-            pedagogical.append({
-                "reason": (r["block_reason"] or "").title().replace("_", " "),
-                "count": r["n"], "learners": r["u"],
-            })
-    pedagogical.sort(key=lambda x: -x["count"])
+            _BUCKETS[bucket].append(entry)
+    for lst in (pedagogical, cognitive, focus, integrity, policy):
+        lst.sort(key=lambda x: -x["count"])
 
     risk = db.fetch_one(
         "SELECT ROUND(AVG(traj_risk), 3) avg, ROUND(MAX(traj_risk), 3) mx "
@@ -2568,6 +2607,10 @@ async def get_security_ledger(_t: dict = Depends(verify_teacher)):
     evasion["avg_risk"] = risk["avg"] if risk else None
     evasion["max_risk"] = risk["mx"] if risk else None
     ped_total = sum(p["count"] for p in pedagogical)
+    cog_total = sum(p["count"] for p in cognitive)
+    focus_total = sum(p["count"] for p in focus)
+    integrity_total = sum(p["count"] for p in integrity)
+    policy_total = sum(p["count"] for p in policy)
 
     # --- What are students actually trying? Categorize the blocked queries by technique,
     # with a few representative (truncated, UNATTRIBUTED) examples so the instructor sees
@@ -2631,10 +2674,17 @@ async def get_security_ledger(_t: dict = Depends(verify_teacher)):
 
     return {
         "total_turns": total_turns,
-        "total_gated": evasion["count"] + ped_total,
+        "total_gated": (evasion["count"] + ped_total + cog_total
+                        + focus_total + integrity_total + policy_total),
         "evasion": evasion,
         "pedagogical": pedagogical,
         "ped_total": ped_total,
+        # Non-security gates, bucketed so the UI can distinguish a student being
+        # PROTECTED (overwhelmed, off-track) from one being STOPPED (evasion).
+        "cognitive": cognitive, "cog_total": cog_total,
+        "focus": focus, "focus_total": focus_total,
+        "integrity": integrity, "integrity_total": integrity_total,
+        "policy": policy, "policy_total": policy_total,
         "techniques": techniques,
     }
 

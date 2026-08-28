@@ -1149,11 +1149,40 @@
         if (statsEl) {
             statsEl.innerHTML =
                 mhTile(ev.count, '⚠ Evasion attempts (security)', `${ev.learners} learners · peak risk ${ev.max_risk != null ? ev.max_risk : '—'}`, '#d03b3b') +
+                // Wellbeing gates are NOT security events. A student stopped because
+                // they are overwhelmed was protected, not caught, and showing the two
+                // in one number misreads care as misconduct.
+                mhTile(d.cog_total || 0, '🧠 Cognitive breaks (wellbeing)', 'overload / rage / disengagement', '#8b5cf6') +
+                mhTile(d.integrity_total || 0, '📋 Integrity holds', 'solution withheld, work requested', '#e0952a') +
+                mhTile(d.focus_total || 0, '🎯 Focus nudges', 'off-topic / attention drift', '#0e9488') +
                 mhTile(d.ped_total, 'Curriculum redirects (pedagogy)', 'tutor guiding, not threats', '#2a78d6') +
                 mhTile(d.total_turns, 'Total turns', `${d.total_gated} gated`, '#2c3e50');
         }
-        const maxN = Math.max(ev.count, ...(d.pedagogical || []).map(p => p.count), 1);
+        const allBuckets = [].concat(d.cognitive || [], d.integrity || [],
+                                     d.focus || [], d.policy || [], d.pedagogical || []);
+        const maxN = Math.max(ev.count, ...allBuckets.map(p => p.count), 1);
         let html = '';
+
+        // Non-security gates, grouped by what the block was FOR.
+        const groups = [
+            ['🧠 Wellbeing — student was protected', d.cognitive,  '#8b5cf6'],
+            ['📋 Academic integrity — solution withheld', d.integrity, '#e0952a'],
+            ['🎯 Focus — brought back on task', d.focus, '#0e9488'],
+            ['🔒 Instructor policy', d.policy, '#64748b'],
+        ];
+        groups.forEach(([title, rows, color]) => {
+            if (!rows || !rows.length) return;
+            html += `<div style="margin:14px 0 6px; font-size:0.82rem; color:#2c3e50; font-weight:600;">${title}</div>`;
+            rows.forEach(r => { html += secBar(r.reason, r.count, r.learners, maxN, color); });
+        });
+
+        if (!(d.cog_total || d.focus_total || d.integrity_total || d.policy_total)) {
+            html += `<div style="margin:14px 0; padding:9px 12px; background:#f6f7f4;
+                        border:1px solid #e2e5df; border-radius:6px; font-size:0.78rem; color:#5b6470;">
+                     No cognitive, integrity, or focus blocks recorded yet. These reasons were
+                     previously overwritten with the turn's intent before being stored; they
+                     accumulate from new turns onward.</div>`;
+        }
 
         // What students are actually trying — the academic-integrity signal.
         const techs = d.techniques || [];
