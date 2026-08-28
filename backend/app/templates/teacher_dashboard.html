@@ -320,6 +320,28 @@
 
     <!-- 0. ACTION TRIAGE — LANDING VIEW (named mechanism per learner, from the 3-tier BKT) -->
     <div class="grid-container" data-tab="NOW">
+        <!-- Struggle signal from affect_log (~3.3k rows), previously write-only. -->
+        <div class="card full-width">
+            <h2>😟 Struggling Students</h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                Share of turns showing confusion or frustration. A rate, not a count, so a
+                student is not flagged merely for asking a lot of questions.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+                <select id="affectDays" onchange="loadFrustration()"
+                        style="padding:8px; background:#0f1115; border:1px solid #2a2f3a;
+                               border-radius:8px; color:#e2e8f0;">
+                    <option value="7">Last 7 days</option>
+                    <option value="14" selected>Last 14 days</option>
+                    <option value="30">Last 30 days</option>
+                    <option value="3650">All time</option>
+                </select>
+                <button class="btn" onclick="loadFrustration()">Refresh</button>
+            </div>
+            <div id="affectSummary" style="display:none;"></div>
+            <div id="affectHot" style="margin:14px 0;"></div>
+            <div id="affectBody" style="overflow-x:auto;"></div>
+        </div>
         <div class="card full-width">
             <h2>🚩 Who needs me today
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— students grouped by what's happening, so one issue is one row. Expand to see who, or act on the whole group.</span>
@@ -487,6 +509,29 @@
 
     <!-- CLASS headline: Where the class stands -->
     <div class="grid-container" data-tab="CLASS">
+        <!-- Path deviation: where students leave the recommended sequence. -->
+        <div class="card full-width">
+            <h2>🧭 Learning Path Deviation</h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                Whether students follow the recommended order, jump ahead, revisit, or wander
+                off — and which concept they sit on longest.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+                <select id="pathDays" onchange="loadPathDeviation()"
+                        style="padding:8px; background:#0f1115; border:1px solid #2a2f3a;
+                               border-radius:8px; color:#e2e8f0;">
+                    <option value="7">Last 7 days</option>
+                    <option value="14" selected>Last 14 days</option>
+                    <option value="30">Last 30 days</option>
+                    <option value="3650">All time</option>
+                </select>
+                <button class="btn" onclick="loadPathDeviation()">Refresh</button>
+            </div>
+            <div id="pathNotice"></div>
+            <div id="pathSummary" style="display:none;"></div>
+            <div id="pathStalls" style="margin:14px 0;"></div>
+            <div id="pathBody" style="overflow-x:auto;"></div>
+        </div>
         <div class="card full-width">
             <h2>🏫 Where the class stands
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— each topic, split by whether students can explain it, complete code, or write it from scratch. Sorted by what needs you most.</span>
@@ -2673,6 +2718,147 @@
     // Initialize rules on page load
     // ── Tab navigation (NOW / CLASS / NEXT / SETUP / SYSTEM) ──
     const TAB_KEY = 'sage_teacher_tab';
+    // ================= NOW TAB: struggling students =======================
+    async function loadFrustration() {
+        const days = document.getElementById('affectDays').value;
+        const sum = document.getElementById('affectSummary');
+        const hot = document.getElementById('affectHot');
+        const body = document.getElementById('affectBody');
+        body.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading…</div>';
+        try {
+            const d = await fetch(`${API_URL}/api/v1/analytics/frustration?days=${days}`,
+                                  { headers: TEACHER_HDR() }).then(r => r.json());
+            const S = d.summary;
+            sum.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:6px;';
+            sum.innerHTML =
+                statTile('Active students', S.students, 'with recorded turns') +
+                statTile('Struggle rate', S.struggle_pct + '%', 'of all turns') +
+                statTile('At risk', S.at_risk, '≥20% struggle, ≥5 turns') +
+                statTile('Turns', S.turns, 'in this window');
+
+            hot.innerHTML = d.hot_concepts.length
+                ? '<div style="font-size:12px; color:#94a3b8; margin-bottom:8px;">Concepts where confusion clusters</div>' +
+                  d.hot_concepts.map(c => `<span style="display:inline-block; margin:0 6px 6px 0;
+                       padding:5px 11px; border-radius:999px; font-size:12px;
+                       background:#f8717118; color:#fca5a5; border:1px solid #f8717144;">
+                       ${escapeHtml(c.concept)} <strong>${c.n}</strong></span>`).join('')
+                : '';
+
+            if (!d.students.length) {
+                body.innerHTML = '<div style="color:#64748b; font-size:13px;">No affect data in this window.</div>';
+                return;
+            }
+            // Only students with enough turns to mean something. One confused turn
+            // out of one is 100% and tells you nothing.
+            const shown = d.students.filter(s => s.turns >= 3).slice(0, 40);
+            body.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead><tr style="text-align:left; color:#64748b; font-size:11px; text-transform:uppercase;">
+                  <th style="padding:8px 10px;">Student</th><th style="padding:8px 10px;">Struggle</th>
+                  <th style="padding:8px 10px;">Confusion</th><th style="padding:8px 10px;">Frustration</th>
+                  <th style="padding:8px 10px;">Turns</th><th style="padding:8px 10px;">Last active</th>
+                </tr></thead><tbody>` +
+              shown.map(s => {
+                const tone = s.struggle_pct >= 40 ? 'bad' : s.struggle_pct >= 20 ? 'warn' : 'good';
+                return `<tr style="border-top:1px solid #1e2430;">
+                  <td style="padding:9px 10px; font-weight:600;">${escapeHtml(s.username)}</td>
+                  <td style="padding:9px 10px;">${pill(s.struggle_pct + '%', tone)}</td>
+                  <td style="padding:9px 10px;">${s.confusion}</td>
+                  <td style="padding:9px 10px;">${s.frustration}</td>
+                  <td style="padding:9px 10px; color:#94a3b8;">${s.turns}</td>
+                  <td style="padding:9px 10px; color:#64748b; font-size:11px;">${(s.last_seen||'').slice(0,10)}</td>
+                </tr>`; }).join('') + '</tbody></table>' +
+              `<div style="color:#64748b; font-size:11px; margin-top:8px;">
+                 Showing ${shown.length} of ${d.students.length} students (minimum 3 turns).</div>`;
+        } catch (e) {
+            body.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load (${e.message}).</div>`;
+        }
+    }
+
+    function statTile(label, value, sub) {
+        return `<div style="flex:1; min-width:140px; background:#0f1115; border:1px solid #2a2f3a;
+                     border-radius:10px; padding:12px 14px;">
+            <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:.04em;">${label}</div>
+            <div style="font-size:22px; font-weight:700; margin-top:4px;">${value}</div>
+            <div style="font-size:11px; color:#64748b; margin-top:2px;">${sub || ''}</div></div>`;
+    }
+
+    // ================= CLASS TAB: learning path deviation =================
+    const DEV_META = {
+        on_path:    { label: 'On path',    tone: 'good', hint: 'following the recommended order' },
+        revisit:    { label: 'Revisit',    tone: 'mute', hint: 'returning to something already mastered' },
+        skip_ahead: { label: 'Skip ahead', tone: 'warn', hint: 'asking about locked prerequisites' },
+        off_path:   { label: 'Off path',   tone: 'bad',  hint: 'outside the curriculum entirely' },
+    };
+
+    async function loadPathDeviation() {
+        const days = document.getElementById('pathDays').value;
+        const notice = document.getElementById('pathNotice');
+        const sum = document.getElementById('pathSummary');
+        const stalls = document.getElementById('pathStalls');
+        const body = document.getElementById('pathBody');
+        body.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading…</div>';
+        try {
+            const d = await fetch(`${API_URL}/api/v1/analytics/path-deviation?days=${days}`,
+                                  { headers: TEACHER_HDR() }).then(r => r.json());
+
+            const classified = d.by_type.reduce((a, t) => a + t.n, 0);
+
+            // Be explicit that pre-fix rows are excluded rather than counted as 0.
+            notice.innerHTML = d.unclassified
+                ? `<div style="padding:9px 12px; background:#fbbf2410; border:1px solid #fbbf2444;
+                        border-radius:8px; font-size:12px; color:#fcd34d; margin-bottom:12px;">
+                     ${d.unclassified} earlier events are unclassified and excluded — they were
+                     recorded before path logging was fixed, and the path they deviated from
+                     was never stored. New turns classify correctly.</div>`
+                : '';
+
+            if (!classified) {
+                sum.style.display = 'none'; stalls.innerHTML = '';
+                body.innerHTML = '<div style="color:#64748b; font-size:13px;">' +
+                    'No classified path events yet. These accumulate as students chat.</div>';
+                return;
+            }
+
+            sum.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap;';
+            sum.innerHTML = d.by_type.map(t => {
+                const meta = DEV_META[t.deviation_type] || { label: t.deviation_type, hint: '' };
+                return statTile(meta.label, `${Math.round(100*t.n/classified)}%`, `${t.n} · ${meta.hint}`);
+            }).join('');
+
+            stalls.innerHTML = d.stall_points.length
+                ? '<div style="font-size:12px; color:#94a3b8; margin-bottom:8px;">' +
+                  'Stall points — concepts the class sits on longest before moving past</div>' +
+                  d.stall_points.map(sp => `<span style="display:inline-block; margin:0 6px 6px 0;
+                      padding:5px 11px; border-radius:999px; font-size:12px;
+                      background:#fbbf2418; color:#fcd34d; border:1px solid #fbbf2444;">
+                      ${escapeHtml(sp.concept)} <strong>${sp.asks}</strong>
+                      <span style="opacity:.7">· ${sp.students} students</span></span>`).join('')
+                : '';
+
+            body.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead><tr style="text-align:left; color:#64748b; font-size:11px; text-transform:uppercase;">
+                  <th style="padding:8px 10px;">Student</th><th style="padding:8px 10px;">On path</th>
+                  <th style="padding:8px 10px;">Skip ahead</th><th style="padding:8px 10px;">Revisit</th>
+                  <th style="padding:8px 10px;">Off path</th><th style="padding:8px 10px;">Currently on</th>
+                </tr></thead><tbody>` +
+              d.students.map(s => {
+                const tone = s.on_path_pct >= 60 ? 'good' : s.on_path_pct >= 30 ? 'warn' : 'bad';
+                return `<tr style="border-top:1px solid #1e2430;">
+                  <td style="padding:9px 10px; font-weight:600;">${escapeHtml(s.username)}</td>
+                  <td style="padding:9px 10px;">${pill(s.on_path_pct + '%', tone)}
+                      <span style="color:#64748b; font-size:11px;"> ${s.on_path}/${s.total}</span></td>
+                  <td style="padding:9px 10px;">${s.skip_ahead || '—'}</td>
+                  <td style="padding:9px 10px;">${s.revisit || '—'}</td>
+                  <td style="padding:9px 10px;">${s.off_path || '—'}</td>
+                  <td style="padding:9px 10px; color:#94a3b8;">${escapeHtml(s.stuck_on || '—')}</td>
+                </tr>`; }).join('') + '</tbody></table>';
+        } catch (e) {
+            body.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load (${e.message}).</div>`;
+        }
+    }
+
     // ================= CONTENT TAB: lecture engagement analytics =========
     function pill(text, tone) {
         const c = { good:'#34d399', warn:'#fbbf24', bad:'#f87171', mute:'#64748b' }[tone] || '#64748b';
@@ -2973,6 +3159,8 @@
 
     function showTab(name) {
         if (name === 'CONTENT') loadContentTab();
+        if (name === 'NOW') loadFrustration();
+        if (name === 'CLASS') loadPathDeviation();
         document.querySelectorAll('.grid-container[data-tab]').forEach(sec => {
             sec.classList.toggle('tab-visible', sec.dataset.tab === name);
         });

@@ -369,6 +369,50 @@ class ChatRequest(BaseModel):
     enable_correction: Optional[bool] = True
 
 LEARNING_PATH_CACHE = {}
+LATEST_PATH_BY_USER = {}     # username -> most recently GENERATED path, for telemetry
+
+
+def _path_for_telemetry(username: str, goal: str = None) -> list:
+    """The learner's current path, as [{concept, status}], for deviation logging.
+
+    This used to read LEARNING_PATH_CACHE with the key f"{username}_{goal}", but
+    the cache is WRITTEN under f"{username}_{goal}_{known_concepts}" — the keys
+    never matched, so the lookup always missed, classify_path_deviation() got an
+    empty list, and all 1,247 recorded events were "unknown"/NULL.
+
+    Two changes: read the path the dashboard actually generated (kept in
+    LATEST_PATH_BY_USER, no key juggling), and when there is none — the common
+    case, since most turns happen before a student ever opens their dashboard —
+    derive one from CANONICAL_TOPICS, which is already in prerequisite order.
+    The fallback needs no cache and no LLM call, so deviation is always
+    classifiable rather than only when a cache happens to be warm.
+    """
+    cached = LATEST_PATH_BY_USER.get(username)
+    if cached:
+        return cached
+
+    try:
+        from app.core.concept_canon import CANONICAL_TOPICS
+        from app.core.bkt_model import bkt
+
+        path, found_next = [], False
+        for topic in CANONICAL_TOPICS:
+            try:
+                mastered = bkt.is_mastered(username, topic)
+            except Exception:
+                mastered = False
+            if mastered:
+                status = "mastered"
+            elif not found_next:
+                status = "next"          # first unmastered concept in prereq order
+                found_next = True
+            else:
+                status = "locked"        # beyond the frontier → asking here is skip_ahead
+            path.append({"concept": topic, "status": status})
+        return path
+    except Exception as e:
+        logger.warning(f"[telemetry] path fallback failed for {username}: {e}")
+        return []
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -632,10 +676,8 @@ async def chat_stream(request: ChatRequest, _caller: dict = Depends(auth.get_cur
                         # Path deviation (Forethought / SRL) using cached learning path
                         if detected_topic and detected_topic != "General":
                             _goal = knowledge_manager.get_goal(request.username)
-                            _cache_key = f"{request.username}_{_goal}"
-                            _cached = LEARNING_PATH_CACHE.get(_cache_key) or {}
-                            _path = _cached.get("path") if isinstance(_cached, dict) else None
-                            _dev, _expected = telemetry.classify_path_deviation(_path or [], detected_topic)
+                            _path = _path_for_telemetry(request.username, _goal)
+                            _dev, _expected = telemetry.classify_path_deviation(_path, detected_topic)
                             telemetry.log_path_event(request.username, detected_topic,
                                                      _expected, _dev, _goal)
                         # Strip internal telemetry key before sending to client
@@ -1203,7 +1245,8 @@ def get_learning_path_endpoint(username: str, _caller: dict = Depends(auth.get_c
             del LEARNING_PATH_CACHE[k]
             
         LEARNING_PATH_CACHE[cache_key] = path_data
-        
+        LATEST_PATH_BY_USER[username] = path_data
+
         return {"goal": goal, "path": path_data}
         
     except Exception as e:
@@ -3973,6 +4016,128 @@ async def answer_video_checkpoint(req: VideoMCQAnswerRequest, _caller: dict = De
         "is_correct": is_correct,
         "correct_index": row["correct_index"],
         "explanation": row["explanation"],
+    }
+
+
+@app.get("/api/v1/analytics/frustration")
+async def frustration_analytics(days: int = 14, _: str = Depends(verify_teacher)):
+    """Who is struggling, and where.
+
+    affect_log carries ~3.3k rows and had no read path. `academic_emotion` is the
+    useful column — `frustration_level` is 'normal' on 97% of turns, while
+    confusion is the signal that actually separates students.
+    """
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+
+    rows = db.fetch_all(
+        "SELECT username, "
+        "  COUNT(*) AS turns, "
+        "  SUM(CASE WHEN academic_emotion='confusion'   THEN 1 ELSE 0 END) AS confusion, "
+        "  SUM(CASE WHEN academic_emotion='frustration' THEN 1 ELSE 0 END) AS frustration, "
+        "  SUM(CASE WHEN academic_emotion='boredom'     THEN 1 ELSE 0 END) AS boredom, "
+        "  SUM(CASE WHEN academic_emotion='flow'        THEN 1 ELSE 0 END) AS flow, "
+        "  SUM(CASE WHEN frustration_level IN ('high','rage') THEN 1 ELSE 0 END) AS high_level, "
+        "  SUM(COALESCE(intervention_fired,0)) AS interventions, "
+        "  MAX(ts_utc) AS last_seen "
+        "FROM affect_log WHERE ts_utc >= ? GROUP BY username", (since,))
+
+    students = []
+    for r in rows:
+        turns = r["turns"] or 0
+        neg = (r["confusion"] or 0) + (r["frustration"] or 0)
+        students.append({
+            "username": r["username"],
+            "turns": turns,
+            "confusion": r["confusion"] or 0,
+            "frustration": r["frustration"] or 0,
+            "boredom": r["boredom"] or 0,
+            "flow": r["flow"] or 0,
+            "high_level": r["high_level"] or 0,
+            "interventions": r["interventions"] or 0,
+            # Share of turns showing confusion or frustration. A rate, not a count,
+            # so a heavy user is not flagged merely for asking a lot of questions.
+            "struggle_pct": round(100 * neg / turns, 1) if turns else 0.0,
+            "last_seen": r["last_seen"],
+        })
+    students.sort(key=lambda s: (-s["struggle_pct"], -s["turns"]))
+
+    # Concepts where negative affect clusters — join affect to the concept asked
+    # in the same session, which is what path_event records.
+    concepts = db.fetch_all(
+        "SELECT p.concept_asked AS concept, COUNT(*) AS n "
+        "FROM affect_log a JOIN path_event p "
+        "  ON p.username = a.username "
+        " AND ABS(STRFTIME('%s', p.ts_utc) - STRFTIME('%s', a.ts_utc)) <= 30 "
+        "WHERE a.ts_utc >= ? AND a.academic_emotion IN ('confusion','frustration') "
+        "  AND TRIM(COALESCE(p.concept_asked,'')) <> '' "
+        "GROUP BY p.concept_asked ORDER BY n DESC LIMIT 10", (since,))
+
+    total_turns = sum(s["turns"] for s in students)
+    total_neg = sum(s["confusion"] + s["frustration"] for s in students)
+    return {
+        "days": days,
+        "summary": {
+            "students": len(students),
+            "turns": total_turns,
+            "struggle_pct": round(100 * total_neg / total_turns, 1) if total_turns else 0.0,
+            "interventions": sum(s["interventions"] for s in students),
+            "at_risk": sum(1 for s in students if s["struggle_pct"] >= 20 and s["turns"] >= 5),
+        },
+        "students": students,
+        "hot_concepts": [dict(c) for c in concepts],
+    }
+
+
+@app.get("/api/v1/analytics/path-deviation")
+async def path_deviation_analytics(days: int = 14, _: str = Depends(verify_teacher)):
+    """Where students leave the recommended sequence, and where they stall.
+
+    Only rows with a real deviation_type count. Events logged before the write
+    path was fixed are all 'unknown' with no expected_concept — they are reported
+    separately as `unclassified` rather than silently skewing the percentages.
+    """
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+
+    unclassified = db.fetch_one(
+        "SELECT COUNT(*) AS n FROM path_event "
+        "WHERE ts_utc >= ? AND (deviation_type IS NULL OR deviation_type='unknown')",
+        (since,))["n"]
+
+    by_type = db.fetch_all(
+        "SELECT deviation_type, COUNT(*) AS n FROM path_event "
+        "WHERE ts_utc >= ? AND deviation_type NOT IN ('unknown','') "
+        "GROUP BY deviation_type ORDER BY n DESC", (since,))
+
+    # A concept students repeatedly sit on without moving past = a stall point.
+    stalls = db.fetch_all(
+        "SELECT expected_concept AS concept, COUNT(*) AS asks, "
+        "       COUNT(DISTINCT username) AS students "
+        "FROM path_event WHERE ts_utc >= ? "
+        "  AND TRIM(COALESCE(expected_concept,'')) <> '' "
+        "GROUP BY expected_concept ORDER BY asks DESC LIMIT 10", (since,))
+
+    per_student = db.fetch_all(
+        "SELECT username, "
+        "  SUM(CASE WHEN deviation_type='on_path'    THEN 1 ELSE 0 END) AS on_path, "
+        "  SUM(CASE WHEN deviation_type='skip_ahead' THEN 1 ELSE 0 END) AS skip_ahead, "
+        "  SUM(CASE WHEN deviation_type='revisit'    THEN 1 ELSE 0 END) AS revisit, "
+        "  SUM(CASE WHEN deviation_type='off_path'   THEN 1 ELSE 0 END) AS off_path, "
+        "  COUNT(*) AS total, MAX(expected_concept) AS stuck_on "
+        "FROM path_event WHERE ts_utc >= ? AND deviation_type NOT IN ('unknown','') "
+        "GROUP BY username ORDER BY total DESC", (since,))
+
+    students = []
+    for r in per_student:
+        t = r["total"] or 1
+        students.append({**dict(r),
+                         "on_path_pct": round(100 * (r["on_path"] or 0) / t, 1)})
+
+    return {
+        "days": days,
+        "unclassified": unclassified,
+        "by_type": [dict(r) for r in by_type],
+        "stall_points": [dict(r) for r in stalls],
+        "students": students,
     }
 
 
