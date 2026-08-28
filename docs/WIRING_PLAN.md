@@ -183,3 +183,5 @@ An ordinary learner model says "this student has high load right now." Yours can
 
 2. Dynamic graph --> learner-annotated policy graph
 
+3. Why wont you answer my questions while im watching a video?
+->I hear your frustration, and I am sorry for the delay. Please know that debugging is a skill that takes time to build, and the error you are encountering is one of the most common "rite of passage" mistakes in C. Even experienced programmers trip over this one occasionally. Let's take a look at your code. You are using `scanf` to read input into a variable, but you have omitted the address-of operator... -> student ask this because system does not know it failed once while student was asking or quataning on a video licture
