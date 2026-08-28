@@ -344,6 +344,29 @@
     <!-- 1. USER MANAGEMENT (New & Improved) -->
     <!-- ================= CONTENT: lecture catalog ================= -->
     <div class="grid-container" data-tab="CONTENT">
+
+        <!-- Watch + quiz analytics. The telemetry tables were write-only before
+             this: coverage, engagement and MCQ results were all being collected
+             with no way to read them back. -->
+        <div class="card full-width">
+            <h2>📊 Lecture Engagement</h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                Who watched, how much they actually attended, and how they did on the
+                in-video checkpoints.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
+                <select id="analyticsVideo" onchange="loadVideoAnalytics()"
+                        style="flex:1; min-width:280px; padding:9px; background:#0f1115;
+                               border:1px solid #2a2f3a; border-radius:8px; color:#e2e8f0;">
+                    <option value="">Select a lecture…</option>
+                </select>
+                <button class="btn" onclick="loadVideoAnalytics()">Refresh</button>
+            </div>
+            <div id="analyticsSummary" style="display:none; margin-bottom:16px;"></div>
+            <div id="analyticsCheckpoints" style="display:none; margin-bottom:16px;"></div>
+            <div id="analyticsBody" style="overflow-x:auto;"></div>
+        </div>
+
         <div class="card full-width">
             <h2>🎬 Upload a Lecture Recording</h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 14px;">
@@ -2650,6 +2673,133 @@
     // Initialize rules on page load
     // ── Tab navigation (NOW / CLASS / NEXT / SETUP / SYSTEM) ──
     const TAB_KEY = 'sage_teacher_tab';
+    // ================= CONTENT TAB: lecture engagement analytics =========
+    function pill(text, tone) {
+        const c = { good:'#34d399', warn:'#fbbf24', bad:'#f87171', mute:'#64748b' }[tone] || '#64748b';
+        return `<span style="display:inline-block; padding:2px 8px; border-radius:999px;
+                 font-size:11px; font-weight:600; color:${c};
+                 background:${c}22; border:1px solid ${c}55;">${text}</span>`;
+    }
+
+    function mmss(sec) {
+        sec = Math.max(0, Math.round(sec || 0));
+        return `${Math.floor(sec/60)}:${String(sec%60).padStart(2,'0')}`;
+    }
+
+    // Populate the picker from catalog slots that actually have a recording.
+    function fillAnalyticsPicker(catalog) {
+        const sel = document.getElementById('analyticsVideo');
+        if (!sel) return;
+        const prev = sel.value;
+        const opts = ['<option value="">Select a lecture…</option>'];
+        (catalog || []).forEach(ch => (ch.videos || []).forEach(v => {
+            if (v.filename) {
+                opts.push(`<option value="${escapeHtml(v.filename)}">Ch${ch.number} · ${escapeHtml(v.title)}</option>`);
+            }
+        }));
+        sel.innerHTML = opts.join('');
+        if (prev) sel.value = prev;
+    }
+
+    async function loadVideoAnalytics() {
+        const fname = document.getElementById('analyticsVideo').value;
+        const body = document.getElementById('analyticsBody');
+        const sum  = document.getElementById('analyticsSummary');
+        const cps  = document.getElementById('analyticsCheckpoints');
+        if (!fname) {
+            body.innerHTML = ''; sum.style.display = 'none'; cps.style.display = 'none';
+            return;
+        }
+        body.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/analytics/${encodeURIComponent(fname)}`,
+                                    { headers: TEACHER_HDR() });
+            if (!res.ok) throw new Error(res.status);
+            const d = await res.json();
+
+            // ── Summary tiles ──
+            const S = d.summary;
+            const tile = (label, value, sub) => `
+                <div style="flex:1; min-width:140px; background:#0f1115; border:1px solid #2a2f3a;
+                            border-radius:10px; padding:12px 14px;">
+                    <div style="font-size:11px; color:#64748b; text-transform:uppercase;
+                                letter-spacing:.04em;">${label}</div>
+                    <div style="font-size:22px; font-weight:700; margin-top:4px;">${value}</div>
+                    <div style="font-size:11px; color:#64748b; margin-top:2px;">${sub || ''}</div>
+                </div>`;
+            sum.style.display = 'flex';
+            sum.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;';
+            sum.innerHTML =
+                tile('Students', S.students, 'opened this lecture') +
+                tile('Avg watched', S.avg_completion_pct + '%', S.finished_video + ' finished') +
+                tile('Avg inattention', S.avg_inattention_pct + '%', 'tab hidden while playing') +
+                tile('Final quiz', `${S.final_passed}/${S.final_attempted}`, 'passed / attempted') +
+                tile('Passed first try', S.final_first_try, 'on the final checkpoint');
+
+            // ── Per-checkpoint difficulty ──
+            if (d.checkpoints.length) {
+                cps.style.display = 'block';
+                cps.innerHTML =
+                    '<div style="font-size:12px; color:#94a3b8; margin-bottom:8px;">' +
+                    'Checkpoints — a low first-try rate means the question (or the segment before it) needs work.</div>' +
+                    d.checkpoints.map(cp => {
+                        const rate = cp.first_try_pct;
+                        const tone = rate === null ? 'mute' : rate >= 70 ? 'good' : rate >= 40 ? 'warn' : 'bad';
+                        return `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px;
+                                    background:#0f1115; border:1px solid #2a2f3a; border-radius:8px; margin-bottom:6px;">
+                            <span style="font-family:monospace; font-size:12px; color:#94a3b8; min-width:52px;">${mmss(cp.checkpoint_time)}</span>
+                            ${cp.is_final ? pill('FINAL','good') : ''}
+                            <span style="flex:1; font-size:13px; color:#cbd5e1;">${escapeHtml(cp.concept || '—')}</span>
+                            <span style="font-size:12px; color:#64748b;">${cp.attempted} attempted</span>
+                            ${pill((rate === null ? '—' : rate + '% first try'), tone)}
+                        </div>`;
+                    }).join('');
+            } else {
+                cps.style.display = 'block';
+                cps.innerHTML = '<div style="color:#64748b; font-size:13px;">No checkpoints generated for this lecture yet.</div>';
+            }
+
+            // ── Per-student table ──
+            if (!d.students.length) {
+                body.innerHTML = '<div style="color:#64748b; font-size:13px;">No student activity recorded for this lecture yet.</div>';
+                return;
+            }
+            body.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead><tr style="text-align:left; color:#64748b; font-size:11px; text-transform:uppercase;">
+                  <th style="padding:8px 10px;">Student</th>
+                  <th style="padding:8px 10px;">Watched</th>
+                  <th style="padding:8px 10px;">Inattention</th>
+                  <th style="padding:8px 10px;">Checkpoints</th>
+                  <th style="padding:8px 10px;">First try</th>
+                  <th style="padding:8px 10px;">Final quiz</th>
+                </tr></thead>
+                <tbody>` +
+                d.students.map(s => {
+                    const wTone = s.completion_pct >= 80 ? 'good' : s.completion_pct >= 40 ? 'warn' : 'bad';
+                    const iTone = s.inattention_pct >= 50 ? 'bad' : s.inattention_pct >= 20 ? 'warn' : 'good';
+                    let finalCell;
+                    if (!s.final_attempted)      finalCell = pill('not attempted', 'mute');
+                    else if (s.final_first_try)  finalCell = pill('passed · 1st try', 'good');
+                    else if (s.final_passed)     finalCell = pill(`passed · ${s.final_attempts} tries`, 'warn');
+                    else                         finalCell = pill(`failed · ${s.final_attempts} tries`, 'bad');
+                    return `<tr style="border-top:1px solid #1e2430;">
+                        <td style="padding:9px 10px; font-weight:600;">${escapeHtml(s.username)}</td>
+                        <td style="padding:9px 10px;">${pill(s.completion_pct + '%', wTone)}
+                            <span style="color:#64748b; font-size:11px;"> ${mmss(s.watched_sec)}/${mmss(s.duration_sec)}</span></td>
+                        <td style="padding:9px 10px;">${pill(s.inattention_pct + '%', iTone)}</td>
+                        <td style="padding:9px 10px;">${s.checkpoints_passed}/${s.checkpoints_total}
+                            <span style="color:#64748b; font-size:11px;">(${s.checkpoints_attempted} tried)</span></td>
+                        <td style="padding:9px 10px;">${s.passed_first_try}
+                            ${s.needed_retries ? `<span style="color:#fbbf24; font-size:11px;">+${s.needed_retries} retried</span>` : ''}</td>
+                        <td style="padding:9px 10px;">${finalCell}</td>
+                    </tr>`;
+                }).join('') + '</tbody></table>';
+        } catch (e) {
+            body.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load analytics (${e.message}).</div>`;
+        }
+    }
+
     // ================= CONTENT TAB: lecture catalog =================
     const TEACHER_HDR = () => ({ 'X-User-Role': currentUser.role });
     // 5 MB slices: large enough that a 140 MB lecture is ~28 requests, small enough
@@ -2667,6 +2817,7 @@
             CATALOG = cat; UNASSIGNED = un.files || [];
             renderUnassigned();
             renderChapters();
+            fillAnalyticsPicker(cat.chapters);
         } catch (e) {
             console.error('Content load failed', e);
         }

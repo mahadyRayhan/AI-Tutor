@@ -3976,6 +3976,119 @@ async def answer_video_checkpoint(req: VideoMCQAnswerRequest, _caller: dict = De
     }
 
 
+@app.get("/api/v1/video/analytics/{video_filename}")
+async def video_analytics(video_filename: str, _: str = Depends(verify_teacher)):
+    """Per-student watch + quiz results for one lecture.
+
+    The telemetry tables were write-only: everything below was already being
+    collected and had no way to be read back.
+
+    Quiz semantics, since video_mcq_response stores ONE ROW PER ATTEMPT:
+      attempted  = any row for that checkpoint
+      passed     = some row with is_correct = 1
+      first_try  = a correct row whose attempts = 1
+    A student who answers wrong then right has two rows; counting rows would
+    double-count them, so everything here aggregates per checkpoint.
+    """
+    fname = os.path.basename(video_filename)
+
+    cps = db.fetch_all(
+        "SELECT checkpoint_time, question, concept FROM video_checkpoint "
+        "WHERE video_filename=? ORDER BY checkpoint_time", (fname,))
+    cp_times = [c["checkpoint_time"] for c in cps]
+    final_time = cp_times[-1] if cp_times else None
+
+    cov = db.fetch_all(
+        "SELECT username, duration_sec, watched_sec, completion_pct, hidden_sec, "
+        "completed, updated_at FROM video_coverage WHERE video_filename=?", (fname,))
+
+    # One row per (student, checkpoint): did they pass, and on which attempt.
+    mcq = db.fetch_all(
+        "SELECT username, checkpoint_time, "
+        "       MAX(is_correct) AS passed, "
+        "       MIN(CASE WHEN is_correct=1 THEN attempts END) AS winning_attempt, "
+        "       MAX(attempts) AS total_attempts, "
+        "       AVG(confidence_1_5) AS avg_conf "
+        "FROM video_mcq_response WHERE video_filename=? "
+        "GROUP BY username, checkpoint_time", (fname,))
+
+    by_user = {}
+    for r in mcq:
+        by_user.setdefault(r["username"], []).append(dict(r))
+
+    students, usernames = [], set()
+    for c in cov:
+        usernames.add(c["username"])
+    usernames |= set(by_user.keys())
+
+    cov_map = {c["username"]: c for c in cov}
+
+    for u in sorted(usernames):
+        c = cov_map.get(u)
+        rows = by_user.get(u, [])
+        passed = [r for r in rows if r["passed"]]
+        first_try = [r for r in passed if (r["winning_attempt"] or 99) == 1]
+
+        fin = next((r for r in rows if final_time is not None
+                    and abs(r["checkpoint_time"] - final_time) < 0.01), None)
+
+        watched = float(c["watched_sec"] or 0) if c else 0.0
+        hidden = float(c["hidden_sec"] or 0) if c else 0.0
+        students.append({
+            "username": u,
+            "watched_sec": round(watched),
+            "duration_sec": round(float(c["duration_sec"] or 0)) if c else 0,
+            "completion_pct": round(float(c["completion_pct"] or 0), 1) if c else 0.0,
+            "hidden_sec": round(hidden),
+            # Fraction of playing time the tab was in the background. High values
+            # mean the video ran to nobody — completion_pct alone hides this.
+            "inattention_pct": round(100 * hidden / (watched + hidden), 1) if (watched + hidden) else 0.0,
+            "completed": bool(c["completed"]) if c else False,
+            "checkpoints_total": len(cp_times),
+            "checkpoints_attempted": len(rows),
+            "checkpoints_passed": len(passed),
+            "passed_first_try": len(first_try),
+            "needed_retries": len(passed) - len(first_try),
+            "avg_confidence": round(sum(r["avg_conf"] or 0 for r in rows) / len(rows), 1) if rows else None,
+            "final_attempted": bool(fin),
+            "final_passed": bool(fin and fin["passed"]),
+            "final_attempts": (fin["total_attempts"] if fin else 0),
+            "final_first_try": bool(fin and fin["passed"] and (fin["winning_attempt"] or 99) == 1),
+            "last_seen": (c["updated_at"] if c else None),
+        })
+
+    # Per-checkpoint difficulty, for spotting a question the class fell over.
+    per_cp = []
+    for cp in cps:
+        t = cp["checkpoint_time"]
+        rows = [r for rs in by_user.values() for r in rs if abs(r["checkpoint_time"] - t) < 0.01]
+        passed = [r for r in rows if r["passed"]]
+        first = [r for r in passed if (r["winning_attempt"] or 99) == 1]
+        per_cp.append({
+            "checkpoint_time": t,
+            "is_final": (final_time is not None and abs(t - final_time) < 0.01),
+            "concept": cp["concept"],
+            "question": cp["question"],
+            "attempted": len(rows),
+            "passed": len(passed),
+            "first_try": len(first),
+            "first_try_pct": round(100 * len(first) / len(rows), 1) if rows else None,
+        })
+
+    n = len(students)
+    summary = {
+        "students": n,
+        "avg_completion_pct": round(sum(s["completion_pct"] for s in students) / n, 1) if n else 0,
+        "avg_inattention_pct": round(sum(s["inattention_pct"] for s in students) / n, 1) if n else 0,
+        "finished_video": sum(1 for s in students if s["completed"]),
+        "final_attempted": sum(1 for s in students if s["final_attempted"]),
+        "final_passed": sum(1 for s in students if s["final_passed"]),
+        "final_first_try": sum(1 for s in students if s["final_first_try"]),
+    }
+
+    return {"video": fname, "checkpoints": per_cp, "students": students, "summary": summary}
+
+
 @app.post("/api/v1/video/engagement")
 async def log_video_engagement_event(req: VideoEngagementRequest, _caller: dict = Depends(auth.get_current_user)):
     # AUTHZ: identity comes from the session, not the body. `req.username`
