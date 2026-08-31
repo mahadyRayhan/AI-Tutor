@@ -790,14 +790,28 @@ function showPrelabModal() {
     const body = document.getElementById('prelabBody');
     if (!modal || !body) return;
 
-    // Pick one problem to feature (rotate/random so students don't all get the same)
+    // One problem at random, so the class does not all get the same one.
     const idx = Math.floor(Math.random() * prelabProblems.length);
     const problem = prelabProblems[idx];
-    window._prelabChosen = problem;
+    // Problems arrive as {prompt, concept, samples}; older entries may still be
+    // plain strings, so accept both rather than rendering "[object Object]".
+    const prompt = (typeof problem === 'string') ? problem : (problem.prompt || '');
+    const concept = (typeof problem === 'string') ? '' : (problem.concept || '');
+    const samples = (typeof problem === 'string') ? [] : (problem.samples || []);
+    if (!prompt) return;
+    window._prelabChosen = prompt;
+
+    const sampleHtml = samples.map(sm => `
+        <details class="prelab-sample">
+            <summary>${escapeHtml(sm.label || 'Sample output')}</summary>
+            <pre>${escapeHtml(sm.text || '')}</pre>
+        </details>`).join('');
 
     body.innerHTML = `
         <p class="cp-instruction">You've finished the lecture — ready to apply it? Try this challenge.</p>
-        <div class="cp-question">${escapeHtml(problem)}</div>
+        ${concept ? `<div class="prelab-concepts"><span class="prelab-chip">${escapeHtml(concept)}</span></div>` : ''}
+        <div class="cp-question prelab-prompt">${escapeHtml(prompt)}</div>
+        ${sampleHtml}
         <div class="prelab-actions">
             <button class="cp-skip" onclick="dismissPrelab()">Maybe later</button>
             <button class="cp-submit-inline" onclick="solveInSage()">🚀 Solve in SAGE</button>

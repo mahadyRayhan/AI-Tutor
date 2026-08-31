@@ -212,3 +212,46 @@ class TestJudgeReplyParsing:
         """The silent-drop bug: the student must be told, or they re-paste forever."""
         result, _ = _grade(self.GOOD_CODE, "Variables", "code", reply="LLM_ERROR: down")
         assert "wasn't recorded" in result["feedback"] or "wasn" in result["feedback"]
+
+
+# ── Forgetting decay must be symmetric ────────────────────────────────────────
+class TestDecayDoesNotEraseWrongAnswers:
+    """A posterior BELOW the prior must not be snapped back up to it.
+
+    _apply_decay ended with `max(decayed, p0)`. The exponential already asymptotes
+    to p0 from both directions, so that clamp never bound a decaying-from-above
+    posterior — it only fired when a posterior sat below the prior, i.e. right
+    after a wrong answer, and reset it to the prior regardless of elapsed time:
+
+        P̃ 0.300 → 0.051 ❌   then seconds later   0.051 →(decay)→ 0.300 ✅
+
+    Wrong answers were erased on the student's next interaction.
+    """
+
+    def _decay(self, p, seconds):
+        from datetime import datetime, timedelta
+        from app.core.bkt_model import _apply_decay
+        return _apply_decay(p, "quiz", datetime.now() - timedelta(seconds=seconds))
+
+    def test_a_wrong_answer_is_not_wiped_moments_later(self):
+        from app.core.bkt_model import EVIDENCE_CONFIG
+        p0 = EVIDENCE_CONFIG["quiz"]["P_L0"]
+        assert self._decay(0.051, 5) < p0, "decay reset a wrong answer back to the prior"
+
+    def test_low_posterior_recovers_only_slowly(self):
+        five_sec = self._decay(0.051, 5)
+        one_day = self._decay(0.051, 86400)
+        thirty_days = self._decay(0.051, 86400 * 30)
+        assert five_sec < one_day < thirty_days, "recovery must be monotone in elapsed time"
+        assert thirty_days < 0.30, "should still be climbing toward the prior, not at it"
+
+    def test_high_posterior_still_decays_downward(self):
+        """The intended behaviour must be unchanged."""
+        assert self._decay(0.90, 86400) < 0.90
+        assert self._decay(0.90, 86400 * 30) < self._decay(0.90, 86400)
+
+    def test_decay_stays_in_the_unit_interval(self):
+        for p in (0.0, 0.001, 0.5, 0.999, 1.0):
+            for secs in (1, 86400, 86400 * 365):
+                v = self._decay(p, secs)
+                assert 0.0 <= v <= 1.0, f"{p} after {secs}s -> {v}"

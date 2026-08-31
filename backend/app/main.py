@@ -4352,16 +4352,153 @@ async def get_video_prelab(video_filename: str):
     try:
         with open(prelab_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        raw = data.get(video_filename, [])
-        # Support both the simple list form and an object with a "problems" key
-        problems = raw if isinstance(raw, list) else raw.get("problems", [])
-        # Normalize each entry to a string prompt
-        norm = [p if isinstance(p, str) else p.get("prompt", "") for p in problems]
-        norm = [p for p in norm if p and p.strip()]
-        return {"problems": norm}
+        raw = data.get(os.path.basename(video_filename), [])
+
+        # A video maps to a LIST of prompt strings (legacy), an OBJECT holding this
+        # lecture's own questions, or the ID of a graded prelab in _prelabs.
+        prelabs = data.get("_prelabs") or {}
+        meta = {}
+        if isinstance(raw, str):
+            meta = prelabs.get(raw) or {}
+            problems = meta.get("problems", [])
+        elif isinstance(raw, dict):
+            meta = dict(raw)
+            problems = list(raw.get("problems", []))
+            ref = prelabs.get(raw.get("prelab_ref") or "")
+            # Only the video that covers the whole assignment sets show_graded, so
+            # the graded program is offered once rather than after every lecture.
+            if ref and raw.get("show_graded"):
+                problems = problems + list(ref.get("problems", []))
+                meta["graded"] = ref.get("graded", False)
+                meta["title"] = ref.get("title", meta.get("title", ""))
+                meta["note"] = ref.get("note", "")
+                meta["due_before"] = ref.get("due_before", "")
+        else:
+            problems = raw
+
+        norm = []
+        for prob in problems:
+            if isinstance(prob, str):
+                if prob.strip():
+                    norm.append({"prompt": prob, "samples": [], "concept": ""})
+            elif isinstance(prob, dict) and (prob.get("prompt") or "").strip():
+                norm.append({"prompt": prob["prompt"],
+                             "samples": prob.get("samples", []),
+                             "concept": prob.get("concept", "")})
+
+        return {
+            "problems": norm,
+            "graded": bool(meta.get("graded")),
+            "title": meta.get("title", ""),
+            "note": meta.get("note", ""),
+            "due_before": meta.get("due_before", ""),
+            "concepts": meta.get("concepts", []),
+        }
     except Exception as e:
         logger.warning(f"Prelab load failed for {video_filename}: {e}")
         return {"problems": []}
+
+
+class PrelabSaveRequest(BaseModel):
+    video_filename: str
+    questions: List[str]
+
+
+def _prelab_path() -> Path:
+    return VIDEO_DIR / "prelab.json"
+
+
+def _load_prelab_file() -> dict:
+    p = _prelab_path()
+    if not p.exists():
+        return {}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"[prelab] unreadable prelab.json: {e}")
+        raise HTTPException(status_code=500, detail="prelab.json is unreadable")
+
+
+@app.get("/api/v1/video/prelab-edit/{video_filename}")
+async def get_prelab_for_edit(video_filename: str, _: str = Depends(verify_teacher)):
+    """The editable question list for one video.
+
+    Concept-tagged questions come back prefixed "[Concept] ..." so a teacher editing
+    the box can see and keep the tag; the save endpoint parses that prefix back out.
+    Without it, editing would silently strip the concept mapping.
+    """
+    data = _load_prelab_file()
+    raw = data.get(os.path.basename(video_filename), [])
+    if isinstance(raw, str):                       # points at a graded prelab
+        raw = (data.get("_prelabs") or {}).get(raw, {}).get("problems", [])
+    elif isinstance(raw, dict):
+        raw = raw.get("problems", [])
+
+    out = []
+    for prob in raw or []:
+        if isinstance(prob, str):
+            out.append(prob)
+        elif isinstance(prob, dict):
+            prompt = (prob.get("prompt") or "").strip()
+            if not prompt:
+                continue
+            concept = (prob.get("concept") or "").strip()
+            out.append(f"[{concept}] {prompt}" if concept else prompt)
+    return {"video_filename": os.path.basename(video_filename), "questions": out}
+
+
+@app.post("/api/v1/video/prelab")
+async def save_video_prelab(req: PrelabSaveRequest, _: str = Depends(verify_teacher)):
+    """Replace the prelab questions for one video.
+
+    Only that video's entry changes: `_prelabs` and every other video are read back
+    and rewritten untouched, so editing one lecture cannot wipe another. The write
+    goes to a temp file and is then renamed, so a crash mid-write leaves the old
+    file intact rather than a truncated one the app would fail to parse.
+    """
+    fname = os.path.basename(req.video_filename or "")
+    if not fname:
+        raise HTTPException(status_code=400, detail="video_filename is required")
+
+    problems = []
+    for q in req.questions or []:
+        q = (q or "").strip()
+        if not q:
+            continue
+        concept = ""
+        if q.startswith("["):
+            close = q.find("]")
+            if close > 1:
+                concept = q[1:close].strip()
+                q = q[close + 1:].strip()
+        if q:
+            problems.append({"concept": concept, "prompt": q} if concept else {"prompt": q})
+
+    data = _load_prelab_file()
+    existing = data.get(fname)
+
+    if not problems:
+        data.pop(fname, None)                      # cleared → no prelab for this video
+    elif isinstance(existing, dict):
+        existing["problems"] = problems            # keep title / prelab_ref / show_graded
+        data[fname] = existing
+    else:
+        data[fname] = {"problems": problems}
+
+    path = _prelab_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.error(f"[prelab] write failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not save prelab.json")
+
+    logger.info(f"[prelab] {fname}: saved {len(problems)} question(s)")
+    return {"status": "success", "video_filename": fname, "count": len(problems)}
 
 
 class PrelabStartRequest(BaseModel):

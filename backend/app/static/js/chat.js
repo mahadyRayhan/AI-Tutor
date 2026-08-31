@@ -2177,10 +2177,27 @@ function crShowPrelabModal() {
     const body = document.getElementById('crPrelabBody');
     if (!modal || !body) return;
     const idx = Math.floor(Math.random() * crPrelabProblems.length);
-    crPrelabChosen = crPrelabProblems[idx];
+    const chosen = crPrelabProblems[idx];
+    // /video/prelab returns {prompt, concept, samples} objects; older entries may
+    // still be plain strings. Reading the object directly rendered "[object Object]"
+    // where the question should be.
+    const prompt = (typeof chosen === 'string') ? chosen : (chosen && chosen.prompt) || '';
+    const concept = (typeof chosen === 'string') ? '' : (chosen && chosen.concept) || '';
+    const samples = (typeof chosen === 'string') ? [] : (chosen && chosen.samples) || [];
+    if (!prompt) return;
+    crPrelabChosen = prompt;          // downstream telemetry expects the text
+
+    const sampleHtml = samples.map(sm => `
+        <details class="prelab-sample">
+            <summary>${escapeHtmlCr(sm.label || 'Sample output')}</summary>
+            <pre>${escapeHtmlCr(sm.text || '')}</pre>
+        </details>`).join('');
+
     body.innerHTML = `
         <p class="cp-instruction">You've finished the lecture — ready to apply it? Try this challenge.</p>
-        <div class="cp-question">${escapeHtmlCr(crPrelabChosen)}</div>
+        ${concept ? `<div class="prelab-concepts"><span class="prelab-chip">${escapeHtmlCr(concept)}</span></div>` : ''}
+        <div class="cp-question prelab-prompt">${escapeHtmlCr(prompt)}</div>
+        ${sampleHtml}
         <div class="prelab-actions">
             <button class="cp-skip" onclick="crDismissPrelab()">Maybe later</button>
             <button class="cp-submit-inline" onclick="crSolveInSage()">🚀 Solve in SAGE</button>

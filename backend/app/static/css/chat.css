@@ -2424,3 +2424,18 @@ body.in-classroom #navSettings {
 .prelab-actions .cp-submit-inline { flex: 1; margin-top: 0; }
 .prelab-shuffle { width: 100%; margin-top: 10px; background: transparent; border: 1px dashed rgba(255,255,255,0.08);
     color: var(--text-muted); padding: 8px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 0.82rem; }
+
+/* ── Classroom prelab: concept tag, prompt, sample output ──────────────────── */
+.prelab-concepts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.prelab-chip {
+    padding: 3px 9px; border-radius: 999px; font-size: .72rem;
+    background: rgba(96,165,250,.12); color: #93c5fd; border: 1px solid rgba(96,165,250,.3);
+}
+.prelab-prompt { white-space: pre-wrap; line-height: 1.6; }
+.prelab-sample { margin-top: 10px; }
+.prelab-sample summary { cursor: pointer; font-size: .8rem; color: #93c5fd; padding: 5px 0; }
+.prelab-sample pre {
+    margin: 6px 0 0; padding: 10px 12px; border-radius: 8px; overflow-x: auto;
+    background: #0f1115; border: 1px solid #2a2f3a;
+    font-size: .76rem; line-height: 1.45; color: #cbd5e1;
+}

@@ -294,7 +294,16 @@
             .grid-container { grid-template-columns: 1fr; }
             .full-width { grid-column: span 1; }
         }
-    </style>
+    
+    /* Prelab save spinner */
+    .pl-spin {
+        display:inline-block; width:.8em; height:.8em; margin-right:.4em;
+        vertical-align:-.1em; border:2px solid rgba(255,255,255,.35);
+        border-top-color:#fff; border-radius:50%; animation:pl-rot .7s linear infinite;
+    }
+    @keyframes pl-rot { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .pl-spin { animation-duration: 2.5s; } }
+</style>
 </head>
 <body>
 
@@ -3016,6 +3025,129 @@
     }
 
     // ================= CONTENT TAB: lecture catalog =================
+    // ── Prelab question editor ───────────────────────────────────────────────
+    // One question per LINE: teachers paste a plain list, so that is what the box
+    // accepts. Blank lines are ignored, so pasted text with spacing still works.
+    const PRELAB_SEP = '\n';
+    const splitPrelab = (text) =>
+        (text || '').split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+
+    async function openPrelabEditor(filename, title) {
+        const existing = document.getElementById('prelabEditorPanel');
+        if (existing && existing.dataset.file === filename) { existing.remove(); return; }
+        if (existing) existing.remove();
+
+        let questions = [];
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/prelab-edit/${encodeURIComponent(filename)}`,
+                                    { headers: TEACHER_HDR() });
+            if (res.ok) questions = (await res.json()).questions || [];
+        } catch (e) { /* fall through to an empty box */ }
+
+        const panel = document.createElement('div');
+        panel.id = 'prelabEditorPanel';
+        panel.dataset.file = filename;
+        panel.style.cssText = 'padding:12px; margin:0 10px 10px; background:#0f1115;' +
+                              'border:1px solid #2a2f3a; border-radius:8px;';
+        panel.innerHTML = `
+            <div style="font-size:13px; font-weight:600; margin-bottom:4px;">
+                📝 Prelab questions — ${escapeHtml(title)}</div>
+            <div style="font-size:11px; color:#64748b; margin-bottom:8px;">
+                <strong>One question per line.</strong> Blank lines are ignored.
+                Optionally prefix a line with <code>[Concept]</code> to tag it.
+                Students get <strong>one at random</strong> when the video ends.
+            </div>
+            <textarea id="prelabText" rows="12" spellcheck="false"
+                style="width:100%; box-sizing:border-box; padding:10px; border-radius:8px;
+                       background:#0b0d12; color:#e2e8f0; border:1px solid #2a2f3a;
+                       font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px;
+                       line-height:1.5; resize:vertical;">${escapeHtml(questions.join(PRELAB_SEP))}</textarea>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                <button class="btn btn-sm" id="prelabSaveBtn" onclick="savePrelab('${escapeHtml(filename)}')">Save</button>
+                <button class="btn btn-sm" style="background:#334155;"
+                        onclick="document.getElementById('prelabEditorPanel').remove()">Cancel</button>
+                <span id="prelabCount" style="font-size:11px; color:#64748b;"></span>
+                <span id="prelabStatus" style="font-size:12px; margin-left:auto;"></span>
+            </div>`;
+
+        // Attach under the row that was clicked.
+        const rowHost = [...document.querySelectorAll('[id^="prelab-ed-"]')]
+            .find(el => el.previousElementSibling &&
+                        el.previousElementSibling.innerHTML.includes(filename));
+        (rowHost || document.body).appendChild(panel);
+
+        const ta = document.getElementById('prelabText');
+        const count = () => {
+            const n = splitPrelab(ta.value).length;
+            document.getElementById('prelabCount').textContent =
+                n === 1 ? '1 question' : `${n} questions`;
+        };
+        ta.addEventListener('input', count);
+        count();
+        ta.focus();
+    }
+
+    async function savePrelab(filename) {
+        const panel = document.getElementById('prelabEditorPanel');
+        const ta = document.getElementById('prelabText');
+        const status = document.getElementById('prelabStatus');
+        const btn = document.getElementById('prelabSaveBtn');
+        if (!ta) return;
+
+        const questions = splitPrelab(ta.value);
+
+        // Visible work state — the button previously stayed inert while the request
+        // was in flight, so a successful save looked like nothing had happened.
+        btn.disabled = true;
+        const label = btn.innerHTML;
+        btn.innerHTML = '<span class="pl-spin"></span> Saving…';
+        status.style.color = '#94a3b8';
+        status.textContent = '';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/prelab`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify({ video_filename: filename, questions })
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+
+            status.style.color = '#34d399';
+            status.textContent = d.count === 0
+                ? '✓ Cleared'
+                : `✓ Saved ${d.count} question${d.count === 1 ? '' : 's'}`;
+            btn.innerHTML = '✓ Saved';
+
+            // Collapse once the confirmation has been readable for a moment, and
+            // show a lasting count on the row so the save is still evident after.
+            setTimeout(() => {
+                if (panel) {
+                    panel.style.transition = 'opacity .25s';
+                    panel.style.opacity = '0';
+                    setTimeout(() => panel.remove(), 250);
+                }
+                markPrelabCount(filename, d.count);
+            }, 900);
+        } catch (e) {
+            status.style.color = '#f87171';
+            status.textContent = `Save failed — ${e.message}`;
+            btn.disabled = false;
+            btn.innerHTML = label;
+        }
+    }
+
+    // Reflect the saved count on the video row, so the panel closing is not the
+    // only evidence anything happened.
+    function markPrelabCount(filename, count) {
+        document.querySelectorAll('button').forEach(b => {
+            if (b.getAttribute('onclick')?.includes(`openPrelabEditor('${filename}'`)) {
+                b.innerHTML = count ? `📝 Prelab (${count})` : '📝 Prelab';
+                b.style.background = count ? '#1f3d2b' : '#334155';
+            }
+        });
+    }
+
     const TEACHER_HDR = () => ({ 'X-User-Role': currentUser.role });
     // 5 MB slices: large enough that a 140 MB lecture is ~28 requests, small enough
     // that no single request is at risk of a proxy timeout.
@@ -3098,8 +3230,15 @@
                         ${meta ? `<div style="color:#64748b; font-size:11px; margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
                     </div>
                     <div style="flex:0 0 auto;">${state}</div>
-                    <div style="flex:0 0 auto; display:flex; gap:6px; align-items:center;">${action}</div>
-                </div>`;
+                    <div style="flex:0 0 auto; display:flex; gap:6px; align-items:center;">
+                        ${action}
+                        ${v.filename
+                            ? `<button class="btn btn-sm" style="background:#334155;"
+                                 onclick="openPrelabEditor('${escapeHtml(v.filename)}', '${escapeHtml(v.title).replace(/'/g, "\\'")}')">📝 Prelab</button>`
+                            : ''}
+                    </div>
+                </div>
+                <div id="prelab-ed-${v.id}"></div>`;
             }).join('');
 
             return `
