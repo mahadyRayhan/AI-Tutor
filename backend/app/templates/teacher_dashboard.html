@@ -3164,8 +3164,21 @@
                     method: 'POST', headers: TEACHER_HDR(), body: fd
                 });
                 if (!res.ok) {
-                    const err = await res.json().catch(() => ({}));
-                    throw new Error(err.detail || `Upload failed on part ${i + 1} of ${total}`);
+                    // Report the STATUS. A bare "failed on part 1" hides whether the
+                    // app rejected the chunk (JSON detail) or something in front of it
+                    // did — a reverse proxy returning 413 for a 5 MB body looks
+                    // identical to an auth failure without this.
+                    const body = await res.text().catch(() => '');
+                    let detail = '';
+                    try { detail = (JSON.parse(body) || {}).detail || ''; } catch (_) {}
+                    if (!detail) {
+                        detail = res.status === 413
+                            ? `Chunk rejected as too large (413). The reverse proxy in front of SAGE `
+                              + `is capping request bodies below ${(VIDEO_CHUNK / 1048576)} MB — raise it `
+                              + `(nginx: client_max_body_size 20m).`
+                            : `HTTP ${res.status} ${res.statusText || ''}`.trim();
+                    }
+                    throw new Error(`Upload failed on part ${i + 1} of ${total} — ${detail}`);
                 }
                 const pct = Math.round(((i + 1) / total) * 100);
                 bar.style.width = pct + '%';
