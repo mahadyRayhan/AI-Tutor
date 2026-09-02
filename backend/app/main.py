@@ -4389,7 +4389,36 @@ def _load_prelab_file() -> dict:
 
 
 def _find_video(data: dict, fname: str) -> dict | None:
-    """The video entry for `fname`, or None. Filenames are unique across chapters."""
+    """The prelab entry for a recording, or None.
+
+    Resolved by CATALOG SLOT (chapter + video number) rather than by filename,
+    because the same lecture slot holds a different filename in each deployment —
+    Ch1 V2 is Chapter1-part2.mp4 on a dev box and Chapter_1_Part_2.mp4 in
+    production. Keying on the filename made this one file correct in at most one
+    environment; keying on the slot lets the same file be right in both, since
+    each database knows its own filename -> slot mapping.
+
+    Falls back to a filename match for recordings that have not been assigned to a
+    chapter yet (the chapter-0 bucket), which have no slot to key on.
+    """
+    slot = None
+    try:
+        row = db.fetch_one(
+            "SELECT chapter_number, video_number FROM video_catalog WHERE filename = ?",
+            (fname,))
+        if row and row["video_number"] is not None:
+            slot = (row["chapter_number"], row["video_number"])
+    except Exception as e:
+        logger.debug(f"[prelab] catalog lookup failed for {fname}: {e}")
+
+    if slot:
+        for ch in data.get("chapters", []):
+            if ch.get("number") != slot[0]:
+                continue
+            for v in ch.get("videos", []):
+                if v.get("video_number") == slot[1]:
+                    return v
+
     for ch in data.get("chapters", []):
         for v in ch.get("videos", []):
             if v.get("filename") == fname:
@@ -4429,7 +4458,7 @@ async def save_video_prelab(req: PrelabSaveRequest, _: str = Depends(verify_teac
         if unassigned is None:
             unassigned = {"number": 0, "title": "Unassigned recordings", "videos": []}
             data["chapters"].insert(0, unassigned)
-        vid = {"filename": fname,
+        vid = {"video_number": None, "filename": fname,
                "title": os.path.splitext(fname)[0].replace("_", " "),
                "prelabs": []}
         unassigned.setdefault("videos", []).append(vid)

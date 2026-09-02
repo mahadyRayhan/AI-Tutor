@@ -5,38 +5,45 @@
       "title": "Unassigned recordings",
       "videos": [
         {
-          "filename": "C_Control_Structures.mp4",
+          "video_number": null,
           "title": "C Control Structures",
+          "filename": "C_Control_Structures.mp4",
           "prelabs": []
         },
         {
-          "filename": "Chapter_2_Part_1_20260831150115.mp4",
+          "video_number": null,
           "title": "Chapter 2 Part 1 20260831150115",
+          "filename": "Chapter_2_Part_1_20260831150115.mp4",
           "prelabs": []
         },
         {
-          "filename": "Class-Variables.mp4",
+          "video_number": null,
           "title": "Class-Variables",
+          "filename": "Class-Variables.mp4",
           "prelabs": []
         },
         {
-          "filename": "Data_hierarchy.mp4",
+          "video_number": null,
           "title": "Data hierarchy",
+          "filename": "Data_hierarchy.mp4",
           "prelabs": []
         },
         {
-          "filename": "Intro_C.mp4",
+          "video_number": null,
           "title": "Intro C",
+          "filename": "Intro_C.mp4",
           "prelabs": []
         },
         {
-          "filename": "Self-Regulated_Learning.mp4",
+          "video_number": null,
           "title": "Self-Regulated Learning",
+          "filename": "Self-Regulated_Learning.mp4",
           "prelabs": []
         },
         {
-          "filename": "Variables_in_C.mp4",
+          "video_number": null,
           "title": "Variables in C",
+          "filename": "Variables_in_C.mp4",
           "prelabs": [
             "Write a C program that declares a float variable for a Celsius temperature, reads a value from the user, converts it to Fahrenheit using the formula F = C * 9/5 + 32, and prints the result to 2 decimal places."
           ]
@@ -48,26 +55,30 @@
       "title": "Introduction to Computers and C Programming",
       "videos": [
         {
-          "filename": "Chapter_1_Part_1.mp4",
+          "video_number": 1,
           "title": "Computers: Hardware and Software; Student Outcomes; Assignment/Assessment",
+          "filename": "Chapter_1_Part_1.mp4",
           "prelabs": []
         },
         {
-          "filename": "Chapter_1_Part_2.mp4",
+          "video_number": 2,
           "title": "Data Hierarchy",
+          "filename": "Chapter_1_Part_2.mp4",
           "prelabs": [
             "this is a test prelab",
             "this is another test prelab"
           ]
         },
         {
-          "filename": "Chapter_1_Part_3.mp4",
+          "video_number": 3,
           "title": "Machine Languages, Assembly Languages, and High-Level Languages",
+          "filename": "Chapter_1_Part_3.mp4",
           "prelabs": []
         },
         {
-          "filename": "Chapter_1_Part_4.mp4",
+          "video_number": 4,
           "title": "History of C, and Typical C Program Development Environment",
+          "filename": "Chapter_1_Part_4.mp4",
           "prelabs": []
         }
       ]
@@ -77,21 +88,24 @@
       "title": "Introduction to C Programming",
       "videos": [
         {
-          "filename": "Chapter_2_Part_1.mp4",
+          "video_number": 5,
           "title": "A Simple C Program: Printing a Line of Text",
+          "filename": "Chapter_2_Part_1.mp4",
           "prelabs": []
         },
         {
-          "filename": "Chapter_2_Part_2.mp4",
+          "video_number": 6,
           "title": "Another Simple C Program: Adding Two Integers",
+          "filename": "Chapter_2_Part_2.mp4",
           "prelabs": [
             "[Simple formatted input/output] The four values are typed on one line separated by spaces: 24 15 38 7. Write the scanf call that reads them into itemsPerCarton, cartonCount, reservedItems and workerCount. Why does the format string need four conversion specifiers, and why does each argument need an &?",
             "[Integer variables and assignment] Declare the four input variables plus totalInventory, availableItems, itemsPerWorker and leftoverItems. Why should all of these be int rather than float for this problem?"
           ]
         },
         {
-          "filename": "Chapter_2_Part_3.mp4",
+          "video_number": 7,
           "title": "Memory Concepts and Arithmetic in C",
+          "filename": "Chapter_2_Part_3.mp4",
           "prelabs": [
             "[Arithmetic operators] Write the assignment that computes totalInventory from itemsPerCarton and cartonCount, and then the one that computes availableItems after the reserved items are removed.",
             "[Integer division and the remainder operator] 137 available items are shared among 8 workers. In C, what do 137 / 8 and 137 % 8 evaluate to? Explain why 137 / 8 is not 17.125, and say which of the two gives itemsPerWorker and which gives leftoverItems.",
@@ -99,8 +113,9 @@
           ]
         },
         {
-          "filename": "Chapter_2_Part_4.mp4",
+          "video_number": 8,
           "title": "Decision making (Equality and Relational Operators), Keywords, Secure C Programming",
+          "filename": "Chapter_2_Part_4.mp4",
           "prelabs": [
             "[Equality and relational operators] What is the difference between = and == in C, and what happens if you write if (leftoverItems = 0)? Write the two conditions you need: one testing that leftoverItems equals zero, one testing that it is greater than zero."
           ]
@@ -112,36 +127,42 @@
       "title": "Structured Program Development in C",
       "videos": [
         {
-          "filename": "Chapter_3_Part_1.mp4",
+          "video_number": 9,
           "title": "Introduction, Algorithms, Pseudocode, Control structures",
+          "filename": "Chapter_3_Part_1.mp4",
           "prelabs": []
         },
         {
-          "filename": "Chapter_3_Part_2.mp4",
+          "video_number": 10,
           "title": "If selection, if-else Selection Statement",
+          "filename": "Chapter_3_Part_2.mp4",
           "prelabs": [
             "[Simple decision making with if statements] Using TWO SEPARATE if statements (not if/else), print the inventory decision: items divide evenly when there is no remainder, and some items remain otherwise. Why does the assignment ask for two separate ifs here?",
             "[GRADED — Prelab 2 — Warehouse Inventory Report] Write a C program that prepares a warehouse inventory report.\n\nRead four positive integer values from user input on the same line, separated by spaces, in the following order:\n  • the number of items in each carton (itemsPerCarton)\n  • the number of cartons (cartonCount)\n  • the number of items that must be reserved (reservedItems)\n  • the number of workers who will share the remaining items (workerCount)\n\nUse these variable names or similarly meaningful names. You may use either camel case or underscores consistently. Assume the worker count is not zero and that the number of reserved items does not exceed the total inventory.\n\nPrint the following:\n  • All four original input values.\n  • The total inventory, calculated as items per carton times the number of cartons.\n  • The number of items available after the reserved items are removed.\n  • The integer number of available items each worker receives.\n  • The number of available items left over after dividing among the workers.\n  • A check value: items per worker times worker count, plus the leftover items. This should equal the number of available items.\n  • Use TWO SEPARATE if statements to print an inventory decision:\n      – If leftover items equals zero, print that the items divide evenly among the workers.\n      – If leftover items is greater than zero, print that some items remain after the workers receive equal shares.\n\nSample Output 1:\nEnter items/carton, cartons, reserved items, and workers: 24 15 38 7\n\n*** Inventory values ***\nItems per carton = 24\nNumber of cartons = 15\nReserved items = 38\nNumber of workers = 7\n\n*** Inventory calculations ***\nTotal inventory = 360\nItems available for workers = 322\nItems per worker = 46\nItems left over = 0\nCheck: distributed plus leftover = 322\n\n*** Inventory decision ***\nThe items divide evenly among the workers.\n\nSample Output 2:\nEnter items/carton, cartons, reserved items, and workers: 18 9 25 8\n\n*** Inventory values ***\nItems per carton = 18\nNumber of cartons = 9\nReserved items = 25\nNumber of workers = 8\n\n*** Inventory calculations ***\nTotal inventory = 162\nItems available for workers = 137\nItems per worker = 17\nItems left over = 1\nCheck: distributed plus leftover = 137\n\n*** Inventory decision ***\nSome items remain after the workers receive equal shares."
           ]
         },
         {
-          "filename": "Chapter_3_Part_3.mp4",
+          "video_number": 11,
           "title": "While-statements, counter-controlled repetition",
+          "filename": "Chapter_3_Part_3.mp4",
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 12,
           "title": "While-statements, sentinel-controlled repetition",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 13,
           "title": "While-statements, nested control structures",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 14,
           "title": "Assignment operators, increment and decrement operators",
+          "filename": null,
           "prelabs": []
         }
       ]
@@ -151,43 +172,51 @@
       "title": "C Program Control",
       "videos": [
         {
-          "filename": null,
+          "video_number": 14,
           "title": "Repetition, and recap of counter-controlled repetition",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 15,
           "title": "For-statement",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 16,
           "title": "for-statements (contd) and examples of for-statements",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 17,
           "title": "switch Multiple selection statements",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 18,
           "title": "do-while statements",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 19,
           "title": "Break and continue statements",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 20,
           "title": "Logical operators",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 21,
           "title": "Equality vs assignment operators",
+          "filename": null,
           "prelabs": []
         }
       ]
@@ -197,18 +226,21 @@
       "title": "Functions",
       "videos": [
         {
-          "filename": null,
+          "video_number": 22,
           "title": "Introduction to functions, program modules in C, and Math Library functions",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 23,
           "title": "C Functions and function definitions",
+          "filename": null,
           "prelabs": []
         },
         {
-          "filename": null,
+          "video_number": 24,
           "title": "Function prototypes",
+          "filename": null,
           "prelabs": []
         }
       ]
