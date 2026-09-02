@@ -2035,6 +2035,39 @@ function updateClassroomTimeBadge(seconds) {
 }
 
 // ═══ CLASSROOM CHECKPOINT MCQ (non-skippable) ═══
+
+// Display order of the options: crCpOrder[displayPosition] = original index.
+// The server grades against the ORIGINAL index stored with the question, so every
+// answer is translated back through this map before it is submitted.
+let crCpOrder = [];
+
+// Fisher-Yates. Reshuffled on every attempt, and on the first display too: the
+// generated questions are heavily position-biased (64% of correct answers sit at
+// index 0 and none at index 3 in the current bank), so a student who always picks A
+// scores far above the 0.20 guess rate the BKT quiz tier assumes. Shuffling makes
+// the observed guess rate match the modelled one.
+function crShuffleOrder(n, prev) {
+    const order = Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+    }
+    // A reshuffle that lands on the same order reads as "nothing happened", so redraw.
+    if (n > 1 && prev && prev.length === n && prev.every((v, i) => v === order[i])) {
+        return crShuffleOrder(n, prev);
+    }
+    return order;
+}
+
+function crRenderOptions() {
+    const cp = crActiveCheckpoint;
+    if (!cp) return '';
+    return crCpOrder.map((orig, pos) =>
+        `<button class="cp-option" data-index="${pos}" onclick="crSelectOption(${pos})">
+            <span class="cp-letter">${String.fromCharCode(65 + pos)}</span> ${escapeHtmlCr(cp.options[orig])}
+         </button>`).join('');
+}
+
 function crShowCheckpointModal(cp) {
     crActiveCheckpoint = cp;
     crMcqShownAt = Date.now();
@@ -2044,10 +2077,8 @@ function crShowCheckpointModal(cp) {
 
     const body = document.getElementById('crCheckpointBody');
     const mins = Math.floor(cp.checkpoint_time / 60);
-    const optsHtml = cp.options.map((opt, i) =>
-        `<button class="cp-option" data-index="${i}" onclick="crSelectOption(${i})">
-            <span class="cp-letter">${String.fromCharCode(65 + i)}</span> ${escapeHtmlCr(opt)}
-         </button>`).join('');
+    crCpOrder = crShuffleOrder((cp.options || []).length, null);
+    const optsHtml = crRenderOptions();
 
     body.innerHTML = `
         <div class="cp-badge">⏸️ Checkpoint · ${mins} min</div>
@@ -2057,7 +2088,7 @@ function crShowCheckpointModal(cp) {
                 ${[1,2,3,4,5].map(n => `<button class="cp-conf" data-c="${n}" onclick="crSetConfidence(${n})">${n}</button>`).join('')}
             </div></div>
         <div class="cp-question">${escapeHtmlCr(cp.question)}</div>
-        <div class="cp-options">${optsHtml}</div>
+        <div class="cp-options" id="crCpOptions">${optsHtml}</div>
         <div class="cp-feedback" id="crCpFeedback"></div>
         <button class="cp-submit" id="crCpSubmit" onclick="crSubmitCheckpoint()" disabled>Submit Answer</button>`;
     document.getElementById('crCheckpointModal').classList.add('visible');
@@ -2087,7 +2118,7 @@ async function crSubmitCheckpoint() {
         const resp = await fetch('/api/v1/video/checkpoint/answer', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: crUser(), video_filename: classroomVideoFilename,
-                checkpoint_time: crActiveCheckpoint.checkpoint_time, selected_index: crCpSelected,
+                checkpoint_time: crActiveCheckpoint.checkpoint_time, selected_index: crCpOrder[crCpSelected],
                 confidence: crCpConfidence, time_to_answer_sec: tta, attempts: crMcqAttempts })
         });
         const data = await resp.json();
@@ -2103,7 +2134,11 @@ async function crSubmitCheckpoint() {
             submitBtn.textContent = 'Submit Answer';
             submitBtn.disabled = true;
             crCpSelected = null;
-            document.querySelectorAll('#crCheckpointModal .cp-option').forEach(b => b.classList.remove('selected'));
+            // Reshuffle so a retry is answered by reasoning again rather than by
+            // position memory ("it wasn't B") narrowing the field for free.
+            crCpOrder = crShuffleOrder(crCpOrder.length, crCpOrder);
+            const optsEl = document.getElementById('crCpOptions');
+            if (optsEl) optsEl.innerHTML = crRenderOptions();
         }
     } catch (e) {
         console.error('checkpoint submit failed', e);
