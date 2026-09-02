@@ -4345,58 +4345,23 @@ async def submit_video_reflection(req: VideoReflectionRequest, _caller: dict = D
 
 @app.get("/api/v1/video/prelab/{video_filename}")
 async def get_video_prelab(video_filename: str):
-    """Return the list of prelab complex problems for a video (from prelab.json)."""
-    prelab_path = VIDEO_DIR / "prelab.json"
-    if not prelab_path.exists():
-        return {"problems": []}
+    """Prelab practice questions for one video.
+
+    prelab.json is a plain chapter -> video -> prelabs tree (see _find_video). The
+    response shape is kept as a list of {prompt} objects because that is what the
+    classroom modal already renders; `samples` and `concept` are always empty now
+    that a question is just its text.
+    """
+    fname = os.path.basename(video_filename)
     try:
-        with open(prelab_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        raw = data.get(os.path.basename(video_filename), [])
-
-        # A video maps to a LIST of prompt strings (legacy), an OBJECT holding this
-        # lecture's own questions, or the ID of a graded prelab in _prelabs.
-        prelabs = data.get("_prelabs") or {}
-        meta = {}
-        if isinstance(raw, str):
-            meta = prelabs.get(raw) or {}
-            problems = meta.get("problems", [])
-        elif isinstance(raw, dict):
-            meta = dict(raw)
-            problems = list(raw.get("problems", []))
-            ref = prelabs.get(raw.get("prelab_ref") or "")
-            # Only the video that covers the whole assignment sets show_graded, so
-            # the graded program is offered once rather than after every lecture.
-            if ref and raw.get("show_graded"):
-                problems = problems + list(ref.get("problems", []))
-                meta["graded"] = ref.get("graded", False)
-                meta["title"] = ref.get("title", meta.get("title", ""))
-                meta["note"] = ref.get("note", "")
-                meta["due_before"] = ref.get("due_before", "")
-        else:
-            problems = raw
-
-        norm = []
-        for prob in problems:
-            if isinstance(prob, str):
-                if prob.strip():
-                    norm.append({"prompt": prob, "samples": [], "concept": ""})
-            elif isinstance(prob, dict) and (prob.get("prompt") or "").strip():
-                norm.append({"prompt": prob["prompt"],
-                             "samples": prob.get("samples", []),
-                             "concept": prob.get("concept", "")})
-
-        return {
-            "problems": norm,
-            "graded": bool(meta.get("graded")),
-            "title": meta.get("title", ""),
-            "note": meta.get("note", ""),
-            "due_before": meta.get("due_before", ""),
-            "concepts": meta.get("concepts", []),
-        }
+        vid = _find_video(_load_prelab_file(), fname)
     except Exception as e:
         logger.warning(f"Prelab load failed for {video_filename}: {e}")
         return {"problems": []}
+
+    problems = [{"prompt": q, "samples": [], "concept": ""}
+                for q in (vid or {}).get("prelabs", []) if (q or "").strip()]
+    return {"problems": problems}
 
 
 class PrelabSaveRequest(BaseModel):
@@ -4409,82 +4374,66 @@ def _prelab_path() -> Path:
 
 
 def _load_prelab_file() -> dict:
+    """Read prelab.json. Missing file is not an error — it just means no prelabs yet."""
     p = _prelab_path()
     if not p.exists():
-        return {}
+        return {"chapters": []}
     try:
         with open(p, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except Exception as e:
         logger.error(f"[prelab] unreadable prelab.json: {e}")
         raise HTTPException(status_code=500, detail="prelab.json is unreadable")
+    data.setdefault("chapters", [])
+    return data
+
+
+def _find_video(data: dict, fname: str) -> dict | None:
+    """The video entry for `fname`, or None. Filenames are unique across chapters."""
+    for ch in data.get("chapters", []):
+        for v in ch.get("videos", []):
+            if v.get("filename") == fname:
+                return v
+    return None
 
 
 @app.get("/api/v1/video/prelab-edit/{video_filename}")
 async def get_prelab_for_edit(video_filename: str, _: str = Depends(verify_teacher)):
-    """The editable question list for one video.
-
-    Concept-tagged questions come back prefixed "[Concept] ..." so a teacher editing
-    the box can see and keep the tag; the save endpoint parses that prefix back out.
-    Without it, editing would silently strip the concept mapping.
-    """
-    data = _load_prelab_file()
-    raw = data.get(os.path.basename(video_filename), [])
-    if isinstance(raw, str):                       # points at a graded prelab
-        raw = (data.get("_prelabs") or {}).get(raw, {}).get("problems", [])
-    elif isinstance(raw, dict):
-        raw = raw.get("problems", [])
-
-    out = []
-    for prob in raw or []:
-        if isinstance(prob, str):
-            out.append(prob)
-        elif isinstance(prob, dict):
-            prompt = (prob.get("prompt") or "").strip()
-            if not prompt:
-                continue
-            concept = (prob.get("concept") or "").strip()
-            out.append(f"[{concept}] {prompt}" if concept else prompt)
-    return {"video_filename": os.path.basename(video_filename), "questions": out}
+    """The editable question list for one video — one question per line in the UI."""
+    fname = os.path.basename(video_filename)
+    vid = _find_video(_load_prelab_file(), fname)
+    return {"video_filename": fname, "questions": list((vid or {}).get("prelabs", []))}
 
 
 @app.post("/api/v1/video/prelab")
 async def save_video_prelab(req: PrelabSaveRequest, _: str = Depends(verify_teacher)):
     """Replace the prelab questions for one video.
 
-    Only that video's entry changes: `_prelabs` and every other video are read back
-    and rewritten untouched, so editing one lecture cannot wipe another. The write
-    goes to a temp file and is then renamed, so a crash mid-write leaves the old
+    Only that video's `prelabs` list changes; every other chapter and video is read
+    back and rewritten untouched, so editing one lecture cannot wipe another. A video
+    the tree does not know about yet is filed under chapter 0 rather than dropped —
+    otherwise a recording uploaded after the last catalog sync could never get one.
+    The write goes to a temp file and is renamed, so a crash mid-write leaves the old
     file intact rather than a truncated one the app would fail to parse.
     """
     fname = os.path.basename(req.video_filename or "")
     if not fname:
         raise HTTPException(status_code=400, detail="video_filename is required")
 
-    problems = []
-    for q in req.questions or []:
-        q = (q or "").strip()
-        if not q:
-            continue
-        concept = ""
-        if q.startswith("["):
-            close = q.find("]")
-            if close > 1:
-                concept = q[1:close].strip()
-                q = q[close + 1:].strip()
-        if q:
-            problems.append({"concept": concept, "prompt": q} if concept else {"prompt": q})
+    questions = [q.strip() for q in (req.questions or []) if (q or "").strip()]
 
     data = _load_prelab_file()
-    existing = data.get(fname)
-
-    if not problems:
-        data.pop(fname, None)                      # cleared → no prelab for this video
-    elif isinstance(existing, dict):
-        existing["problems"] = problems            # keep title / prelab_ref / show_graded
-        data[fname] = existing
-    else:
-        data[fname] = {"problems": problems}
+    vid = _find_video(data, fname)
+    if vid is None:
+        unassigned = next((c for c in data["chapters"] if c.get("number") == 0), None)
+        if unassigned is None:
+            unassigned = {"number": 0, "title": "Unassigned recordings", "videos": []}
+            data["chapters"].insert(0, unassigned)
+        vid = {"filename": fname,
+               "title": os.path.splitext(fname)[0].replace("_", " "),
+               "prelabs": []}
+        unassigned.setdefault("videos", []).append(vid)
+    vid["prelabs"] = questions
 
     path = _prelab_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -4497,8 +4446,8 @@ async def save_video_prelab(req: PrelabSaveRequest, _: str = Depends(verify_teac
         logger.error(f"[prelab] write failed: {e}")
         raise HTTPException(status_code=500, detail="Could not save prelab.json")
 
-    logger.info(f"[prelab] {fname}: saved {len(problems)} question(s)")
-    return {"status": "success", "video_filename": fname, "count": len(problems)}
+    logger.info(f"[prelab] {fname}: saved {len(questions)} question(s)")
+    return {"status": "success", "video_filename": fname, "count": len(questions)}
 
 
 class PrelabStartRequest(BaseModel):
