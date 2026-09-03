@@ -228,3 +228,4 @@ backend/database/*
 !backend/database/video/
 backend/database/video/*
 !backend/database/video/prelab.json
+.env.bak.*

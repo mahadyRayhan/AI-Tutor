@@ -25,6 +25,17 @@ jobs:
           echo "VEO3_MODEL=${{ vars.VEO3_MODEL }}" >> .env
           echo "INTENT_CLASSIFIER_MODE=${{ vars.INTENT_CLASSIFIER_MODE }}" >> .env
           echo "ENABLE_PROFILING=${{ vars.ENABLE_PROFILING }}" >> .env
+          # Account recovery mail. This step REWRITES .env on every deploy, so
+          # anything set on the server by hand is wiped — these have to come from
+          # here. Non-sensitive values are repo Variables; only the app password is
+          # a Secret. If SMTP_HOST is empty the app stays in relay mode and writes
+          # reset links to the log rather than sending them.
+          echo "SMTP_HOST=${{ vars.SMTP_HOST }}" >> .env
+          echo "SMTP_PORT=${{ vars.SMTP_PORT }}" >> .env
+          echo "SMTP_USER=${{ vars.SMTP_USER }}" >> .env
+          echo "SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}" >> .env
+          echo "SMTP_FROM=${{ vars.SMTP_FROM }}" >> .env
+          echo "SAGE_BASE_URL=${{ vars.SAGE_BASE_URL }}" >> .env
 
       # Compress files, excluding things we don't want to overwrite on the server
       - name: Create deployment archive
