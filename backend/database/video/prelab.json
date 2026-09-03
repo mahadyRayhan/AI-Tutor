@@ -65,7 +65,7 @@
           "title": "Data Hierarchy",
           "filename": "Chapter_1_Part_2.mp4",
           "prelabs": [
-            "this is a test prelab",
+            "Write a C program that convert a temperature from Fahrenheit to Celsius. Convert it to Celsius using the formula C = (F - 32) * 5/9, and print the result to 2 decimal places.",
             "this is another test prelab"
           ]
         },
