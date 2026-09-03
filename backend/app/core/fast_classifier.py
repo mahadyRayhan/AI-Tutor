@@ -102,6 +102,13 @@ class FastClassifier:
             "this is too hard", "too hard", "i'm stuck", "im stuck", "i am stuck",
             "i don't get it", "i dont get it", "i'm confused", "im confused",
             "i don't understand", "i dont understand", "this is frustrating",
+            # Surrender phrases. These are the honest answer to a scaffolding
+            # forethought prompt, and "I have no idea" is a chip the tutor itself
+            # offers — none of them carry C vocabulary, so without this they reach
+            # the embedding fallback and default to OFF_TOPIC. Mirrors the
+            # _SURRENDER list already used in learner_model.py.
+            "i have no idea", "no idea", "i don't know", "i dont know",
+            "no clue", "not sure", "idk",
         )
         if any(p in q_lower for p in frustration_phrases):
             return "CONCEPT"

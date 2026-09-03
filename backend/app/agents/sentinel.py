@@ -532,7 +532,22 @@ class SentinelAgent(BaseAgent):
         is_analogy = any(w in query_lower for w in ["like a", "analogy", "metaphor", "compare", "imagine"])
         is_off_topic = (bool(self._OFF_TOPIC_RE.search(query_lower))
                         and not has_c_context and not is_analogy)
-        
+
+        # A learner mid-plan or mid-quiz is ANSWERING the tutor's own question, so
+        # their reply is never a new off-topic query. Without this, a plain-English
+        # answer to a forethought prompt ("I have no idea", "read the input first",
+        # "divide by 9") carries no C vocabulary, falls to the embedding fallback,
+        # is labelled OFF_TOPIC and earns a strike — and "I have no idea" is a
+        # suggestion chip the tutor itself offers. Three strikes lock the tutor, so
+        # the learner is punished hardest for answering honestly that they are lost,
+        # which is exactly the moment scaffolding exists to serve.
+        _plan = current_session.get("active_plan") or {}
+        is_answering_tutor = bool(_plan.get("is_active")) or is_in_quiz
+        if is_answering_tutor and (is_off_topic or state.intent == "OFF_TOPIC"):
+            self.logger.info("🎯 [S_spam] Skipped off-topic strike — learner is answering an active prompt.")
+            state.intent = "CONCEPT"
+            is_off_topic = False
+
         if is_off_topic or state.intent == "OFF_TOPIC":
             # Increment Strike in DB
             state.n_strike += 1
