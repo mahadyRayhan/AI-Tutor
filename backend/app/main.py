@@ -3744,7 +3744,11 @@ async def get_video_catalog(include_planned: bool = True):
     ) or []
     rows = db.fetch_all(
         "SELECT id, chapter_number, video_number, title, slides, sections, "
-        "filename, topic, status FROM video_catalog ORDER BY sort_order, video_number"
+        "filename, topic, status, COALESCE(kind,'lecture') AS kind FROM video_catalog "
+        # Lectures first and in plan order; supplements after, in the order added.
+        # NULLs sort first in SQLite, so order on the flag rather than video_number.
+        "ORDER BY CASE WHEN COALESCE(kind,'lecture')='supplement' THEN 1 ELSE 0 END, "
+        "video_number, sort_order"
     ) or []
 
     by_chapter: Dict[int, List[Dict]] = {}
@@ -3760,13 +3764,17 @@ async def get_video_catalog(include_planned: bool = True):
     out = []
     for c in chapters:
         vids = by_chapter.get(c["number"], [])
+        lectures = [v for v in vids if v.get("kind") != "supplement"]
         out.append({
             "number": c["number"],
             "title": c["title"],
             "status": c["status"] or "",
             "videos": vids,
-            "recorded": sum(1 for v in vids if v["available"]),
-            "total": len(vids),
+            # Progress counts the numbered plan only — supplements are extras, so
+            # adding one must not make a chapter look less complete than it is.
+            "recorded": sum(1 for v in lectures if v["available"]),
+            "total": len(lectures),
+            "supplements": sum(1 for v in vids if v.get("kind") == "supplement"),
         })
     return {"chapters": out}
 
@@ -3903,6 +3911,14 @@ class CatalogEntry(BaseModel):
     title: str
     slides: str = ""
     sections: str = ""
+    kind: str = "lecture"          # "lecture" | "supplement"
+
+
+class CatalogEdit(BaseModel):
+    title: Optional[str] = None
+    video_number: Optional[int] = None
+    slides: Optional[str] = None
+    sections: Optional[str] = None
 
 
 @app.post("/api/v1/video/catalog/add")
@@ -3913,12 +3929,48 @@ async def add_catalog_entry(req: CatalogEntry, _: str = Depends(verify_teacher))
         raise HTTPException(status_code=404, detail="Chapter not found")
     nxt = db.fetch_one("SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM video_catalog") or {"n": 1}
     now = datetime.now()
+    kind = "supplement" if (req.kind or "").lower() == "supplement" else "lecture"
+    # A supplement is not part of the numbered sequence, so it never carries a
+    # video_number — that is what keeps "Video 3" meaning the same thing to every
+    # student regardless of how much extra material a chapter accumulates.
+    video_number = None if kind == "supplement" else req.video_number
     db.execute(
         "INSERT INTO video_catalog (chapter_number,video_number,title,slides,sections,"
-        "status,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (req.chapter_number, req.video_number, req.title.strip(), req.slides,
-         req.sections, "planned", nxt["n"], now, now))
-    return {"status": "success"}
+        "status,sort_order,kind,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (req.chapter_number, video_number, req.title.strip(), req.slides,
+         req.sections, "planned", nxt["n"], kind, now, now))
+    return {"status": "success", "kind": kind}
+
+
+@app.post("/api/v1/video/catalog/{catalog_id}/edit")
+async def edit_catalog_entry(catalog_id: int, req: CatalogEdit,
+                             _: str = Depends(verify_teacher)):
+    """Rename or renumber a catalog slot. Only the fields sent are touched, so the
+    attached recording and its kind survive an edit — renaming a slot must never
+    detach the video sitting in it."""
+    row = db.fetch_one("SELECT id, kind FROM video_catalog WHERE id=?", (catalog_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Catalog entry not found")
+
+    sets, params = [], []
+    if req.title is not None:
+        if not req.title.strip():
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        sets.append("title=?"); params.append(req.title.strip())
+    if req.slides is not None:
+        sets.append("slides=?"); params.append(req.slides.strip())
+    if req.sections is not None:
+        sets.append("sections=?"); params.append(req.sections.strip())
+    # A supplement stays unnumbered whatever is sent.
+    if req.video_number is not None and (row["kind"] or "lecture") != "supplement":
+        sets.append("video_number=?"); params.append(req.video_number)
+    if not sets:
+        return {"status": "success", "changed": 0}
+
+    sets.append("updated_at=?"); params.append(datetime.now())
+    params.append(catalog_id)
+    db.execute(f"UPDATE video_catalog SET {', '.join(sets)} WHERE id=?", tuple(params))
+    return {"status": "success", "changed": len(sets) - 1}
 
 
 @app.delete("/api/v1/video/catalog/{catalog_id}")

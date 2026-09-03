@@ -518,6 +518,17 @@ class SQLiteDB:
                     FOREIGN KEY (chapter_number) REFERENCES video_chapter(number)
                 )
             """)
+            # kind: 'lecture' for the numbered plan videos, 'supplement' for the
+            # extra material a chapter accumulates (review sessions, worked
+            # examples, guest recordings). Supplements carry no video_number —
+            # they are not part of the numbered sequence and there can be any
+            # number of them per chapter.
+            try:
+                self.conn.execute(
+                    "ALTER TABLE video_catalog ADD COLUMN kind TEXT DEFAULT 'lecture'")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_catalog_chapter "
                 "ON video_catalog(chapter_number, sort_order)"
@@ -580,8 +591,13 @@ class SQLiteDB:
                 )
             """)
 
-            # Safe catch to add the column to existing databases without breaking
-            import sqlite3
+            # Safe catch to add the column to existing databases without breaking.
+            # NOTE: do NOT re-import sqlite3 here. It is already imported at module
+            # level, and a function-local `import sqlite3` rebinds the name for the
+            # WHOLE function scope — so every `except sqlite3.OperationalError`
+            # ABOVE this line raises UnboundLocalError instead of being caught.
+            # That failure is invisible until an ALTER actually raises, i.e. the
+            # second time the app starts against the same database.
             try:
                 self.conn.execute("ALTER TABLE user_feedback ADD COLUMN feedback_text TEXT")
             except sqlite3.OperationalError:

@@ -3187,6 +3187,50 @@
             </div>`).join('');
     }
 
+    // One row renderer for both lists. `opts` is the unassigned-file dropdown.
+    function videoRow(v, opts) {
+        const live = v.available;
+        const missing = v.filename && !v.available;
+        const state = live
+            ? `<span style="color:#34d399; font-size:12px;">🎬 ${escapeHtml(v.filename)}</span>`
+            : missing
+                ? `<span style="color:#f87171; font-size:12px;" title="Row points at a file that is not on disk">⚠ missing: ${escapeHtml(v.filename)}</span>`
+                : `<span style="color:#64748b; font-size:12px;">planned</span>`;
+        const action = live || missing
+            ? `<button class="btn btn-sm" style="background:#334155;" onclick="assignSlot(${v.id}, null)">Unassign</button>`
+            : (UNASSIGNED.length
+                ? `<select id="sel-${v.id}" style="background:#0f1115; color:#e2e8f0; border:1px solid #2a2f3a; border-radius:6px; padding:4px 6px; font-size:12px;">
+                       <option value="">— choose file —</option>${opts}
+                   </select>
+                   <button class="btn btn-sm" onclick="assignSlot(${v.id}, document.getElementById('sel-${v.id}').value)">Attach</button>`
+                : `<span style="color:#475569; font-size:12px;">upload a file first</span>`);
+        const meta = [v.slides, v.sections].filter(Boolean).join(' · ');
+        const label = v.kind === 'supplement'
+            ? `<span style="color:#a78bfa;">✚ Supplement</span>`
+            : `<strong>Video ${v.video_number ?? '—'}</strong>`;
+        return `
+        <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
+                    border-top:1px solid #1e2430;">
+            <div style="flex:1; min-width:0;">
+                <div style="font-size:13px;">${label} · ${escapeHtml(v.title)}</div>
+                ${meta ? `<div style="color:#64748b; font-size:11px; margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
+            </div>
+            <div style="flex:0 0 auto;">${state}</div>
+            <div style="flex:0 0 auto; display:flex; gap:6px; align-items:center;">
+                ${action}
+                ${v.filename
+                    ? `<button class="btn btn-sm" style="background:#334155;"
+                         onclick="openPrelabEditor('${escapeHtml(v.filename)}', '${escapeHtml(v.title).replace(/'/g, "\\'")}')">📝 Prelab</button>`
+                    : ''}
+                <button class="btn btn-sm" style="background:#334155;" title="Rename / renumber"
+                        onclick="editSlot(${v.id})">✏️</button>
+                <button class="btn btn-sm" style="background:#7f1d1d;" title="Remove this slot (the file on disk is kept)"
+                        onclick="deleteSlot(${v.id}, '${escapeHtml(v.title).replace(/'/g, "\\'")}')">🗑</button>
+            </div>
+        </div>
+        <div id="prelab-ed-${v.id}"></div>`;
+    }
+
     function renderChapters() {
         const el = document.getElementById('chapterList');
         if (!el) return;
@@ -3203,43 +3247,17 @@
                 ? `<span style="color:#64748b; font-size:12px;">no videos planned</span>`
                 : `<span style="color:${done ? '#34d399' : '#94a3b8'}; font-size:12px;">${c.recorded}/${c.total} recorded</span>`;
 
-            const rows = (c.videos || []).map(v => {
-                const live = v.available;
-                const missing = v.filename && !v.available;
-                const state = live
-                    ? `<span style="color:#34d399; font-size:12px;">🎬 ${escapeHtml(v.filename)}</span>`
-                    : missing
-                        ? `<span style="color:#f87171; font-size:12px;" title="Row points at a file that is not on disk">⚠ missing: ${escapeHtml(v.filename)}</span>`
-                        : `<span style="color:#64748b; font-size:12px;">planned</span>`;
-                const action = live || missing
-                    ? `<button class="btn btn-sm" style="background:#334155;" onclick="assignSlot(${v.id}, null)">Unassign</button>`
-                    : (UNASSIGNED.length
-                        ? `<select id="sel-${v.id}" style="background:#0f1115; color:#e2e8f0; border:1px solid #2a2f3a; border-radius:6px; padding:4px 6px; font-size:12px;">
-                               <option value="">— choose file —</option>${opts}
-                           </select>
-                           <button class="btn btn-sm" onclick="assignSlot(${v.id}, document.getElementById('sel-${v.id}').value)">Attach</button>`
-                        : `<span style="color:#475569; font-size:12px;">upload a file first</span>`);
-                const meta = [v.slides, v.sections].filter(Boolean).join(' · ');
-                return `
-                <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
-                            border-top:1px solid #1e2430;">
-                    <div style="flex:1; min-width:0;">
-                        <div style="font-size:13px;">
-                            <strong>Video ${v.video_number ?? '—'}</strong> · ${escapeHtml(v.title)}
-                        </div>
-                        ${meta ? `<div style="color:#64748b; font-size:11px; margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
-                    </div>
-                    <div style="flex:0 0 auto;">${state}</div>
-                    <div style="flex:0 0 auto; display:flex; gap:6px; align-items:center;">
-                        ${action}
-                        ${v.filename
-                            ? `<button class="btn btn-sm" style="background:#334155;"
-                                 onclick="openPrelabEditor('${escapeHtml(v.filename)}', '${escapeHtml(v.title).replace(/'/g, "\\'")}')">📝 Prelab</button>`
-                            : ''}
-                    </div>
-                </div>
-                <div id="prelab-ed-${v.id}"></div>`;
-            }).join('');
+            const all = c.videos || [];
+            const lectures = all.filter(v => v.kind !== 'supplement');
+            const extras   = all.filter(v => v.kind === 'supplement');
+
+            const lectureRows = lectures.map(v => videoRow(v, opts)).join('')
+                || `<div style="padding:12px 14px; color:#64748b; font-size:13px;">No videos planned for this chapter yet.</div>`;
+
+            // The supplement section is always shown, so an empty chapter still offers
+            // somewhere to put extra material without planning a numbered slot first.
+            const extraRows = extras.map(v => videoRow(v, opts)).join('')
+                || `<div style="padding:10px 14px; color:#475569; font-size:12px;">No supplementary videos.</div>`;
 
             return `
             <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:10px; overflow:hidden;">
@@ -3248,10 +3266,83 @@
                         <strong>Chapter ${c.number}</strong> · ${escapeHtml(c.title)}${badge}
                     </div>
                     ${counter}
+                    <button class="btn btn-sm" onclick="addSlot(${c.number}, 'lecture')">+ Video</button>
+                    <button class="btn btn-sm" style="background:#4c1d95;" onclick="addSlot(${c.number}, 'supplement')">+ Supplement</button>
                 </div>
-                ${rows || `<div style="padding:12px 14px; color:#64748b; font-size:13px;">No videos planned for this chapter yet.</div>`}
+                ${lectureRows}
+                <div style="padding:8px 14px; background:#12151d; border-top:1px solid #1e2430;
+                            color:#a78bfa; font-size:12px; font-weight:600; letter-spacing:.3px;">
+                    SUPPLEMENT${extras.length ? ` (${extras.length})` : ''}
+                </div>
+                ${extraRows}
             </div>`;
         }).join('');
+    }
+
+    async function addSlot(chapterNumber, kind) {
+        const isSup = kind === 'supplement';
+        const title = prompt(isSup
+            ? `Title for the supplementary video in Chapter ${chapterNumber}:`
+            : `Title for the new video in Chapter ${chapterNumber}:`);
+        if (title === null || !title.trim()) return;
+
+        // Only numbered lectures take a number; supplements are deliberately unnumbered.
+        let video_number = null;
+        if (!isSup) {
+            const n = prompt('Video number (leave blank to leave it unnumbered):', '');
+            if (n === null) return;
+            if (n.trim()) {
+                video_number = parseInt(n, 10);
+                if (isNaN(video_number)) { alert('Video number must be a whole number.'); return; }
+            }
+        }
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/catalog/add`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify({ chapter_number: chapterNumber, title: title.trim(),
+                                       video_number, kind })
+            });
+            if (!res.ok) { alert(`Could not add (error ${res.status}).`); return; }
+            await loadContentTab();
+        } catch (e) { alert('Could not add: ' + e.message); }
+    }
+
+    async function editSlot(catalogId) {
+        const v = (CATALOG.chapters || []).flatMap(c => c.videos || []).find(x => x.id === catalogId);
+        if (!v) return;
+        const title = prompt('Title:', v.title);
+        if (title === null || !title.trim()) return;
+        const body = { title: title.trim() };
+        if (v.kind !== 'supplement') {
+            const n = prompt('Video number (blank to leave unchanged):', v.video_number ?? '');
+            if (n === null) return;
+            if (n.trim()) {
+                const parsed = parseInt(n, 10);
+                if (isNaN(parsed)) { alert('Video number must be a whole number.'); return; }
+                body.video_number = parsed;
+            }
+        }
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/catalog/${catalogId}/edit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) { alert(`Could not save (error ${res.status}).`); return; }
+            await loadContentTab();
+        } catch (e) { alert('Could not save: ' + e.message); }
+    }
+
+    async function deleteSlot(catalogId, title) {
+        if (!confirm(`Remove "${title}" from the chapter?\n\nThe video file on disk is kept — only the plan entry is removed.`)) return;
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/catalog/${catalogId}`, {
+                method: 'DELETE', headers: TEACHER_HDR()
+            });
+            if (!res.ok) { alert(`Could not remove (error ${res.status}).`); return; }
+            await loadContentTab();
+        } catch (e) { alert('Could not remove: ' + e.message); }
     }
 
     async function assignSlot(catalogId, filename) {
