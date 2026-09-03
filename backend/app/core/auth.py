@@ -46,9 +46,29 @@ logger = logging.getLogger(__name__)
 
 ALGORITHM = "HS256"
 COOKIE_NAME = "sage_session"
-TOKEN_TTL_HOURS = int(os.getenv("SAGE_SESSION_HOURS", "12"))
+def _env(name: str, default: str) -> str:
+    """Env var, treating EMPTY as absent.
 
-_SECRET = os.getenv("SAGE_JWT_SECRET")
+    os.getenv(name, default) returns the default only when the variable is
+    missing — an empty value comes back as "". The deploy workflow writes every
+    key unconditionally, so an unset GitHub variable lands in .env as
+    `SAGE_SESSION_HOURS=`, Compose passes it through as "", and int("") crashed
+    the container on import in a restart loop. Anything read here must survive
+    being present-but-empty.
+    """
+    return (os.getenv(name) or default).strip()
+
+
+try:
+    TOKEN_TTL_HOURS = int(_env("SAGE_SESSION_HOURS", "12"))
+    if TOKEN_TTL_HOURS <= 0:
+        raise ValueError("must be positive")
+except ValueError:
+    logger.warning("SAGE_SESSION_HOURS=%r is not a positive integer; using 12.",
+                   os.getenv("SAGE_SESSION_HOURS"))
+    TOKEN_TTL_HOURS = 12
+
+_SECRET = _env("SAGE_JWT_SECRET", "")
 if not _SECRET:
     _SECRET = secrets.token_urlsafe(48)
     logger.warning(
@@ -59,7 +79,7 @@ if not _SECRET:
 # Secure flag is only meaningful over TLS, and setting it on plain HTTP makes the
 # browser drop the cookie entirely — which would lock everyone out. Driven by env so
 # it flips on the moment HTTPS is in front of the app.
-COOKIE_SECURE = os.getenv("SAGE_COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
+COOKIE_SECURE = _env("SAGE_COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
 
 
 def create_token(username: str, role: str, name: str = "") -> str:
