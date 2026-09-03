@@ -36,6 +36,11 @@ jobs:
           echo "SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}" >> .env
           echo "SMTP_FROM=${{ vars.SMTP_FROM }}" >> .env
           echo "SAGE_BASE_URL=${{ vars.SAGE_BASE_URL }}" >> .env
+          # Session signing key. Unset means a new random key each restart, i.e.
+          # everyone is signed out on every deploy.
+          echo "SAGE_JWT_SECRET=${{ secrets.SAGE_JWT_SECRET }}" >> .env
+          echo "SAGE_SESSION_HOURS=${{ vars.SAGE_SESSION_HOURS }}" >> .env
+          echo "SAGE_COOKIE_SECURE=${{ vars.SAGE_COOKIE_SECURE }}" >> .env
 
       # Compress files, excluding things we don't want to overwrite on the server
       - name: Create deployment archive

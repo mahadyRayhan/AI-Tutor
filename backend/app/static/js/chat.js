@@ -2034,6 +2034,34 @@ function updateClassroomTimeBadge(seconds) {
     if (badge) badge.textContent = `0:00 – ${str}`;
 }
 
+// A 401 means the session is gone (it expired, or the server restarted and — with
+// SAGE_JWT_SECRET unset — minted a new signing key, invalidating every cookie).
+// fetch() does NOT reject on 4xx, so an unchecked response body reads as
+// {detail: "Not authenticated"}; `data.is_correct` is then undefined, which is
+// falsy, and the checkpoint marks EVERY option wrong. The modal is deliberately
+// non-skippable, so the learner is trapped until they discover a page refresh —
+// reported as "it says the correct answer is incorrect and all four options are
+// wrong". Say what actually happened instead.
+let crSessionExpiredShown = false;
+function crSessionExpired(contextMsg) {
+    if (crSessionExpiredShown) return;
+    crSessionExpiredShown = true;
+    try { localStorage.removeItem('c_tutor_user'); } catch (e) {}
+    const v = document.getElementById('classroomVideo');
+    if (v && !v.paused) v.pause();
+    const box = document.createElement('div');
+    box.className = 'session-expired-overlay';
+    box.innerHTML = `
+        <div class="session-expired-card">
+            <h3>Your session expired</h3>
+            <p>${escapeHtmlCr(contextMsg || 'You were signed out, so that could not be saved.')}</p>
+            <p class="se-sub">Sign in again and you can pick up where you left off — your progress is saved.</p>
+            <button class="se-btn" onclick="window.location.reload()">Log in again</button>
+        </div>`;
+    document.body.appendChild(box);
+    setTimeout(() => window.location.reload(), 8000);
+}
+
 // ═══ CLASSROOM CHECKPOINT MCQ (non-skippable) ═══
 
 // Display order of the options: crCpOrder[displayPosition] = original index.
@@ -2121,6 +2149,19 @@ async function crSubmitCheckpoint() {
                 checkpoint_time: crActiveCheckpoint.checkpoint_time, selected_index: crCpOrder[crCpSelected],
                 confidence: crCpConfidence, time_to_answer_sec: tta, attempts: crMcqAttempts })
         });
+        if (resp.status === 401 || resp.status === 403) {
+            crSessionExpired('You were signed out, so your answer could not be graded.');
+            return;
+        }
+        if (!resp.ok) {
+            // A server error is not a wrong answer. Saying "Not quite" here teaches
+            // the learner their correct answer was wrong.
+            document.getElementById('crCpFeedback').innerHTML =
+                `<div class="cp-wrong">⚠️ Could not reach the server (error ${resp.status}). Your answer was not graded — try again.</div>`;
+            submitBtn.textContent = 'Submit Answer';
+            submitBtn.disabled = false;
+            return;
+        }
         const data = await resp.json();
         const fb = document.getElementById('crCpFeedback');
         if (data.is_correct) {
@@ -2493,7 +2534,16 @@ async function sendClassroomMessage() {
                 timestamp: askTimestamp,
             }),
         });
-        
+
+        if (response.status === 401 || response.status === 403) {
+            classroomChatMessages.pop();          // drop the empty streaming bubble
+            renderClassroomMessages();
+            classroomIsStreaming = false;
+            document.getElementById('classroomSendBtn').disabled = false;
+            crSessionExpired('You were signed out, so your question could not be answered.');
+            return;
+        }
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';

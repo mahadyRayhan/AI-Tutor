@@ -23,6 +23,13 @@ services:
       - SMTP_PASSWORD
       - SMTP_FROM
       - SAGE_BASE_URL
+      # Session signing. With SAGE_JWT_SECRET unset, auth.py mints a RANDOM key per
+      # process, so every container restart invalidates every cookie and signs all
+      # students out mid-lecture — which is why the checkpoint 401 shows up right
+      # after a deploy. Setting it makes sessions survive restarts.
+      - SAGE_JWT_SECRET
+      - SAGE_SESSION_HOURS
+      - SAGE_COOKIE_SECURE
       - PYTHONPATH=/app
     volumes:
       # Maps host folder to the root (for absolute path code)
