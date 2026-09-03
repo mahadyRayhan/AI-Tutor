@@ -116,19 +116,9 @@ class FastClassifier:
         if any(kw in q_lower for kw in quiz_keywords):
             return "QUIZ"
 
-        # 4. Off-topic detection (before keyword rules — catches non-C queries)
+        # 4. C-vocabulary probe (used by the off-topic check below and by steps 7-8).
         query_words = set(re.findall(r'[a-z_]+', q_lower))
         has_c_terms = bool(query_words & self.C_CONCEPT_TERMS)
-
-        if not has_c_terms:
-            off_topic_signals = (
-                "weather", "joke", "poem", "song", "recipe", "cook", "bake",
-                "movie", "music", "sport", "football", "soccer", "basketball",
-                "world cup", "president", "capital of", "history of",
-                "tell me a", "sing", "dance", "love", "pasta", "pizza",
-            )
-            if any(s in q_lower for s in off_topic_signals):
-                return "OFF_TOPIC"
 
         # 5. Deterministic Keyword Rules (broad coverage so few queries reach the
         #    fragile embedding fallback). Order matters: CONCEPT before PROBLEM so
@@ -186,6 +176,20 @@ class FastClassifier:
         if any(q_lower.startswith(p) for p in task_verbs):
             return "PROBLEM"
 
+        # 5c. Off-topic detection. Runs AFTER the deterministic rules, not before:
+        #     it used to fire first, so "Write a C program that converts Fahrenheit
+        #     to Celsius ... using the formula" was labelled OFF_TOPIC and earned a
+        #     focus-mode strike, because the explicit "write a c program" rule below
+        #     it never got to run. An unambiguous programming request is never
+        #     off-topic, whatever else the sentence happens to contain.
+        #
+        #     Matched on WORD BOUNDARIES. As plain substrings these signals fire on
+        #     ordinary technical English: "sing" inside "u-sing", "sport" inside
+        #     "support"/"transport", "cook" inside "cookie", "dance" inside
+        #     "abundance", "love" inside "gloves".
+        if not has_c_terms and self._OFF_TOPIC_RE.search(q_lower):
+            return "OFF_TOPIC"
+
         # 6. Model Inference (ambiguous queries only). SECURITY_RISK is
         #    intentionally EXCLUDED here: fuzzy embedding matches on innocent
         #    words ("file", "give me") caused false blocks. Real security is
@@ -229,6 +233,14 @@ class FastClassifier:
         return ""
 
     # Known C-programming concepts for entity validation
+    # Off-topic signals, matched with \b so they cannot fire inside a longer word.
+    _OFF_TOPIC_RE = re.compile(r"\b(?:" + "|".join([
+        "weather", "joke", "poem", "song", "recipe", "cook", "bake",
+        "movie", "music", "sport", "football", "soccer", "basketball",
+        "world cup", "president", "capital of", "history of",
+        "tell me a", "sing", "dance", "love", "pasta", "pizza",
+    ]) + r")\b")
+
     C_CONCEPT_TERMS = {
         # Core concepts
         "pointer", "pointers", "array", "arrays", "struct", "structs", "structure",

@@ -20,6 +20,15 @@ if config.INTENT_CLASSIFIER_MODE == "fast":
 
 class SentinelAgent(BaseAgent):
     
+    # Off-topic vocabulary, anchored to word boundaries so a keyword cannot match
+    # inside a longer, perfectly on-topic word.
+    _OFF_TOPIC_RE = re.compile(r"\b(?:" + "|".join([
+        "bake", "baking", "cook", "cooking", "recipe", "weather", "president",
+        "capital of", "sing", "song", "poem", "joke", "movie", "football",
+        "basketball", "soccer", "baseball", "tennis", "history", "geography",
+        "python", "java", "javascript", "html", "css", "pizza", "pasta",
+    ]) + r")\b")
+
     # --- CONFIGURATION TOGGLE ---
     # Set to True to enable the slower but smarter LLM Safety Check
     ENABLE_AI_SAFETY_JUDGE = True
@@ -516,14 +525,13 @@ class SentinelAgent(BaseAgent):
         # RULE 4: S_spam (Attention Hijacking Filter)
         # S_spam = 0 if I_q = OFF_TOPIC AND N_strike >= τ_strike
         # =========================================================
-        off_topic_keywords = [
-            "bake", "baking", "cook", "cooking", "recipe", "weather", "president",
-            "capital of", "sing", "song", "poem", "joke", "movie", "football",
-            "basketball", "soccer", "baseball", "tennis", "history", "geography", 
-            "python", "java ", "javascript", "html", "css", "pizza", "pasta"
-        ]
+        # Matched on WORD BOUNDARIES (see _OFF_TOPIC_RE). As bare substrings these
+        # fire inside ordinary technical English — "sing" in "u-sing", "cook" in
+        # "cookie", "history" in "prehistory" — and every hit here costs the learner
+        # a focus-mode strike, three of which lock the tutor.
         is_analogy = any(w in query_lower for w in ["like a", "analogy", "metaphor", "compare", "imagine"])
-        is_off_topic = (any(kw in query_lower for kw in off_topic_keywords) and not has_c_context and not is_analogy)
+        is_off_topic = (bool(self._OFF_TOPIC_RE.search(query_lower))
+                        and not has_c_context and not is_analogy)
         
         if is_off_topic or state.intent == "OFF_TOPIC":
             # Increment Strike in DB
