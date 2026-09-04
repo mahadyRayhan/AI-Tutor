@@ -2,10 +2,13 @@
 
 # from datetime import datetime
 # from typing import Optional, Dict, List
-# from passlib.context import CryptContext
+# import logging
+from passlib.context import CryptContext
 # from app.db.sqlite_db import db # Import our new DB logic
 
-# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# logger = logging.getLogger(__name__)
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # class UserManager:
 #     def __init__(self):
@@ -224,6 +227,26 @@ class UserManager:
 
         except Exception as e:
             print(f"Signup error: {e}")
+            return False
+
+    def find_by_email(self, email: str) -> Optional[Dict]:
+        """Look up an account by email (case-insensitive). None if no match."""
+        if not email or not email.strip():
+            return None
+        row = db.fetch_one(
+            "SELECT username, role, name, email, is_blocked FROM users "
+            "WHERE LOWER(email) = LOWER(?)", (email.strip(),))
+        return dict(row) if row else None
+
+    def set_password(self, username: str, new_password: str) -> bool:
+        """Replace a user's password. Uses the same normalization as signup —
+        SHA-256 then bcrypt — so the hash is what authenticate() expects."""
+        try:
+            db.execute("UPDATE users SET password_hash = ? WHERE username = ?",
+                       (pwd_context.hash(_normalize_password(new_password)), username))
+            return True
+        except Exception as e:
+            logger.error(f"set_password failed for {username}: {e}")
             return False
 
     def get_all_users(self, page: int = 1, page_size: int = 10) -> List[Dict]:

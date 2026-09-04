@@ -294,7 +294,16 @@
             .grid-container { grid-template-columns: 1fr; }
             .full-width { grid-column: span 1; }
         }
-    </style>
+    
+    /* Prelab save spinner */
+    .pl-spin {
+        display:inline-block; width:.8em; height:.8em; margin-right:.4em;
+        vertical-align:-.1em; border:2px solid rgba(255,255,255,.35);
+        border-top-color:#fff; border-radius:50%; animation:pl-rot .7s linear infinite;
+    }
+    @keyframes pl-rot { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .pl-spin { animation-duration: 2.5s; } }
+</style>
 </head>
 <body>
 
@@ -320,6 +329,28 @@
 
     <!-- 0. ACTION TRIAGE — LANDING VIEW (named mechanism per learner, from the 3-tier BKT) -->
     <div class="grid-container" data-tab="NOW">
+        <!-- Struggle signal from affect_log (~3.3k rows), previously write-only. -->
+        <div class="card full-width">
+            <h2>😟 Struggling Students</h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                Share of turns showing confusion or frustration. A rate, not a count, so a
+                student is not flagged merely for asking a lot of questions.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+                <select id="affectDays" onchange="loadFrustration()"
+                        style="padding:8px; background:#0f1115; border:1px solid #2a2f3a;
+                               border-radius:8px; color:#e2e8f0;">
+                    <option value="7">Last 7 days</option>
+                    <option value="14" selected>Last 14 days</option>
+                    <option value="30">Last 30 days</option>
+                    <option value="3650">All time</option>
+                </select>
+                <button class="btn" onclick="loadFrustration()">Refresh</button>
+            </div>
+            <div id="affectSummary" style="display:none;"></div>
+            <div id="affectHot" style="margin:14px 0;"></div>
+            <div id="affectBody" style="overflow-x:auto;"></div>
+        </div>
         <div class="card full-width">
             <h2>🚩 Who needs me today
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— students grouped by what's happening, so one issue is one row. Expand to see who, or act on the whole group.</span>
@@ -344,6 +375,29 @@
     <!-- 1. USER MANAGEMENT (New & Improved) -->
     <!-- ================= CONTENT: lecture catalog ================= -->
     <div class="grid-container" data-tab="CONTENT">
+
+        <!-- Watch + quiz analytics. The telemetry tables were write-only before
+             this: coverage, engagement and MCQ results were all being collected
+             with no way to read them back. -->
+        <div class="card full-width">
+            <h2>📊 Lecture Engagement</h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                Who watched, how much they actually attended, and how they did on the
+                in-video checkpoints.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
+                <select id="analyticsVideo" onchange="loadVideoAnalytics()"
+                        style="flex:1; min-width:280px; padding:9px; background:#0f1115;
+                               border:1px solid #2a2f3a; border-radius:8px; color:#e2e8f0;">
+                    <option value="">Select a lecture…</option>
+                </select>
+                <button class="btn" onclick="loadVideoAnalytics()">Refresh</button>
+            </div>
+            <div id="analyticsSummary" style="display:none; margin-bottom:16px;"></div>
+            <div id="analyticsCheckpoints" style="display:none; margin-bottom:16px;"></div>
+            <div id="analyticsBody" style="overflow-x:auto;"></div>
+        </div>
+
         <div class="card full-width">
             <h2>🎬 Upload a Lecture Recording</h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 14px;">
@@ -396,7 +450,7 @@
                 <table id="userTable">
                     <thead>
                         <tr>
-                            <th>Username</th>
+                            <th>Email</th>
                             <th>Name</th>
                             <th>Role</th>
                             <th>University</th>
@@ -464,6 +518,29 @@
 
     <!-- CLASS headline: Where the class stands -->
     <div class="grid-container" data-tab="CLASS">
+        <!-- Path deviation: where students leave the recommended sequence. -->
+        <div class="card full-width">
+            <h2>🧭 Learning Path Deviation</h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                Whether students follow the recommended order, jump ahead, revisit, or wander
+                off — and which concept they sit on longest.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+                <select id="pathDays" onchange="loadPathDeviation()"
+                        style="padding:8px; background:#0f1115; border:1px solid #2a2f3a;
+                               border-radius:8px; color:#e2e8f0;">
+                    <option value="7">Last 7 days</option>
+                    <option value="14" selected>Last 14 days</option>
+                    <option value="30">Last 30 days</option>
+                    <option value="3650">All time</option>
+                </select>
+                <button class="btn" onclick="loadPathDeviation()">Refresh</button>
+            </div>
+            <div id="pathNotice"></div>
+            <div id="pathSummary" style="display:none;"></div>
+            <div id="pathStalls" style="margin:14px 0;"></div>
+            <div id="pathBody" style="overflow-x:auto;"></div>
+        </div>
         <div class="card full-width">
             <h2>🏫 Where the class stands
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— each topic, split by whether students can explain it, complete code, or write it from scratch. Sorted by what needs you most.</span>
@@ -527,7 +604,7 @@
                 <table id="riskTable">
                     <thead>
                         <tr>
-                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('id')">Student ID<span class="sort-ind" data-key="id" style="opacity:.3;"> ⇅</span></th>
+                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('id')">Student<span class="sort-ind" data-key="id" style="opacity:.3;"> ⇅</span></th>
                             <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('risk')">Risk<span class="sort-ind" data-key="risk" style="opacity:.3;"> ⇅</span></th>
                             <th>Reason</th>
                             <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('mastery')">Mastery %<span class="sort-ind" data-key="mastery" style="opacity:.3;"> ⇅</span></th>
@@ -633,7 +710,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <h2 style="margin:0; font-size:1.4rem;">
-                👤 <span id="modalStudentId">Student_XX</span> 
+                👤 <span id="modalStudentId">…</span> 
                 <span id="modalRiskBadge" class="status-badge"></span>
             </h2>
             <button class="close-modal" onclick="closeModal()">×</button>
@@ -676,6 +753,11 @@
     const RISK_VIEW_SIZE = 10;
     const PAGE_SIZE = 10;
     const USER_ID_MAP = {};
+    // username -> email for the whole roster, loaded once at page load. Usernames
+    // and the anonymised Student_NN labels are unmatchable against a class list,
+    // so every table LABELS students by email while still keying actions on the
+    // username. Empty until loadEmailMap() resolves; sLabel falls back until then.
+    const EMAIL_MAP = {};
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
     const FILE_RULES = {
         'code': { 
@@ -882,7 +964,9 @@
             const color = MECH_COLOR[cl.mechanism] || '#7f8c8d';
             const meta = MECH_ACTION[cl.mechanism] || { verb: 'Act', label: cl.mechanism };
             const n = cl.students.length;
-            const who = n === 1 ? cl.students[0].display_id : `${n} students`;
+            const who = n === 1
+                ? escapeHtml(sLabel(cl.students[0].hidden_username, cl.students[0].display_id))
+                : `${n} students`;
             return `<tr>
                 <td style="white-space:nowrap;">
                     <span onclick="toggleCluster(${i})" style="cursor:pointer; font-weight:600; color:#2c3e50;">
@@ -910,7 +994,7 @@
         if (!cl || !detail) return;
         detail.innerHTML = cl.students.map(s =>
             `<span onclick="openStudentModal('${s.hidden_username}','${s.display_id}','','${encodeURIComponent('{}')}')"
-                style="display:inline-block; cursor:pointer; font-family:monospace; font-size:0.8rem; color:#2980b9; background:#eef4fb; padding:2px 8px; border-radius:6px; margin:2px 4px 2px 0;">${s.display_id}</span>`).join('');
+                style="display:inline-block; cursor:pointer; font-family:monospace; font-size:0.8rem; color:#2980b9; background:#eef4fb; padding:2px 8px; border-radius:6px; margin:2px 4px 2px 0;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</span>`).join('');
     }
 
     // Batch action: log the prescribed action for EVERY student in the cluster, each with
@@ -1081,11 +1165,40 @@
         if (statsEl) {
             statsEl.innerHTML =
                 mhTile(ev.count, '⚠ Evasion attempts (security)', `${ev.learners} learners · peak risk ${ev.max_risk != null ? ev.max_risk : '—'}`, '#d03b3b') +
+                // Wellbeing gates are NOT security events. A student stopped because
+                // they are overwhelmed was protected, not caught, and showing the two
+                // in one number misreads care as misconduct.
+                mhTile(d.cog_total || 0, '🧠 Cognitive breaks (wellbeing)', 'overload / rage / disengagement', '#8b5cf6') +
+                mhTile(d.integrity_total || 0, '📋 Integrity holds', 'solution withheld, work requested', '#e0952a') +
+                mhTile(d.focus_total || 0, '🎯 Focus nudges', 'off-topic / attention drift', '#0e9488') +
                 mhTile(d.ped_total, 'Curriculum redirects (pedagogy)', 'tutor guiding, not threats', '#2a78d6') +
                 mhTile(d.total_turns, 'Total turns', `${d.total_gated} gated`, '#2c3e50');
         }
-        const maxN = Math.max(ev.count, ...(d.pedagogical || []).map(p => p.count), 1);
+        const allBuckets = [].concat(d.cognitive || [], d.integrity || [],
+                                     d.focus || [], d.policy || [], d.pedagogical || []);
+        const maxN = Math.max(ev.count, ...allBuckets.map(p => p.count), 1);
         let html = '';
+
+        // Non-security gates, grouped by what the block was FOR.
+        const groups = [
+            ['🧠 Wellbeing — student was protected', d.cognitive,  '#8b5cf6'],
+            ['📋 Academic integrity — solution withheld', d.integrity, '#e0952a'],
+            ['🎯 Focus — brought back on task', d.focus, '#0e9488'],
+            ['🔒 Instructor policy', d.policy, '#64748b'],
+        ];
+        groups.forEach(([title, rows, color]) => {
+            if (!rows || !rows.length) return;
+            html += `<div style="margin:14px 0 6px; font-size:0.82rem; color:#2c3e50; font-weight:600;">${title}</div>`;
+            rows.forEach(r => { html += secBar(r.reason, r.count, r.learners, maxN, color); });
+        });
+
+        if (!(d.cog_total || d.focus_total || d.integrity_total || d.policy_total)) {
+            html += `<div style="margin:14px 0; padding:9px 12px; background:#f6f7f4;
+                        border:1px solid #e2e5df; border-radius:6px; font-size:0.78rem; color:#5b6470;">
+                     No cognitive, integrity, or focus blocks recorded yet. These reasons were
+                     previously overwritten with the turn's intent before being stored; they
+                     accumulate from new turns onward.</div>`;
+        }
 
         // What students are actually trying — the academic-integrity signal.
         const techs = d.techniques || [];
@@ -1171,7 +1284,7 @@
 
         let html = `<table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
             <thead><tr style="text-align:left; color:#7f8c8d; border-bottom:2px solid #eee;">
-                <th style="padding:8px 6px;">Student ID</th>
+                <th style="padding:8px 6px;">Student</th>
                 <th style="padding:8px 6px;">Topic</th>
                 <th style="padding:8px 6px;">Fades in</th>
                 <th style="padding:8px 6px;">First skill to go</th>
@@ -1181,7 +1294,7 @@
             const col = fcUrgencyColor(it.days_to_lapse);
             const when = it.days_to_lapse < 1 ? '&lt;1 day' : `${it.days_to_lapse.toFixed(1)} days`;
             html += `<tr class="clickable-row" onclick="openStudentModal('${it.hidden_username}', '${it.display_id}', '', '${encodeURIComponent('{}')}')" style="border-bottom:1px solid #f4f4f4;">
-                <td style="padding:8px 6px; font-family:monospace; font-weight:600; color:#2c3e50;">${it.display_id}</td>
+                <td style="padding:8px 6px; font-family:monospace; font-weight:600; color:#2c3e50;">${escapeHtml(sLabel(it.hidden_username, it.display_id))}</td>
                 <td style="padding:8px 6px;">${it.concept}</td>
                 <td style="padding:8px 6px;"><span style="background:${col}; color:#fff; padding:2px 10px; border-radius:12px; font-weight:600; font-variant-numeric:tabular-nums;">${when}</span></td>
                 <td style="padding:8px 6px; color:#555;">${it.first_tier_label} <span style="color:#aaa;">(now ${it.tier_pct_now}%)</span></td>
@@ -1268,7 +1381,7 @@
         let h = `<table style="width:100%; border-collapse:collapse; font-size:0.8rem;"><tbody>`;
         (t.students || []).forEach(s => {
             h += `<tr onclick="event.stopPropagation(); openStudentModal('${s.hidden_username}','${s.display_id}','','${encodeURIComponent('{}')}')" style="cursor:pointer; border-bottom:1px solid #f0f0f0;">
-                <td style="padding:4px 6px; font-family:monospace; color:#2c3e50;">${s.display_id}</td>
+                <td style="padding:4px 6px; font-family:monospace; color:#2c3e50;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</td>
                 <td style="padding:4px 6px; color:${cellCol(s.explain)};">explain ${s.explain}%</td>
                 <td style="padding:4px 6px; color:${cellCol(s.complete)};">complete ${s.complete}%</td>
                 <td style="padding:4px 6px; color:${cellCol(s.write)};">write ${s.write}%</td>
@@ -1339,7 +1452,7 @@
         if (!box || !r) return;
         if (box.style.display === 'none') {
             box.innerHTML = '<b>Weakest first:</b> ' + r.group.map(s =>
-                `<span style="display:inline-block; background:#f1f3f5; border-radius:10px; padding:1px 8px; margin:2px 3px; white-space:nowrap;">${s.display_id} <span style="color:#999;">·${s.weakest}%</span></span>`).join('');
+                `<span style="display:inline-block; background:#f1f3f5; border-radius:10px; padding:1px 8px; margin:2px 3px; white-space:nowrap;">${escapeHtml(sLabel(s.hidden_username, s.display_id))} <span style="color:#999;">·${s.weakest}%</span></span>`).join('');
             box.style.display = 'block';
         } else { box.style.display = 'none'; }
     }
@@ -1561,7 +1674,7 @@
                     : '<span style="color:#aaa;">—</span>';
                 tbody.innerHTML += `
                     <tr>
-                        <td><b>${m.display_id}</b></td>
+                        <td><b>${escapeHtml(sLabel(m.hidden_username, m.display_id))}</b></td>
                         <td>${badge}</td>
                         <td style="font-size:0.85rem; color:#555;">${m.risk_reason}</td>
                         <td>${m.avg_frustration} <span style="color:#aaa; font-size:0.75rem;">(${m.turns} turns)</span></td>
@@ -1578,7 +1691,8 @@
     }
 
     async function pushQuickChallenge(username, displayId) {
-        const question = prompt(`Send a custom micro-challenge to ${displayId}:`);
+        const who = sLabel(username, displayId);
+        const question = prompt(`Send a custom micro-challenge to ${who}:`);
         if (!question || !question.trim()) return;
         try {
             await fetch(`${API_URL}/api/v1/assignments/create`, {
@@ -1586,7 +1700,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ teacher: currentUser.username, student: username, question: question })
             });
-            alert(`✅ Challenge sent to ${displayId}`);
+            alert(`✅ Challenge sent to ${who}`);
         } catch (e) {
             alert("❌ Failed to send challenge.");
         }
@@ -1689,8 +1803,9 @@
 
                 tbody.innerHTML += `
                     <tr>
-                        <td style="font-weight:600;">${u.username}</td>
-                        <td>${u.name || '-'}</td>
+                        <td style="font-weight:600;">${escapeHtml(u.email || u.username)}
+                            ${u.email ? `<div style="font-weight:400; font-size:0.75rem; color:#95a5a6;">${escapeHtml(u.username)}</div>` : ''}</td>
+                        <td>${escapeHtml(u.name || '-')}</td>
                         <td>${roleSelect}</td>
                         <td>${u.university || '-'}</td>
                         <td>${blockSwitch}</td>
@@ -1847,10 +1962,6 @@
     function riskSeverityRank(tier) {
         return ({ Critical: 4, High: 3, Watch: 2, OK: 1, 'No Data': 0 })[tier] ?? 0;
     }
-    function riskStudentNum(id) {
-        const m = String(id || '').match(/(\d+)/);
-        return m ? parseInt(m[1], 10) : 0;
-    }
     function parseActiveMinutes(str) {
         if (!str) return -1;
         const h = String(str).match(/(\d+)\s*h/);
@@ -1865,6 +1976,7 @@
         let rows = RISK_ALL;
         if (q) {
             rows = rows.filter(s =>
+                sLabel(s.hidden_username, s.display_id).toLowerCase().includes(q) ||
                 (s.display_id || '').toLowerCase().includes(q) ||
                 (s.risk_tier || '').toLowerCase().includes(q) ||
                 (s.risk_reason_m || '').toLowerCase().includes(q) ||
@@ -1878,7 +1990,8 @@
         return rows.slice().sort((a, b) => {
             let av, bv;
             switch (key) {
-                case 'id':      av = riskStudentNum(a.display_id);   bv = riskStudentNum(b.display_id);   break;
+                case 'id':      av = sLabel(a.hidden_username, a.display_id).toLowerCase();
+                                bv = sLabel(b.hidden_username, b.display_id).toLowerCase();   break;
                 case 'risk':    av = riskSeverityRank(a.risk_tier);  bv = riskSeverityRank(b.risk_tier);  break;
                 case 'mastery': av = (a.avg_mastery_pct != null ? a.avg_mastery_pct : -1); bv = (b.avg_mastery_pct != null ? b.avg_mastery_pct : -1); break;
                 case 'active':  av = (a._activeMin == null ? -1 : a._activeMin); bv = (b._activeMin == null ? -1 : b._activeMin); break;
@@ -1931,7 +2044,7 @@
                     : '<span style="color:#aaa;">—</span>';
                 tbody.innerHTML += `
                     <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${tier}', '${masteryStr}')">
-                        <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
+                        <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</td>
                         <td>${riskBadge}</td>
                         <td style="font-size:0.85rem; color:#555;">${s.risk_reason_m || '—'}</td>
                         <td>${masteryPct}</td>
@@ -2115,7 +2228,7 @@
         
         // 1. Update Header to include Active Time Dropdown
         thead.innerHTML = `
-            <th>Student ID</th>
+            <th>Student</th>
             <th>
                 Attention Needed 
                 <div class="info-icon">ⓘ
@@ -2172,7 +2285,7 @@
 
             tbody.innerHTML += `
                 <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${s.risk_level}', '${masteryStr}')">
-                    <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
+                    <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</td>
                     <td>${riskBadge}</td>
                     
                     <!-- NEW: Active Time Cell -->
@@ -2449,7 +2562,7 @@
 
     async function openStudentModal(realUsername, displayId, riskLevel, masteryJson) {
         // 1. Header setup
-        document.getElementById('modalStudentId').innerText = displayId;
+        document.getElementById('modalStudentId').innerText = sLabel(realUsername, displayId);
         document.getElementById('studentModal').dataset.student = realUsername;
         // Badge is set from the fetched conjunctive flag (below), NOT the passed-in
         // risk tier — one severity function, so the modal can't disagree with Triage.
@@ -2650,7 +2763,398 @@
     // Initialize rules on page load
     // ── Tab navigation (NOW / CLASS / NEXT / SETUP / SYSTEM) ──
     const TAB_KEY = 'sage_teacher_tab';
+    // ================= NOW TAB: struggling students =======================
+    async function loadFrustration() {
+        const days = document.getElementById('affectDays').value;
+        const sum = document.getElementById('affectSummary');
+        const hot = document.getElementById('affectHot');
+        const body = document.getElementById('affectBody');
+        body.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading…</div>';
+        try {
+            const d = await fetch(`${API_URL}/api/v1/analytics/frustration?days=${days}`,
+                                  { headers: TEACHER_HDR() }).then(r => r.json());
+            const S = d.summary;
+            sum.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:6px;';
+            sum.innerHTML =
+                statTile('Active students', S.students, 'with recorded turns') +
+                statTile('Struggle rate', S.struggle_pct + '%', 'of all turns') +
+                statTile('At risk', S.at_risk, '≥20% struggle, ≥5 turns') +
+                statTile('Turns', S.turns, 'in this window');
+
+            hot.innerHTML = d.hot_concepts.length
+                ? '<div style="font-size:12px; color:#94a3b8; margin-bottom:8px;">Concepts where confusion clusters</div>' +
+                  d.hot_concepts.map(c => `<span style="display:inline-block; margin:0 6px 6px 0;
+                       padding:5px 11px; border-radius:999px; font-size:12px;
+                       background:#f8717118; color:#fca5a5; border:1px solid #f8717144;">
+                       ${escapeHtml(c.concept)} <strong>${c.n}</strong></span>`).join('')
+                : '';
+
+            if (!d.students.length) {
+                body.innerHTML = '<div style="color:#64748b; font-size:13px;">No affect data in this window.</div>';
+                return;
+            }
+            // Only students with enough turns to mean something. One confused turn
+            // out of one is 100% and tells you nothing.
+            const shown = d.students.filter(s => s.turns >= 3).slice(0, 40);
+            body.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead><tr style="text-align:left; color:#64748b; font-size:11px; text-transform:uppercase;">
+                  <th style="padding:8px 10px;">Student</th><th style="padding:8px 10px;">Struggle</th>
+                  <th style="padding:8px 10px;">Confusion</th><th style="padding:8px 10px;">Frustration</th>
+                  <th style="padding:8px 10px;">Turns</th><th style="padding:8px 10px;">Last active</th>
+                </tr></thead><tbody>` +
+              shown.map(s => {
+                const tone = s.struggle_pct >= 40 ? 'bad' : s.struggle_pct >= 20 ? 'warn' : 'good';
+                return `<tr style="border-top:1px solid #1e2430;">
+                  <td style="padding:9px 10px; font-weight:600;">${escapeHtml(sLabel(s.username))}</td>
+                  <td style="padding:9px 10px;">${pill(s.struggle_pct + '%', tone)}</td>
+                  <td style="padding:9px 10px;">${s.confusion}</td>
+                  <td style="padding:9px 10px;">${s.frustration}</td>
+                  <td style="padding:9px 10px; color:#94a3b8;">${s.turns}</td>
+                  <td style="padding:9px 10px; color:#64748b; font-size:11px;">${(s.last_seen||'').slice(0,10)}</td>
+                </tr>`; }).join('') + '</tbody></table>' +
+              `<div style="color:#64748b; font-size:11px; margin-top:8px;">
+                 Showing ${shown.length} of ${d.students.length} students (minimum 3 turns).</div>`;
+        } catch (e) {
+            body.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load (${e.message}).</div>`;
+        }
+    }
+
+    function statTile(label, value, sub) {
+        return `<div style="flex:1; min-width:140px; background:#0f1115; border:1px solid #2a2f3a;
+                     border-radius:10px; padding:12px 14px;">
+            <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:.04em;">${label}</div>
+            <div style="font-size:22px; font-weight:700; margin-top:4px;">${value}</div>
+            <div style="font-size:11px; color:#64748b; margin-top:2px;">${sub || ''}</div></div>`;
+    }
+
+    // ================= CLASS TAB: learning path deviation =================
+    const DEV_META = {
+        on_path:    { label: 'On path',    tone: 'good', hint: 'following the recommended order' },
+        revisit:    { label: 'Revisit',    tone: 'mute', hint: 'returning to something already mastered' },
+        skip_ahead: { label: 'Skip ahead', tone: 'warn', hint: 'asking about locked prerequisites' },
+        off_path:   { label: 'Off path',   tone: 'bad',  hint: 'outside the curriculum entirely' },
+    };
+
+    async function loadPathDeviation() {
+        const days = document.getElementById('pathDays').value;
+        const notice = document.getElementById('pathNotice');
+        const sum = document.getElementById('pathSummary');
+        const stalls = document.getElementById('pathStalls');
+        const body = document.getElementById('pathBody');
+        body.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading…</div>';
+        try {
+            const d = await fetch(`${API_URL}/api/v1/analytics/path-deviation?days=${days}`,
+                                  { headers: TEACHER_HDR() }).then(r => r.json());
+
+            const classified = d.by_type.reduce((a, t) => a + t.n, 0);
+
+            // Be explicit that pre-fix rows are excluded rather than counted as 0.
+            notice.innerHTML = d.unclassified
+                ? `<div style="padding:9px 12px; background:#fbbf2410; border:1px solid #fbbf2444;
+                        border-radius:8px; font-size:12px; color:#fcd34d; margin-bottom:12px;">
+                     ${d.unclassified} earlier events are unclassified and excluded — they were
+                     recorded before path logging was fixed, and the path they deviated from
+                     was never stored. New turns classify correctly.</div>`
+                : '';
+
+            if (!classified) {
+                sum.style.display = 'none'; stalls.innerHTML = '';
+                body.innerHTML = '<div style="color:#64748b; font-size:13px;">' +
+                    'No classified path events yet. These accumulate as students chat.</div>';
+                return;
+            }
+
+            sum.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap;';
+            sum.innerHTML = d.by_type.map(t => {
+                const meta = DEV_META[t.deviation_type] || { label: t.deviation_type, hint: '' };
+                return statTile(meta.label, `${Math.round(100*t.n/classified)}%`, `${t.n} · ${meta.hint}`);
+            }).join('');
+
+            stalls.innerHTML = d.stall_points.length
+                ? '<div style="font-size:12px; color:#94a3b8; margin-bottom:8px;">' +
+                  'Stall points — concepts the class sits on longest before moving past</div>' +
+                  d.stall_points.map(sp => `<span style="display:inline-block; margin:0 6px 6px 0;
+                      padding:5px 11px; border-radius:999px; font-size:12px;
+                      background:#fbbf2418; color:#fcd34d; border:1px solid #fbbf2444;">
+                      ${escapeHtml(sp.concept)} <strong>${sp.asks}</strong>
+                      <span style="opacity:.7">· ${sp.students} students</span></span>`).join('')
+                : '';
+
+            body.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead><tr style="text-align:left; color:#64748b; font-size:11px; text-transform:uppercase;">
+                  <th style="padding:8px 10px;">Student</th><th style="padding:8px 10px;">On path</th>
+                  <th style="padding:8px 10px;">Skip ahead</th><th style="padding:8px 10px;">Revisit</th>
+                  <th style="padding:8px 10px;">Off path</th><th style="padding:8px 10px;">Currently on</th>
+                </tr></thead><tbody>` +
+              d.students.map(s => {
+                const tone = s.on_path_pct >= 60 ? 'good' : s.on_path_pct >= 30 ? 'warn' : 'bad';
+                return `<tr style="border-top:1px solid #1e2430;">
+                  <td style="padding:9px 10px; font-weight:600;">${escapeHtml(sLabel(s.username))}</td>
+                  <td style="padding:9px 10px;">${pill(s.on_path_pct + '%', tone)}
+                      <span style="color:#64748b; font-size:11px;"> ${s.on_path}/${s.total}</span></td>
+                  <td style="padding:9px 10px;">${s.skip_ahead || '—'}</td>
+                  <td style="padding:9px 10px;">${s.revisit || '—'}</td>
+                  <td style="padding:9px 10px;">${s.off_path || '—'}</td>
+                  <td style="padding:9px 10px; color:#94a3b8;">${escapeHtml(s.stuck_on || '—')}</td>
+                </tr>`; }).join('') + '</tbody></table>';
+        } catch (e) {
+            body.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load (${e.message}).</div>`;
+        }
+    }
+
+    // ================= CONTENT TAB: lecture engagement analytics =========
+    function pill(text, tone) {
+        const c = { good:'#34d399', warn:'#fbbf24', bad:'#f87171', mute:'#64748b' }[tone] || '#64748b';
+        return `<span style="display:inline-block; padding:2px 8px; border-radius:999px;
+                 font-size:11px; font-weight:600; color:${c};
+                 background:${c}22; border:1px solid ${c}55;">${text}</span>`;
+    }
+
+    function mmss(sec) {
+        sec = Math.max(0, Math.round(sec || 0));
+        return `${Math.floor(sec/60)}:${String(sec%60).padStart(2,'0')}`;
+    }
+
+    // Populate the picker from catalog slots that actually have a recording.
+    function fillAnalyticsPicker(catalog) {
+        const sel = document.getElementById('analyticsVideo');
+        if (!sel) return;
+        const prev = sel.value;
+        const opts = ['<option value="">Select a lecture…</option>'];
+        (catalog || []).forEach(ch => (ch.videos || []).forEach(v => {
+            if (v.filename) {
+                opts.push(`<option value="${escapeHtml(v.filename)}">Ch${ch.number} · ${escapeHtml(v.title)}</option>`);
+            }
+        }));
+        sel.innerHTML = opts.join('');
+        if (prev) sel.value = prev;
+    }
+
+    async function loadVideoAnalytics() {
+        const fname = document.getElementById('analyticsVideo').value;
+        const body = document.getElementById('analyticsBody');
+        const sum  = document.getElementById('analyticsSummary');
+        const cps  = document.getElementById('analyticsCheckpoints');
+        if (!fname) {
+            body.innerHTML = ''; sum.style.display = 'none'; cps.style.display = 'none';
+            return;
+        }
+        body.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/analytics/${encodeURIComponent(fname)}`,
+                                    { headers: TEACHER_HDR() });
+            if (!res.ok) throw new Error(res.status);
+            const d = await res.json();
+
+            // ── Summary tiles ──
+            const S = d.summary;
+            const tile = (label, value, sub) => `
+                <div style="flex:1; min-width:140px; background:#0f1115; border:1px solid #2a2f3a;
+                            border-radius:10px; padding:12px 14px;">
+                    <div style="font-size:11px; color:#64748b; text-transform:uppercase;
+                                letter-spacing:.04em;">${label}</div>
+                    <div style="font-size:22px; font-weight:700; margin-top:4px;">${value}</div>
+                    <div style="font-size:11px; color:#64748b; margin-top:2px;">${sub || ''}</div>
+                </div>`;
+            sum.style.display = 'flex';
+            sum.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;';
+            sum.innerHTML =
+                tile('Students', S.students, 'opened this lecture') +
+                tile('Avg watched', S.avg_completion_pct + '%', S.finished_video + ' finished') +
+                tile('Avg inattention', S.avg_inattention_pct + '%', 'tab hidden while playing') +
+                tile('Final quiz', `${S.final_passed}/${S.final_attempted}`, 'passed / attempted') +
+                tile('Passed first try', S.final_first_try, 'on the final checkpoint');
+
+            // ── Per-checkpoint difficulty ──
+            if (d.checkpoints.length) {
+                cps.style.display = 'block';
+                cps.innerHTML =
+                    '<div style="font-size:12px; color:#94a3b8; margin-bottom:8px;">' +
+                    'Checkpoints — a low first-try rate means the question (or the segment before it) needs work.</div>' +
+                    d.checkpoints.map(cp => {
+                        const rate = cp.first_try_pct;
+                        const tone = rate === null ? 'mute' : rate >= 70 ? 'good' : rate >= 40 ? 'warn' : 'bad';
+                        return `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px;
+                                    background:#0f1115; border:1px solid #2a2f3a; border-radius:8px; margin-bottom:6px;">
+                            <span style="font-family:monospace; font-size:12px; color:#94a3b8; min-width:52px;">${mmss(cp.checkpoint_time)}</span>
+                            ${cp.is_final ? pill('FINAL','good') : ''}
+                            <span style="flex:1; font-size:13px; color:#cbd5e1;">${escapeHtml(cp.concept || '—')}</span>
+                            <span style="font-size:12px; color:#64748b;">${cp.attempted} attempted</span>
+                            ${pill((rate === null ? '—' : rate + '% first try'), tone)}
+                        </div>`;
+                    }).join('');
+            } else {
+                cps.style.display = 'block';
+                cps.innerHTML = '<div style="color:#64748b; font-size:13px;">No checkpoints generated for this lecture yet.</div>';
+            }
+
+            // ── Per-student table ──
+            if (!d.students.length) {
+                body.innerHTML = '<div style="color:#64748b; font-size:13px;">No student activity recorded for this lecture yet.</div>';
+                return;
+            }
+            body.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead><tr style="text-align:left; color:#64748b; font-size:11px; text-transform:uppercase;">
+                  <th style="padding:8px 10px;">Student</th>
+                  <th style="padding:8px 10px;">Watched</th>
+                  <th style="padding:8px 10px;">Inattention</th>
+                  <th style="padding:8px 10px;">Checkpoints</th>
+                  <th style="padding:8px 10px;">First try</th>
+                  <th style="padding:8px 10px;">Final quiz</th>
+                </tr></thead>
+                <tbody>` +
+                d.students.map(s => {
+                    const wTone = s.completion_pct >= 80 ? 'good' : s.completion_pct >= 40 ? 'warn' : 'bad';
+                    const iTone = s.inattention_pct >= 50 ? 'bad' : s.inattention_pct >= 20 ? 'warn' : 'good';
+                    let finalCell;
+                    if (!s.final_attempted)      finalCell = pill('not attempted', 'mute');
+                    else if (s.final_first_try)  finalCell = pill('passed · 1st try', 'good');
+                    else if (s.final_passed)     finalCell = pill(`passed · ${s.final_attempts} tries`, 'warn');
+                    else                         finalCell = pill(`failed · ${s.final_attempts} tries`, 'bad');
+                    return `<tr style="border-top:1px solid #1e2430;">
+                        <td style="padding:9px 10px; font-weight:600;">${escapeHtml(sLabel(s.username))}</td>
+                        <td style="padding:9px 10px;">${pill(s.completion_pct + '%', wTone)}
+                            <span style="color:#64748b; font-size:11px;"> ${mmss(s.watched_sec)}/${mmss(s.duration_sec)}</span></td>
+                        <td style="padding:9px 10px;">${pill(s.inattention_pct + '%', iTone)}</td>
+                        <td style="padding:9px 10px;">${s.checkpoints_passed}/${s.checkpoints_total}
+                            <span style="color:#64748b; font-size:11px;">(${s.checkpoints_attempted} tried)</span></td>
+                        <td style="padding:9px 10px;">${s.passed_first_try}
+                            ${s.needed_retries ? `<span style="color:#fbbf24; font-size:11px;">+${s.needed_retries} retried</span>` : ''}</td>
+                        <td style="padding:9px 10px;">${finalCell}</td>
+                    </tr>`;
+                }).join('') + '</tbody></table>';
+        } catch (e) {
+            body.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load analytics (${e.message}).</div>`;
+        }
+    }
+
     // ================= CONTENT TAB: lecture catalog =================
+    // ── Prelab question editor ───────────────────────────────────────────────
+    // One question per LINE: teachers paste a plain list, so that is what the box
+    // accepts. Blank lines are ignored, so pasted text with spacing still works.
+    const PRELAB_SEP = '\n';
+    const splitPrelab = (text) =>
+        (text || '').split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+
+    async function openPrelabEditor(filename, title) {
+        const existing = document.getElementById('prelabEditorPanel');
+        if (existing && existing.dataset.file === filename) { existing.remove(); return; }
+        if (existing) existing.remove();
+
+        let questions = [];
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/prelab-edit/${encodeURIComponent(filename)}`,
+                                    { headers: TEACHER_HDR() });
+            if (res.ok) questions = (await res.json()).questions || [];
+        } catch (e) { /* fall through to an empty box */ }
+
+        const panel = document.createElement('div');
+        panel.id = 'prelabEditorPanel';
+        panel.dataset.file = filename;
+        panel.style.cssText = 'padding:12px; margin:0 10px 10px; background:#0f1115;' +
+                              'border:1px solid #2a2f3a; border-radius:8px;';
+        panel.innerHTML = `
+            <div style="font-size:13px; font-weight:600; margin-bottom:4px;">
+                📝 Prelab questions — ${escapeHtml(title)}</div>
+            <div style="font-size:11px; color:#64748b; margin-bottom:8px;">
+                <strong>One question per line.</strong> Blank lines are ignored.
+                Optionally prefix a line with <code>[Concept]</code> to tag it.
+                Students get <strong>one at random</strong> when the video ends.
+            </div>
+            <textarea id="prelabText" rows="12" spellcheck="false"
+                style="width:100%; box-sizing:border-box; padding:10px; border-radius:8px;
+                       background:#0b0d12; color:#e2e8f0; border:1px solid #2a2f3a;
+                       font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px;
+                       line-height:1.5; resize:vertical;">${escapeHtml(questions.join(PRELAB_SEP))}</textarea>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                <button class="btn btn-sm" id="prelabSaveBtn" onclick="savePrelab('${escapeHtml(filename)}')">Save</button>
+                <button class="btn btn-sm" style="background:#334155;"
+                        onclick="document.getElementById('prelabEditorPanel').remove()">Cancel</button>
+                <span id="prelabCount" style="font-size:11px; color:#64748b;"></span>
+                <span id="prelabStatus" style="font-size:12px; margin-left:auto;"></span>
+            </div>`;
+
+        // Attach under the row that was clicked.
+        const rowHost = [...document.querySelectorAll('[id^="prelab-ed-"]')]
+            .find(el => el.previousElementSibling &&
+                        el.previousElementSibling.innerHTML.includes(filename));
+        (rowHost || document.body).appendChild(panel);
+
+        const ta = document.getElementById('prelabText');
+        const count = () => {
+            const n = splitPrelab(ta.value).length;
+            document.getElementById('prelabCount').textContent =
+                n === 1 ? '1 question' : `${n} questions`;
+        };
+        ta.addEventListener('input', count);
+        count();
+        ta.focus();
+    }
+
+    async function savePrelab(filename) {
+        const panel = document.getElementById('prelabEditorPanel');
+        const ta = document.getElementById('prelabText');
+        const status = document.getElementById('prelabStatus');
+        const btn = document.getElementById('prelabSaveBtn');
+        if (!ta) return;
+
+        const questions = splitPrelab(ta.value);
+
+        // Visible work state — the button previously stayed inert while the request
+        // was in flight, so a successful save looked like nothing had happened.
+        btn.disabled = true;
+        const label = btn.innerHTML;
+        btn.innerHTML = '<span class="pl-spin"></span> Saving…';
+        status.style.color = '#94a3b8';
+        status.textContent = '';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/prelab`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify({ video_filename: filename, questions })
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+
+            status.style.color = '#34d399';
+            status.textContent = d.count === 0
+                ? '✓ Cleared'
+                : `✓ Saved ${d.count} question${d.count === 1 ? '' : 's'}`;
+            btn.innerHTML = '✓ Saved';
+
+            // Collapse once the confirmation has been readable for a moment, and
+            // show a lasting count on the row so the save is still evident after.
+            setTimeout(() => {
+                if (panel) {
+                    panel.style.transition = 'opacity .25s';
+                    panel.style.opacity = '0';
+                    setTimeout(() => panel.remove(), 250);
+                }
+                markPrelabCount(filename, d.count);
+            }, 900);
+        } catch (e) {
+            status.style.color = '#f87171';
+            status.textContent = `Save failed — ${e.message}`;
+            btn.disabled = false;
+            btn.innerHTML = label;
+        }
+    }
+
+    // Reflect the saved count on the video row, so the panel closing is not the
+    // only evidence anything happened.
+    function markPrelabCount(filename, count) {
+        document.querySelectorAll('button').forEach(b => {
+            if (b.getAttribute('onclick')?.includes(`openPrelabEditor('${filename}'`)) {
+                b.innerHTML = count ? `📝 Prelab (${count})` : '📝 Prelab';
+                b.style.background = count ? '#1f3d2b' : '#334155';
+            }
+        });
+    }
+
     const TEACHER_HDR = () => ({ 'X-User-Role': currentUser.role });
     // 5 MB slices: large enough that a 140 MB lecture is ~28 requests, small enough
     // that no single request is at risk of a proxy timeout.
@@ -2667,6 +3171,7 @@
             CATALOG = cat; UNASSIGNED = un.files || [];
             renderUnassigned();
             renderChapters();
+            fillAnalyticsPicker(cat.chapters);
         } catch (e) {
             console.error('Content load failed', e);
         }
@@ -2689,6 +3194,50 @@
             </div>`).join('');
     }
 
+    // One row renderer for both lists. `opts` is the unassigned-file dropdown.
+    function videoRow(v, opts) {
+        const live = v.available;
+        const missing = v.filename && !v.available;
+        const state = live
+            ? `<span style="color:#34d399; font-size:12px;">🎬 ${escapeHtml(v.filename)}</span>`
+            : missing
+                ? `<span style="color:#f87171; font-size:12px;" title="Row points at a file that is not on disk">⚠ missing: ${escapeHtml(v.filename)}</span>`
+                : `<span style="color:#64748b; font-size:12px;">planned</span>`;
+        const action = live || missing
+            ? `<button class="btn btn-sm" style="background:#334155;" onclick="assignSlot(${v.id}, null)">Unassign</button>`
+            : (UNASSIGNED.length
+                ? `<select id="sel-${v.id}" style="background:#0f1115; color:#e2e8f0; border:1px solid #2a2f3a; border-radius:6px; padding:4px 6px; font-size:12px;">
+                       <option value="">— choose file —</option>${opts}
+                   </select>
+                   <button class="btn btn-sm" onclick="assignSlot(${v.id}, document.getElementById('sel-${v.id}').value)">Attach</button>`
+                : `<span style="color:#475569; font-size:12px;">upload a file first</span>`);
+        const meta = [v.slides, v.sections].filter(Boolean).join(' · ');
+        const label = v.kind === 'supplement'
+            ? `<span style="color:#a78bfa;">✚ Supplement</span>`
+            : `<strong>Video ${v.video_number ?? '—'}</strong>`;
+        return `
+        <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
+                    border-top:1px solid #1e2430;">
+            <div style="flex:1; min-width:0;">
+                <div style="font-size:13px;">${label} · ${escapeHtml(v.title)}</div>
+                ${meta ? `<div style="color:#64748b; font-size:11px; margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
+            </div>
+            <div style="flex:0 0 auto;">${state}</div>
+            <div style="flex:0 0 auto; display:flex; gap:6px; align-items:center;">
+                ${action}
+                ${v.filename
+                    ? `<button class="btn btn-sm" style="background:#334155;"
+                         onclick="openPrelabEditor('${escapeHtml(v.filename)}', '${escapeHtml(v.title).replace(/'/g, "\\'")}')">📝 Prelab</button>`
+                    : ''}
+                <button class="btn btn-sm" style="background:#334155;" title="Rename / renumber"
+                        onclick="editSlot(${v.id})">✏️</button>
+                <button class="btn btn-sm" style="background:#7f1d1d;" title="Remove this slot (the file on disk is kept)"
+                        onclick="deleteSlot(${v.id}, '${escapeHtml(v.title).replace(/'/g, "\\'")}')">🗑</button>
+            </div>
+        </div>
+        <div id="prelab-ed-${v.id}"></div>`;
+    }
+
     function renderChapters() {
         const el = document.getElementById('chapterList');
         if (!el) return;
@@ -2705,36 +3254,17 @@
                 ? `<span style="color:#64748b; font-size:12px;">no videos planned</span>`
                 : `<span style="color:${done ? '#34d399' : '#94a3b8'}; font-size:12px;">${c.recorded}/${c.total} recorded</span>`;
 
-            const rows = (c.videos || []).map(v => {
-                const live = v.available;
-                const missing = v.filename && !v.available;
-                const state = live
-                    ? `<span style="color:#34d399; font-size:12px;">🎬 ${escapeHtml(v.filename)}</span>`
-                    : missing
-                        ? `<span style="color:#f87171; font-size:12px;" title="Row points at a file that is not on disk">⚠ missing: ${escapeHtml(v.filename)}</span>`
-                        : `<span style="color:#64748b; font-size:12px;">planned</span>`;
-                const action = live || missing
-                    ? `<button class="btn btn-sm" style="background:#334155;" onclick="assignSlot(${v.id}, null)">Unassign</button>`
-                    : (UNASSIGNED.length
-                        ? `<select id="sel-${v.id}" style="background:#0f1115; color:#e2e8f0; border:1px solid #2a2f3a; border-radius:6px; padding:4px 6px; font-size:12px;">
-                               <option value="">— choose file —</option>${opts}
-                           </select>
-                           <button class="btn btn-sm" onclick="assignSlot(${v.id}, document.getElementById('sel-${v.id}').value)">Attach</button>`
-                        : `<span style="color:#475569; font-size:12px;">upload a file first</span>`);
-                const meta = [v.slides, v.sections].filter(Boolean).join(' · ');
-                return `
-                <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
-                            border-top:1px solid #1e2430;">
-                    <div style="flex:1; min-width:0;">
-                        <div style="font-size:13px;">
-                            <strong>Video ${v.video_number ?? '—'}</strong> · ${escapeHtml(v.title)}
-                        </div>
-                        ${meta ? `<div style="color:#64748b; font-size:11px; margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
-                    </div>
-                    <div style="flex:0 0 auto;">${state}</div>
-                    <div style="flex:0 0 auto; display:flex; gap:6px; align-items:center;">${action}</div>
-                </div>`;
-            }).join('');
+            const all = c.videos || [];
+            const lectures = all.filter(v => v.kind !== 'supplement');
+            const extras   = all.filter(v => v.kind === 'supplement');
+
+            const lectureRows = lectures.map(v => videoRow(v, opts)).join('')
+                || `<div style="padding:12px 14px; color:#64748b; font-size:13px;">No videos planned for this chapter yet.</div>`;
+
+            // The supplement section is always shown, so an empty chapter still offers
+            // somewhere to put extra material without planning a numbered slot first.
+            const extraRows = extras.map(v => videoRow(v, opts)).join('')
+                || `<div style="padding:10px 14px; color:#475569; font-size:12px;">No supplementary videos.</div>`;
 
             return `
             <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:10px; overflow:hidden;">
@@ -2743,10 +3273,83 @@
                         <strong>Chapter ${c.number}</strong> · ${escapeHtml(c.title)}${badge}
                     </div>
                     ${counter}
+                    <button class="btn btn-sm" onclick="addSlot(${c.number}, 'lecture')">+ Video</button>
+                    <button class="btn btn-sm" style="background:#4c1d95;" onclick="addSlot(${c.number}, 'supplement')">+ Supplement</button>
                 </div>
-                ${rows || `<div style="padding:12px 14px; color:#64748b; font-size:13px;">No videos planned for this chapter yet.</div>`}
+                ${lectureRows}
+                <div style="padding:8px 14px; background:#12151d; border-top:1px solid #1e2430;
+                            color:#a78bfa; font-size:12px; font-weight:600; letter-spacing:.3px;">
+                    SUPPLEMENT${extras.length ? ` (${extras.length})` : ''}
+                </div>
+                ${extraRows}
             </div>`;
         }).join('');
+    }
+
+    async function addSlot(chapterNumber, kind) {
+        const isSup = kind === 'supplement';
+        const title = prompt(isSup
+            ? `Title for the supplementary video in Chapter ${chapterNumber}:`
+            : `Title for the new video in Chapter ${chapterNumber}:`);
+        if (title === null || !title.trim()) return;
+
+        // Only numbered lectures take a number; supplements are deliberately unnumbered.
+        let video_number = null;
+        if (!isSup) {
+            const n = prompt('Video number (leave blank to leave it unnumbered):', '');
+            if (n === null) return;
+            if (n.trim()) {
+                video_number = parseInt(n, 10);
+                if (isNaN(video_number)) { alert('Video number must be a whole number.'); return; }
+            }
+        }
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/catalog/add`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify({ chapter_number: chapterNumber, title: title.trim(),
+                                       video_number, kind })
+            });
+            if (!res.ok) { alert(`Could not add (error ${res.status}).`); return; }
+            await loadContentTab();
+        } catch (e) { alert('Could not add: ' + e.message); }
+    }
+
+    async function editSlot(catalogId) {
+        const v = (CATALOG.chapters || []).flatMap(c => c.videos || []).find(x => x.id === catalogId);
+        if (!v) return;
+        const title = prompt('Title:', v.title);
+        if (title === null || !title.trim()) return;
+        const body = { title: title.trim() };
+        if (v.kind !== 'supplement') {
+            const n = prompt('Video number (blank to leave unchanged):', v.video_number ?? '');
+            if (n === null) return;
+            if (n.trim()) {
+                const parsed = parseInt(n, 10);
+                if (isNaN(parsed)) { alert('Video number must be a whole number.'); return; }
+                body.video_number = parsed;
+            }
+        }
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/catalog/${catalogId}/edit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) { alert(`Could not save (error ${res.status}).`); return; }
+            await loadContentTab();
+        } catch (e) { alert('Could not save: ' + e.message); }
+    }
+
+    async function deleteSlot(catalogId, title) {
+        if (!confirm(`Remove "${title}" from the chapter?\n\nThe video file on disk is kept — only the plan entry is removed.`)) return;
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/catalog/${catalogId}`, {
+                method: 'DELETE', headers: TEACHER_HDR()
+            });
+            if (!res.ok) { alert(`Could not remove (error ${res.status}).`); return; }
+            await loadContentTab();
+        } catch (e) { alert('Could not remove: ' + e.message); }
     }
 
     async function assignSlot(catalogId, filename) {
@@ -2798,8 +3401,21 @@
                     method: 'POST', headers: TEACHER_HDR(), body: fd
                 });
                 if (!res.ok) {
-                    const err = await res.json().catch(() => ({}));
-                    throw new Error(err.detail || `Upload failed on part ${i + 1} of ${total}`);
+                    // Report the STATUS. A bare "failed on part 1" hides whether the
+                    // app rejected the chunk (JSON detail) or something in front of it
+                    // did — a reverse proxy returning 413 for a 5 MB body looks
+                    // identical to an auth failure without this.
+                    const body = await res.text().catch(() => '');
+                    let detail = '';
+                    try { detail = (JSON.parse(body) || {}).detail || ''; } catch (_) {}
+                    if (!detail) {
+                        detail = res.status === 413
+                            ? `Chunk rejected as too large (413). The reverse proxy in front of SAGE `
+                              + `is capping request bodies below ${(VIDEO_CHUNK / 1048576)} MB — raise it `
+                              + `(nginx: client_max_body_size 20m).`
+                            : `HTTP ${res.status} ${res.statusText || ''}`.trim();
+                    }
+                    throw new Error(`Upload failed on part ${i + 1} of ${total} — ${detail}`);
                 }
                 const pct = Math.round(((i + 1) / total) * 100);
                 bar.style.width = pct + '%';
@@ -2815,6 +3431,23 @@
         }
     }
 
+    // How a student is shown anywhere on this dashboard. Email when we have one,
+    // otherwise whatever the endpoint gave us (Student_NN, or the username).
+    function sLabel(username, fallback) {
+        return EMAIL_MAP[username] || fallback || username || '\u2014';
+    }
+
+    async function loadEmailMap() {
+        try {
+            const res = await fetch(`${API_URL}/api/v1/admin/user_emails`);
+            if (!res.ok) return;                 // labels fall back; tables still render
+            const { emails } = await res.json();
+            Object.assign(EMAIL_MAP, emails || {});
+        } catch (e) {
+            console.warn('Could not load student emails; falling back to IDs.', e);
+        }
+    }
+
     function escapeHtml(s) {
         return String(s ?? '').replace(/[&<>"']/g,
             m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
@@ -2822,6 +3455,8 @@
 
     function showTab(name) {
         if (name === 'CONTENT') loadContentTab();
+        if (name === 'NOW') loadFrustration();
+        if (name === 'CLASS') loadPathDeviation();
         document.querySelectorAll('.grid-container[data-tab]').forEach(sec => {
             sec.classList.toggle('tab-visible', sec.dataset.tab === name);
         });
@@ -2832,8 +3467,11 @@
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    window.onload = function() {
+    window.onload = async function() {
         verifyTeacherSession();   // server-side role check; redirects if not a teacher
+        // Awaited: every table below labels students through sLabel(), so the map
+        // has to be in hand before the first render, not racing it.
+        await loadEmailMap();
         loadData(); // Your existing load function
         updateUploadRules(); // Initialize file input
         // Default landing is NOW (or the last tab this browser used).

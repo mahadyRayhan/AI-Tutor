@@ -46,8 +46,8 @@
         window.mermaid = mermaid;
     </script>
 
-    <link rel="stylesheet" href="/static/css/chat.css?v=10">
-    <link rel="stylesheet" href="/static/css/auth.css?v=1">
+    <link rel="stylesheet" href="/static/css/chat.css?v=12">
+    <link rel="stylesheet" href="/static/css/auth.css?v=2">
 </head>
 
 <body>
@@ -92,6 +92,29 @@
             <div class="field-error" id="loginError"></div>
             <button type="submit" class="auth-btn" onclick="performLogin()">Log in</button>
             <div class="auth-switch">New here? <a tabindex="0" onclick="toggleAuth('signup')">Create an account</a></div>
+            <div class="auth-switch" style="margin-top:.4rem">
+              <a tabindex="0" onclick="openRecovery('password')">Forgot password?</a>
+              &nbsp;·&nbsp;
+              <a tabindex="0" onclick="openRecovery('username')">Forgot username?</a>
+            </div>
+          </form>
+
+          <!-- Account recovery: one card, two modes. Both ask only for the email
+               the student signed up with, and both give the same reply whether or
+               not that address is registered. -->
+          <form class="auth-card hidden" id="recoveryForm" onsubmit="return false;" novalidate>
+            <h2 id="recoveryTitle">Forgot your password?</h2>
+            <p id="recoverySub" style="color:#94a3b8;font-size:.88rem;margin:.25rem 0 1rem"></p>
+            <div id="recoveryFields">
+              <div class="field">
+                <label for="recoveryEmail">Email you signed up with</label>
+                <input type="email" id="recoveryEmail" autocomplete="email" placeholder="you@university.edu">
+              </div>
+              <div class="field-error" id="recoveryError"></div>
+              <button type="submit" class="auth-btn" id="recoveryBtn" onclick="submitRecovery()">Send</button>
+            </div>
+            <div id="recoverySent" class="rec-sent" style="display:none"></div>
+            <div class="auth-switch"><a tabindex="0" onclick="toggleAuth('login')">Back to sign in</a></div>
           </form>
 
           <!-- Signup -->
@@ -531,7 +554,7 @@
         </div>
     </div>
 
-    <script src="/static/js/chat.js?v=auth1" defer></script>
+    <script src="/static/js/chat.js?v=auth6" defer></script>
 </body>
 
 </html>

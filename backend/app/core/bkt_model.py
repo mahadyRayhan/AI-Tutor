@@ -132,7 +132,16 @@ def _apply_decay(p_tilde: float, tier: str, last_at: datetime | None,
     lam_eff = lam if lam is not None else DECAY_RATES[tier]
     p0 = EVIDENCE_CONFIG[tier]["P_L0"]
     decayed = p_tilde * math.exp(-lam_eff * delta_days) + p0 * (1.0 - math.exp(-lam_eff * delta_days))
-    return round(max(decayed, p0), 6)
+
+    # NO max(decayed, p0) here. The exponential already asymptotes to p0 from BOTH
+    # directions, so that clamp never bound the intended case (a high posterior
+    # decaying down) and only ever fired when a posterior sat BELOW the prior —
+    # i.e. straight after a wrong answer. It then snapped the value back up to p0
+    # regardless of elapsed time, so a student who answered incorrectly had that
+    # evidence erased on their very next interaction:
+    #     P̃ 0.300 → 0.051 ❌  then, seconds later,  0.051 →(decay)→ 0.300
+    # Wrong answers effectively did not count. Clamp to the unit interval only.
+    return round(min(1.0, max(decayed, 1e-6)), 6)
 
 
 from app.core.concept_canon import canonical_concept, is_attributable_concept

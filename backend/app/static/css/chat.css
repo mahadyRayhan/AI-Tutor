@@ -2424,3 +2424,62 @@ body.in-classroom #navSettings {
 .prelab-actions .cp-submit-inline { flex: 1; margin-top: 0; }
 .prelab-shuffle { width: 100%; margin-top: 10px; background: transparent; border: 1px dashed rgba(255,255,255,0.08);
     color: var(--text-muted); padding: 8px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 0.82rem; }
+
+/* ── Classroom prelab: concept tag, prompt, sample output ──────────────────── */
+.prelab-concepts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.prelab-chip {
+    padding: 3px 9px; border-radius: 999px; font-size: .72rem;
+    background: rgba(96,165,250,.12); color: #93c5fd; border: 1px solid rgba(96,165,250,.3);
+}
+.prelab-prompt { white-space: pre-wrap; line-height: 1.6; }
+.prelab-sample { margin-top: 10px; }
+.prelab-sample summary { cursor: pointer; font-size: .8rem; color: #93c5fd; padding: 5px 0; }
+.prelab-sample pre {
+    margin: 6px 0 0; padding: 10px 12px; border-radius: 8px; overflow-x: auto;
+    background: #0f1115; border: 1px solid #2a2f3a;
+    font-size: .76rem; line-height: 1.45; color: #cbd5e1;
+}
+
+/* ── Session expired ────────────────────────────────────────────────────────
+   Shown when a request comes back 401. Sits above the checkpoint modal
+   (z-index 9999) because that modal is non-skippable: a learner whose session
+   died mid-checkpoint has no other way out of it. */
+.session-expired-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.72);
+    backdrop-filter: blur(3px);
+}
+.session-expired-card {
+    background: #fff;
+    color: #0f172a;
+    max-width: 420px;
+    width: calc(100% - 48px);
+    padding: 28px 30px;
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
+    text-align: center;
+}
+.session-expired-card h3 { margin: 0 0 10px; font-size: 1.25rem; }
+.session-expired-card p  { margin: 0 0 8px; line-height: 1.5; }
+.session-expired-card .se-sub { color: #64748b; font-size: .9rem; }
+.session-expired-card .se-btn {
+    margin-top: 18px;
+    padding: 11px 26px;
+    border: 0;
+    border-radius: 9px;
+    background: #2563eb;
+    color: #fff;
+    font-size: .95rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.session-expired-card .se-btn:hover { background: #1d4ed8; }
+@media (prefers-color-scheme: dark) {
+    .session-expired-card { background: #1e293b; color: #e2e8f0; }
+    .session-expired-card .se-sub { color: #94a3b8; }
+}

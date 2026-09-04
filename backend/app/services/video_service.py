@@ -7,6 +7,7 @@ Handles: Whisper transcription → JSON caching → timestamp-based slicing
 import json
 import os
 import logging
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -15,6 +16,99 @@ logger = logging.getLogger(__name__)
 # Lazy-load Whisper to avoid slow import at startup
 _whisper_model = None
 _MODEL_SIZE = "base"  # Options: tiny, base, small, medium
+
+# Whisper's decoder installs kv_cache hooks onto the SHARED model instance for the
+# duration of a decode. Two threads transcribing at once corrupt each other's cache
+# and one dies with "cannot reshape tensor of 0 elements". The video page requests
+# /transcript and /checkpoints simultaneously, so this was hit on every first view
+# of a new video. Serialize all transcription through one lock.
+_transcribe_lock = threading.Lock()
+
+# ── Transcription queue ───────────────────────────────────────────────────────
+# A teacher may assign several lectures in a minute. Handing each one to a
+# background task made every extra job sit blocked on _transcribe_lock while
+# holding a Starlette threadpool worker — assign twenty and the pool that serves
+# every other sync endpoint is starved for hours.
+#
+# Instead: enqueue instantly, and let ONE dedicated worker thread drain the queue.
+# Whisper still runs strictly one at a time, but nothing else is held up, and the
+# queue is introspectable so the dashboard can show real progress.
+import queue as _queue
+
+_job_queue: "_queue.Queue[str]" = _queue.Queue()
+_queue_lock = threading.Lock()      # guards _pending / _running
+_pending: list = []                 # filenames waiting, in order
+_running: str | None = None         # filename currently being transcribed
+_worker_thread: threading.Thread | None = None
+
+
+def _worker_loop():
+    global _running
+    while True:
+        video_path = _job_queue.get()
+        fname = Path(video_path).name
+        with _queue_lock:
+            if fname in _pending:
+                _pending.remove(fname)
+            _running = fname
+        try:
+            logger.info(f"[queue] transcribing {fname} …")
+            segs = transcribe_video(video_path)
+            logger.info(f"[queue] {fname} done — {len(segs)} segments")
+        except Exception as e:
+            # One bad file must never kill the worker; the rest of the queue
+            # still needs draining.
+            logger.error(f"[queue] {fname} FAILED: {e}")
+        finally:
+            with _queue_lock:
+                _running = None
+            _job_queue.task_done()
+
+
+def _ensure_worker():
+    global _worker_thread
+    if _worker_thread is None or not _worker_thread.is_alive():
+        _worker_thread = threading.Thread(
+            target=_worker_loop, name="whisper-transcriber", daemon=True)
+        _worker_thread.start()
+
+
+def enqueue_transcription(video_path: str) -> dict:
+    """Queue a video for transcription. Returns its queue state.
+
+    Idempotent: a file already cached, already running, or already queued is not
+    added twice — a teacher re-assigning the same recording costs nothing.
+    """
+    fname = Path(video_path).name
+    if _get_transcript_cache_path(video_path).exists():
+        return {"state": "ready", "position": 0}
+
+    with _queue_lock:
+        if fname == _running:
+            return {"state": "running", "position": 0}
+        if fname in _pending:
+            return {"state": "queued", "position": _pending.index(fname) + 1}
+        _pending.append(fname)
+        position = len(_pending)
+
+    _ensure_worker()
+    _job_queue.put(video_path)
+    logger.info(f"[queue] {fname} enqueued (position {position})")
+    return {"state": "queued", "position": position}
+
+
+def transcription_status(video_path: str) -> dict:
+    """Where is this video in the pipeline? Drives the dashboard indicator."""
+    fname = Path(video_path).name
+    if _get_transcript_cache_path(video_path).exists():
+        return {"state": "ready", "position": 0, "queue_length": _job_queue.qsize()}
+    with _queue_lock:
+        if fname == _running:
+            return {"state": "running", "position": 0, "queue_length": len(_pending)}
+        if fname in _pending:
+            return {"state": "queued", "position": _pending.index(fname) + 1,
+                    "queue_length": len(_pending)}
+    return {"state": "absent", "position": 0, "queue_length": _job_queue.qsize()}
 
 
 def _get_whisper_model():
@@ -43,14 +137,29 @@ def transcribe_video(video_path: str, force: bool = False) -> List[Dict]:
         List of dicts: [{"start": 0.0, "end": 4.2, "text": "..."}, ...]
     """
     cache_path = _get_transcript_cache_path(video_path)
-    
-    # Check cache first
-    if not force and cache_path.exists():
-        logger.info(f"📋 Using cached transcript: {cache_path.name}")
+
+    def _read_cache():
         with open(cache_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    
-    # Transcribe with Whisper
+
+    # Fast path: cache already on disk, no lock needed.
+    if not force and cache_path.exists():
+        logger.info(f"📋 Using cached transcript: {cache_path.name}")
+        return _read_cache()
+
+    with _transcribe_lock:
+        # Re-check inside the lock. Concurrent callers both saw "no cache" above;
+        # whoever lost the race would otherwise re-transcribe the same file for
+        # nothing. By now the winner has written it.
+        if not force and cache_path.exists():
+            logger.info(f"📋 Using cached transcript (built by a concurrent request): {cache_path.name}")
+            return _read_cache()
+
+        return _transcribe_uncached(video_path, cache_path)
+
+
+def _transcribe_uncached(video_path: str, cache_path: Path) -> List[Dict]:
+    """Run Whisper and write the cache. Callers MUST hold _transcribe_lock."""
     logger.info(f"🎙️ Transcribing video: {Path(video_path).name} (this may take a minute)...")
     model = _get_whisper_model()
     

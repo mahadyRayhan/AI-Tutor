@@ -11,6 +11,25 @@ services:
       - NEO4J_PASSWORD=12345678
       - GOOGLE_API_KEY
       - OPENAI_API_KEY
+      # Account recovery mail. These MUST be listed here: inside the container
+      # config.py resolves PROJECT_ROOT to "/" and looks for /.env, which does not
+      # exist — the deployed .env sits on the host next to docker-compose.yml and is
+      # never mounted in. Compose reads that .env for interpolation, so this list is
+      # the only path these values have into the app. Without them email_service
+      # falls back to RELAY mode and writes reset links to the log instead of sending.
+      - SMTP_HOST
+      - SMTP_PORT
+      - SMTP_USER
+      - SMTP_PASSWORD
+      - SMTP_FROM
+      - SAGE_BASE_URL
+      # Session signing. With SAGE_JWT_SECRET unset, auth.py mints a RANDOM key per
+      # process, so every container restart invalidates every cookie and signs all
+      # students out mid-lecture — which is why the checkpoint 401 shows up right
+      # after a deploy. Setting it makes sessions survive restarts.
+      - SAGE_JWT_SECRET
+      - SAGE_SESSION_HOURS
+      - SAGE_COOKIE_SECURE
       - PYTHONPATH=/app
     volumes:
       # Maps host folder to the root (for absolute path code)

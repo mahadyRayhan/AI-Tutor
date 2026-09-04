@@ -25,6 +25,22 @@ jobs:
           echo "VEO3_MODEL=${{ vars.VEO3_MODEL }}" >> .env
           echo "INTENT_CLASSIFIER_MODE=${{ vars.INTENT_CLASSIFIER_MODE }}" >> .env
           echo "ENABLE_PROFILING=${{ vars.ENABLE_PROFILING }}" >> .env
+          # Account recovery mail. This step REWRITES .env on every deploy, so
+          # anything set on the server by hand is wiped — these have to come from
+          # here. Non-sensitive values are repo Variables; only the app password is
+          # a Secret. If SMTP_HOST is empty the app stays in relay mode and writes
+          # reset links to the log rather than sending them.
+          echo "SMTP_HOST=${{ vars.SMTP_HOST }}" >> .env
+          echo "SMTP_PORT=${{ vars.SMTP_PORT }}" >> .env
+          echo "SMTP_USER=${{ vars.SMTP_USER }}" >> .env
+          echo "SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}" >> .env
+          echo "SMTP_FROM=${{ vars.SMTP_FROM }}" >> .env
+          echo "SAGE_BASE_URL=${{ vars.SAGE_BASE_URL }}" >> .env
+          # Session signing key. Unset means a new random key each restart, i.e.
+          # everyone is signed out on every deploy.
+          echo "SAGE_JWT_SECRET=${{ secrets.SAGE_JWT_SECRET }}" >> .env
+          echo "SAGE_SESSION_HOURS=${{ vars.SAGE_SESSION_HOURS }}" >> .env
+          echo "SAGE_COOKIE_SECURE=${{ vars.SAGE_COOKIE_SECURE }}" >> .env
 
       # Compress files, excluding things we don't want to overwrite on the server
       - name: Create deployment archive
@@ -39,7 +55,7 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "deployment.zip,.env"
-          target: "/home/ubuntu"
+          target: "/home/admin"
 
       # SSH into the server and execute the deployment commands
       - name: Execute remote deployment commands via SSH
@@ -51,30 +67,30 @@ jobs:
           script_stop: true
           script: |
             # Step A: Stop current services and CREATE BACKUP (using cp, not mv)
-            if [ -d "/home/ubuntu/AI-Tutor" ]; then
-              cd /home/ubuntu/AI-Tutor
-              sudo docker-compose down || true
-              cd /home/ubuntu
+            if [ -d "/home/admin/AI-Tutor" ]; then
+              cd /home/admin/AI-Tutor
+              sudo docker compose down || true
+              cd /home/admin
               # Copy the folder to keep a safe backup of both tracked and untracked files
               cp -r AI-Tutor AI-Tutor_backup_$(date +%F_%H-%M)
             else
               # If it's the very first deployment, create the folder
-              mkdir -p /home/ubuntu/AI-Tutor
+              mkdir -p /home/admin/AI-Tutor
             fi
 
             # Step B: Unzip new code OVER the existing folder
-            unzip -o /home/ubuntu/deployment.zip -d /home/ubuntu/AI-Tutor
+            unzip -o /home/admin/deployment.zip -d /home/admin/AI-Tutor
             
             # Move the dynamically generated .env into the project folder
-            mv /home/ubuntu/.env /home/ubuntu/AI-Tutor/.env
+            mv /home/admin/.env /home/admin/AI-Tutor/.env
 
             # Step C: Set permissions exactly as outlined in your manual guide
-            cd /home/ubuntu/AI-Tutor
+            cd /home/admin/AI-Tutor
             mkdir -p backend/database logs resources
             sudo chmod -R 777 backend/database/ logs/ resources/ || true
 
             # Step D: Build and launch
-            sudo docker-compose up --build -d
+            sudo docker compose up --build -d
             
             # Clean up the zip file to save disk space
-            rm /home/ubuntu/deployment.zip
+            rm /home/admin/deployment.zip

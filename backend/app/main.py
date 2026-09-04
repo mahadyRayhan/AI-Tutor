@@ -13,6 +13,9 @@ import time
 import json
 from fastapi.responses import StreamingResponse, FileResponse
 from pathlib import Path
+import hashlib
+import secrets
+from datetime import timedelta
 from datetime import datetime
 import csv
 
@@ -21,7 +24,7 @@ from fastapi.staticfiles import StaticFiles # Needed to serve the reports
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi import Header, Depends
-from fastapi import Request, Response
+from fastapi import Request, Response, BackgroundTasks
 from pathlib import Path
 
 # Import components
@@ -366,6 +369,50 @@ class ChatRequest(BaseModel):
     enable_correction: Optional[bool] = True
 
 LEARNING_PATH_CACHE = {}
+LATEST_PATH_BY_USER = {}     # username -> most recently GENERATED path, for telemetry
+
+
+def _path_for_telemetry(username: str, goal: str = None) -> list:
+    """The learner's current path, as [{concept, status}], for deviation logging.
+
+    This used to read LEARNING_PATH_CACHE with the key f"{username}_{goal}", but
+    the cache is WRITTEN under f"{username}_{goal}_{known_concepts}" — the keys
+    never matched, so the lookup always missed, classify_path_deviation() got an
+    empty list, and all 1,247 recorded events were "unknown"/NULL.
+
+    Two changes: read the path the dashboard actually generated (kept in
+    LATEST_PATH_BY_USER, no key juggling), and when there is none — the common
+    case, since most turns happen before a student ever opens their dashboard —
+    derive one from CANONICAL_TOPICS, which is already in prerequisite order.
+    The fallback needs no cache and no LLM call, so deviation is always
+    classifiable rather than only when a cache happens to be warm.
+    """
+    cached = LATEST_PATH_BY_USER.get(username)
+    if cached:
+        return cached
+
+    try:
+        from app.core.concept_canon import CANONICAL_TOPICS
+        from app.core.bkt_model import bkt
+
+        path, found_next = [], False
+        for topic in CANONICAL_TOPICS:
+            try:
+                mastered = bkt.is_mastered(username, topic)
+            except Exception:
+                mastered = False
+            if mastered:
+                status = "mastered"
+            elif not found_next:
+                status = "next"          # first unmastered concept in prereq order
+                found_next = True
+            else:
+                status = "locked"        # beyond the frontier → asking here is skip_ahead
+            path.append({"concept": topic, "status": status})
+        return path
+    except Exception as e:
+        logger.warning(f"[telemetry] path fallback failed for {username}: {e}")
+        return []
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -621,7 +668,15 @@ async def chat_stream(request: ChatRequest, _caller: dict = Depends(auth.get_cur
                             n_sources=len(final_sources),
                             latency_ms=int((time.time() - _turn_start) * 1000),
                             was_blocked=_was_blocked,
-                            block_reason=(final_data.get("intent") if _was_blocked else None),
+                            # The Sentinel names WHY it blocked ("Cognitive Overload",
+                            # "Academic Integrity", "Trajectory Risk", …) and puts it in
+                            # final_data["block_reason"]. Logging the intent instead
+                            # discarded all ten reasons and collapsed them into
+                            # GUIDANCE / SECURITY_RISK, so the ledger could never show
+                            # cognitive blocks. Prefer the real reason; fall back to
+                            # intent only when the block came from somewhere else.
+                            block_reason=((final_data.get("block_reason")
+                                           or final_data.get("intent")) if _was_blocked else None),
                             traj_risk=_state.get("traj_risk"),
                             traj_acc=_state.get("traj_acc"),
                             traj_peak=_state.get("traj_peak"),
@@ -629,10 +684,8 @@ async def chat_stream(request: ChatRequest, _caller: dict = Depends(auth.get_cur
                         # Path deviation (Forethought / SRL) using cached learning path
                         if detected_topic and detected_topic != "General":
                             _goal = knowledge_manager.get_goal(request.username)
-                            _cache_key = f"{request.username}_{_goal}"
-                            _cached = LEARNING_PATH_CACHE.get(_cache_key) or {}
-                            _path = _cached.get("path") if isinstance(_cached, dict) else None
-                            _dev, _expected = telemetry.classify_path_deviation(_path or [], detected_topic)
+                            _path = _path_for_telemetry(request.username, _goal)
+                            _dev, _expected = telemetry.classify_path_deviation(_path, detected_topic)
                             telemetry.log_path_event(request.username, detected_topic,
                                                      _expected, _dev, _goal)
                         # Strip internal telemetry key before sending to client
@@ -886,6 +939,113 @@ async def login(creds: LoginRequest, response: Response):
         raise HTTPException(status_code=403, detail=str(e))
 
 
+# ── Account recovery ──────────────────────────────────────────────────────────
+# Every endpoint here returns the SAME response whether or not the address is
+# registered. Differentiating would turn these into an account-enumeration oracle:
+# anyone could test a list of addresses and learn who has a SAGE account.
+
+class ForgotUsernameRequest(BaseModel):
+    email: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+_RESET_TTL_MINUTES = 60
+_GENERIC_RECOVERY_REPLY = {
+    "status": "success",
+    "message": "If that email is registered, we've sent instructions to it.",
+}
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+@app.post("/api/v1/auth/forgot-username",
+          dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
+async def forgot_username(req: ForgotUsernameRequest):
+    """Email the username associated with an address."""
+    from app.core import email_service
+    user = user_manager.find_by_email(req.email)
+    if user:
+        email_service.send(
+            user["email"],
+            "Your SAGE username",
+            f"Hi {user.get('name') or 'there'},\n\n"
+            f"Your SAGE username is:  {user['username']}\n\n"
+            f"Sign in at {email_service.base_url()}\n\n"
+            f"If you did not request this, you can ignore this email.\n")
+    return _GENERIC_RECOVERY_REPLY
+
+
+@app.post("/api/v1/auth/forgot-password",
+          dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
+async def forgot_password(req: ForgotPasswordRequest):
+    """Email a single-use, time-limited password reset link."""
+    from app.core import email_service
+    user = user_manager.find_by_email(req.email)
+    if user and not user.get("is_blocked"):
+        raw = secrets.token_urlsafe(32)
+        now = datetime.now()
+        # Invalidate any outstanding links for this account, so requesting a new
+        # one revokes the old — a link sitting in an old email should stop working.
+        db.execute("DELETE FROM password_reset_token WHERE username = ?", (user["username"],))
+        db.execute(
+            "INSERT INTO password_reset_token (token_hash, username, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (_hash_reset_token(raw), user["username"], now,
+             now + timedelta(minutes=_RESET_TTL_MINUTES)))
+        link = f"{email_service.base_url()}/reset_password.html?token={raw}"
+        email_service.send(
+            user["email"],
+            "Reset your SAGE password",
+            f"Hi {user.get('name') or 'there'},\n\n"
+            f"Use this link to choose a new password. It expires in "
+            f"{_RESET_TTL_MINUTES} minutes and can only be used once:\n\n"
+            f"{link}\n\n"
+            f"Your username is:  {user['username']}\n\n"
+            f"If you did not request this, ignore this email — your password is unchanged.\n")
+    return _GENERIC_RECOVERY_REPLY
+
+
+@app.post("/api/v1/auth/reset-password",
+          dependencies=[Depends(rate_limit("auth", config.RATE_LIMIT_AUTH_MAX, 60))])
+async def reset_password(req: ResetPasswordRequest):
+    """Consume a reset token and set a new password."""
+    from app.core import validators
+
+    row = db.fetch_one(
+        "SELECT username, expires_at, used_at FROM password_reset_token WHERE token_hash = ?",
+        (_hash_reset_token(req.token or ""),))
+    if not row:
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has already been used.")
+    if row["used_at"]:
+        raise HTTPException(status_code=400, detail="This reset link has already been used.")
+    if datetime.fromisoformat(str(row["expires_at"])) < datetime.now():
+        raise HTTPException(status_code=400, detail="This reset link has expired. Please request a new one.")
+
+    username = row["username"]
+    # Same strength rules as signup — a reset must not be a way around them.
+    err = validators.validate_password(req.new_password, username, "")
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    if not user_manager.set_password(username, req.new_password):
+        raise HTTPException(status_code=500, detail="Could not update the password. Please try again.")
+
+    db.execute("UPDATE password_reset_token SET used_at = ? WHERE token_hash = ?",
+               (datetime.now(), _hash_reset_token(req.token)))
+    logger.info(f"[recovery] password reset completed for {username}")
+    return {"status": "success", "username": username}
+
+
 @app.post("/api/v1/auth/logout")
 async def logout(response: Response):
     """Clear the session cookie. The client cannot do this itself — the cookie is
@@ -946,6 +1106,24 @@ async def get_users_paginated(page: int = 1, page_size: int = 10):
         "total": total_records,
         "page": page,
         "pages": total_pages
+    }
+
+@app.get("/api/v1/admin/user_emails", dependencies=[Depends(verify_teacher)])
+async def get_user_emails():
+    """
+    username -> email for the whole roster, in one call.
+
+    Every other teacher endpoint names a learner by username or by the
+    anonymised Student_NN label, neither of which an instructor can match
+    against a class list. The dashboard loads this map once and labels its
+    tables with the email, while still keying every action on the username.
+    """
+    rows = db.fetch_all("SELECT username, email FROM users")
+    return {
+        "emails": {
+            r["username"]: (r["email"] or "").strip()
+            for r in rows if (r["email"] or "").strip()
+        }
     }
 
 @app.post("/api/v1/admin/users/update")
@@ -1093,7 +1271,8 @@ def get_learning_path_endpoint(username: str, _caller: dict = Depends(auth.get_c
             del LEARNING_PATH_CACHE[k]
             
         LEARNING_PATH_CACHE[cache_key] = path_data
-        
+        LATEST_PATH_BY_USER[username] = path_data
+
         return {"goal": goal, "path": path_data}
         
     except Exception as e:
@@ -2395,18 +2574,49 @@ async def get_security_ledger(_t: dict = Depends(verify_teacher)):
         "FROM turn_log WHERE was_blocked = 1 AND block_reason IS NOT NULL "
         "GROUP BY block_reason"
     )
+    # The Sentinel blocks for ten distinct reasons, and they are NOT all security.
+    # A student stopped because they are overwhelmed needs a very different response
+    # from one probing for a jailbreak, so they are counted separately here.
     SECURITY = "SECURITY_RISK"
+    SECURITY_REASONS = {
+        "security_risk", "goal-bounded security", "harmful code", "cross-user privacy",
+        "ai semantic judge", "trajectory risk", "tag bypass attempt", "security policy",
+    }
+    COGNITIVE_REASONS = {
+        # Wellbeing gates: fired by rage, escalating frustration, or the
+        # disengagement-prediction trigger — not by anything adversarial.
+        "cognitive overload",
+    }
+    FOCUS_REASONS = {"off-topic warning", "attention hijacking"}
+    INTEGRITY_REASONS = {"academic integrity"}
+    POLICY_REASONS = {"teacher lock"}
+
+    def _bucket(reason: str) -> str:
+        r = (reason or "").strip().lower()
+        if r in SECURITY_REASONS:  return "security"
+        if r in COGNITIVE_REASONS: return "cognitive"
+        if r in FOCUS_REASONS:     return "focus"
+        if r in INTEGRITY_REASONS: return "integrity"
+        if r in POLICY_REASONS:    return "policy"
+        return "pedagogical"
+
     evasion = {"count": 0, "learners": 0}
-    pedagogical = []
+    pedagogical, cognitive, focus, integrity, policy = [], [], [], [], []
+    _BUCKETS = {"cognitive": cognitive, "focus": focus,
+                "integrity": integrity, "policy": policy,
+                "pedagogical": pedagogical}
     for r in rows:
-        if r["block_reason"] == SECURITY:
-            evasion = {"count": r["n"], "learners": r["u"]}
+        raw = r["block_reason"] or ""
+        bucket = _bucket(raw)
+        entry = {"reason": raw.title().replace("_", " "),
+                 "count": r["n"], "learners": r["u"]}
+        if bucket == "security":
+            evasion = {"count": evasion["count"] + r["n"],
+                       "learners": max(evasion["learners"], r["u"])}
         else:
-            pedagogical.append({
-                "reason": (r["block_reason"] or "").title().replace("_", " "),
-                "count": r["n"], "learners": r["u"],
-            })
-    pedagogical.sort(key=lambda x: -x["count"])
+            _BUCKETS[bucket].append(entry)
+    for lst in (pedagogical, cognitive, focus, integrity, policy):
+        lst.sort(key=lambda x: -x["count"])
 
     risk = db.fetch_one(
         "SELECT ROUND(AVG(traj_risk), 3) avg, ROUND(MAX(traj_risk), 3) mx "
@@ -2415,6 +2625,10 @@ async def get_security_ledger(_t: dict = Depends(verify_teacher)):
     evasion["avg_risk"] = risk["avg"] if risk else None
     evasion["max_risk"] = risk["mx"] if risk else None
     ped_total = sum(p["count"] for p in pedagogical)
+    cog_total = sum(p["count"] for p in cognitive)
+    focus_total = sum(p["count"] for p in focus)
+    integrity_total = sum(p["count"] for p in integrity)
+    policy_total = sum(p["count"] for p in policy)
 
     # --- What are students actually trying? Categorize the blocked queries by technique,
     # with a few representative (truncated, UNATTRIBUTED) examples so the instructor sees
@@ -2478,10 +2692,17 @@ async def get_security_ledger(_t: dict = Depends(verify_teacher)):
 
     return {
         "total_turns": total_turns,
-        "total_gated": evasion["count"] + ped_total,
+        "total_gated": (evasion["count"] + ped_total + cog_total
+                        + focus_total + integrity_total + policy_total),
         "evasion": evasion,
         "pedagogical": pedagogical,
         "ped_total": ped_total,
+        # Non-security gates, bucketed so the UI can distinguish a student being
+        # PROTECTED (overwhelmed, off-track) from one being STOPPED (evasion).
+        "cognitive": cognitive, "cog_total": cog_total,
+        "focus": focus, "focus_total": focus_total,
+        "integrity": integrity, "integrity_total": integrity_total,
+        "policy": policy, "policy_total": policy_total,
         "techniques": techniques,
     }
 
@@ -3541,7 +3762,11 @@ async def get_video_catalog(include_planned: bool = True):
     ) or []
     rows = db.fetch_all(
         "SELECT id, chapter_number, video_number, title, slides, sections, "
-        "filename, topic, status FROM video_catalog ORDER BY sort_order, video_number"
+        "filename, topic, status, COALESCE(kind,'lecture') AS kind FROM video_catalog "
+        # Lectures first and in plan order; supplements after, in the order added.
+        # NULLs sort first in SQLite, so order on the flag rather than video_number.
+        "ORDER BY CASE WHEN COALESCE(kind,'lecture')='supplement' THEN 1 ELSE 0 END, "
+        "video_number, sort_order"
     ) or []
 
     by_chapter: Dict[int, List[Dict]] = {}
@@ -3557,13 +3782,17 @@ async def get_video_catalog(include_planned: bool = True):
     out = []
     for c in chapters:
         vids = by_chapter.get(c["number"], [])
+        lectures = [v for v in vids if v.get("kind") != "supplement"]
         out.append({
             "number": c["number"],
             "title": c["title"],
             "status": c["status"] or "",
             "videos": vids,
-            "recorded": sum(1 for v in vids if v["available"]),
-            "total": len(vids),
+            # Progress counts the numbered plan only — supplements are extras, so
+            # adding one must not make a chapter look less complete than it is.
+            "recorded": sum(1 for v in lectures if v["available"]),
+            "total": len(lectures),
+            "supplements": sum(1 for v in vids if v.get("kind") == "supplement"),
         })
     return {"chapters": out}
 
@@ -3664,7 +3893,34 @@ async def assign_video_to_slot(req: CatalogAssign, _: str = Depends(verify_teach
     db.execute(
         "UPDATE video_catalog SET filename=?, status=?, updated_at=? WHERE id=?",
         (fname, "complete" if fname else "planned", datetime.now(), req.catalog_id))
-    return {"status": "success", "catalog_id": req.catalog_id, "filename": fname}
+
+    # Warm the transcript now, in the background. Otherwise the first STUDENT to
+    # open the lecture pays for it: on CPU that is minutes of an apparently frozen
+    # page. Doing it at assign time puts the wait on the teacher, who is already
+    # expecting one, and by class time the cache is on disk.
+    transcript = {"state": "absent", "position": 0}
+    if fname:
+        from app.services.video_service import enqueue_transcription
+        transcript = enqueue_transcription(str(VIDEO_DIR / fname))
+
+    return {"status": "success", "catalog_id": req.catalog_id, "filename": fname,
+            "transcript": transcript}
+
+
+def _transcript_exists(fname: str) -> bool:
+    return (VIDEO_DIR / f"{Path(fname).stem}.transcript.json").exists()
+
+
+@app.get("/api/v1/video/transcript-status/{filename}")
+async def video_transcript_status(filename: str, _: str = Depends(verify_teacher)):
+    """Where is this recording in the transcription queue?
+
+    state: ready | running | queued | absent
+    """
+    from app.services.video_service import transcription_status
+    fname = os.path.basename(filename)
+    st = transcription_status(str(VIDEO_DIR / fname))
+    return {"filename": fname, "ready": st["state"] == "ready", **st}
 
 
 class CatalogEntry(BaseModel):
@@ -3673,6 +3929,14 @@ class CatalogEntry(BaseModel):
     title: str
     slides: str = ""
     sections: str = ""
+    kind: str = "lecture"          # "lecture" | "supplement"
+
+
+class CatalogEdit(BaseModel):
+    title: Optional[str] = None
+    video_number: Optional[int] = None
+    slides: Optional[str] = None
+    sections: Optional[str] = None
 
 
 @app.post("/api/v1/video/catalog/add")
@@ -3683,12 +3947,48 @@ async def add_catalog_entry(req: CatalogEntry, _: str = Depends(verify_teacher))
         raise HTTPException(status_code=404, detail="Chapter not found")
     nxt = db.fetch_one("SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM video_catalog") or {"n": 1}
     now = datetime.now()
+    kind = "supplement" if (req.kind or "").lower() == "supplement" else "lecture"
+    # A supplement is not part of the numbered sequence, so it never carries a
+    # video_number — that is what keeps "Video 3" meaning the same thing to every
+    # student regardless of how much extra material a chapter accumulates.
+    video_number = None if kind == "supplement" else req.video_number
     db.execute(
         "INSERT INTO video_catalog (chapter_number,video_number,title,slides,sections,"
-        "status,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (req.chapter_number, req.video_number, req.title.strip(), req.slides,
-         req.sections, "planned", nxt["n"], now, now))
-    return {"status": "success"}
+        "status,sort_order,kind,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (req.chapter_number, video_number, req.title.strip(), req.slides,
+         req.sections, "planned", nxt["n"], kind, now, now))
+    return {"status": "success", "kind": kind}
+
+
+@app.post("/api/v1/video/catalog/{catalog_id}/edit")
+async def edit_catalog_entry(catalog_id: int, req: CatalogEdit,
+                             _: str = Depends(verify_teacher)):
+    """Rename or renumber a catalog slot. Only the fields sent are touched, so the
+    attached recording and its kind survive an edit — renaming a slot must never
+    detach the video sitting in it."""
+    row = db.fetch_one("SELECT id, kind FROM video_catalog WHERE id=?", (catalog_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Catalog entry not found")
+
+    sets, params = [], []
+    if req.title is not None:
+        if not req.title.strip():
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        sets.append("title=?"); params.append(req.title.strip())
+    if req.slides is not None:
+        sets.append("slides=?"); params.append(req.slides.strip())
+    if req.sections is not None:
+        sets.append("sections=?"); params.append(req.sections.strip())
+    # A supplement stays unnumbered whatever is sent.
+    if req.video_number is not None and (row["kind"] or "lecture") != "supplement":
+        sets.append("video_number=?"); params.append(req.video_number)
+    if not sets:
+        return {"status": "success", "changed": 0}
+
+    sets.append("updated_at=?"); params.append(datetime.now())
+    params.append(catalog_id)
+    db.execute(f"UPDATE video_catalog SET {', '.join(sets)} WHERE id=?", tuple(params))
+    return {"status": "success", "changed": len(sets) - 1}
 
 
 @app.delete("/api/v1/video/catalog/{catalog_id}")
@@ -3839,6 +4139,241 @@ async def answer_video_checkpoint(req: VideoMCQAnswerRequest, _caller: dict = De
     }
 
 
+@app.get("/api/v1/analytics/frustration")
+async def frustration_analytics(days: int = 14, _: str = Depends(verify_teacher)):
+    """Who is struggling, and where.
+
+    affect_log carries ~3.3k rows and had no read path. `academic_emotion` is the
+    useful column — `frustration_level` is 'normal' on 97% of turns, while
+    confusion is the signal that actually separates students.
+    """
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+
+    rows = db.fetch_all(
+        "SELECT username, "
+        "  COUNT(*) AS turns, "
+        "  SUM(CASE WHEN academic_emotion='confusion'   THEN 1 ELSE 0 END) AS confusion, "
+        "  SUM(CASE WHEN academic_emotion='frustration' THEN 1 ELSE 0 END) AS frustration, "
+        "  SUM(CASE WHEN academic_emotion='boredom'     THEN 1 ELSE 0 END) AS boredom, "
+        "  SUM(CASE WHEN academic_emotion='flow'        THEN 1 ELSE 0 END) AS flow, "
+        "  SUM(CASE WHEN frustration_level IN ('high','rage') THEN 1 ELSE 0 END) AS high_level, "
+        "  SUM(COALESCE(intervention_fired,0)) AS interventions, "
+        "  MAX(ts_utc) AS last_seen "
+        "FROM affect_log WHERE ts_utc >= ? GROUP BY username", (since,))
+
+    students = []
+    for r in rows:
+        turns = r["turns"] or 0
+        neg = (r["confusion"] or 0) + (r["frustration"] or 0)
+        students.append({
+            "username": r["username"],
+            "turns": turns,
+            "confusion": r["confusion"] or 0,
+            "frustration": r["frustration"] or 0,
+            "boredom": r["boredom"] or 0,
+            "flow": r["flow"] or 0,
+            "high_level": r["high_level"] or 0,
+            "interventions": r["interventions"] or 0,
+            # Share of turns showing confusion or frustration. A rate, not a count,
+            # so a heavy user is not flagged merely for asking a lot of questions.
+            "struggle_pct": round(100 * neg / turns, 1) if turns else 0.0,
+            "last_seen": r["last_seen"],
+        })
+    students.sort(key=lambda s: (-s["struggle_pct"], -s["turns"]))
+
+    # Concepts where negative affect clusters — join affect to the concept asked
+    # in the same session, which is what path_event records.
+    concepts = db.fetch_all(
+        "SELECT p.concept_asked AS concept, COUNT(*) AS n "
+        "FROM affect_log a JOIN path_event p "
+        "  ON p.username = a.username "
+        " AND ABS(STRFTIME('%s', p.ts_utc) - STRFTIME('%s', a.ts_utc)) <= 30 "
+        "WHERE a.ts_utc >= ? AND a.academic_emotion IN ('confusion','frustration') "
+        "  AND TRIM(COALESCE(p.concept_asked,'')) <> '' "
+        "GROUP BY p.concept_asked ORDER BY n DESC LIMIT 10", (since,))
+
+    total_turns = sum(s["turns"] for s in students)
+    total_neg = sum(s["confusion"] + s["frustration"] for s in students)
+    return {
+        "days": days,
+        "summary": {
+            "students": len(students),
+            "turns": total_turns,
+            "struggle_pct": round(100 * total_neg / total_turns, 1) if total_turns else 0.0,
+            "interventions": sum(s["interventions"] for s in students),
+            "at_risk": sum(1 for s in students if s["struggle_pct"] >= 20 and s["turns"] >= 5),
+        },
+        "students": students,
+        "hot_concepts": [dict(c) for c in concepts],
+    }
+
+
+@app.get("/api/v1/analytics/path-deviation")
+async def path_deviation_analytics(days: int = 14, _: str = Depends(verify_teacher)):
+    """Where students leave the recommended sequence, and where they stall.
+
+    Only rows with a real deviation_type count. Events logged before the write
+    path was fixed are all 'unknown' with no expected_concept — they are reported
+    separately as `unclassified` rather than silently skewing the percentages.
+    """
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+
+    unclassified = db.fetch_one(
+        "SELECT COUNT(*) AS n FROM path_event "
+        "WHERE ts_utc >= ? AND (deviation_type IS NULL OR deviation_type='unknown')",
+        (since,))["n"]
+
+    by_type = db.fetch_all(
+        "SELECT deviation_type, COUNT(*) AS n FROM path_event "
+        "WHERE ts_utc >= ? AND deviation_type NOT IN ('unknown','') "
+        "GROUP BY deviation_type ORDER BY n DESC", (since,))
+
+    # A concept students repeatedly sit on without moving past = a stall point.
+    stalls = db.fetch_all(
+        "SELECT expected_concept AS concept, COUNT(*) AS asks, "
+        "       COUNT(DISTINCT username) AS students "
+        "FROM path_event WHERE ts_utc >= ? "
+        "  AND TRIM(COALESCE(expected_concept,'')) <> '' "
+        "GROUP BY expected_concept ORDER BY asks DESC LIMIT 10", (since,))
+
+    per_student = db.fetch_all(
+        "SELECT username, "
+        "  SUM(CASE WHEN deviation_type='on_path'    THEN 1 ELSE 0 END) AS on_path, "
+        "  SUM(CASE WHEN deviation_type='skip_ahead' THEN 1 ELSE 0 END) AS skip_ahead, "
+        "  SUM(CASE WHEN deviation_type='revisit'    THEN 1 ELSE 0 END) AS revisit, "
+        "  SUM(CASE WHEN deviation_type='off_path'   THEN 1 ELSE 0 END) AS off_path, "
+        "  COUNT(*) AS total, MAX(expected_concept) AS stuck_on "
+        "FROM path_event WHERE ts_utc >= ? AND deviation_type NOT IN ('unknown','') "
+        "GROUP BY username ORDER BY total DESC", (since,))
+
+    students = []
+    for r in per_student:
+        t = r["total"] or 1
+        students.append({**dict(r),
+                         "on_path_pct": round(100 * (r["on_path"] or 0) / t, 1)})
+
+    return {
+        "days": days,
+        "unclassified": unclassified,
+        "by_type": [dict(r) for r in by_type],
+        "stall_points": [dict(r) for r in stalls],
+        "students": students,
+    }
+
+
+@app.get("/api/v1/video/analytics/{video_filename}")
+async def video_analytics(video_filename: str, _: str = Depends(verify_teacher)):
+    """Per-student watch + quiz results for one lecture.
+
+    The telemetry tables were write-only: everything below was already being
+    collected and had no way to be read back.
+
+    Quiz semantics, since video_mcq_response stores ONE ROW PER ATTEMPT:
+      attempted  = any row for that checkpoint
+      passed     = some row with is_correct = 1
+      first_try  = a correct row whose attempts = 1
+    A student who answers wrong then right has two rows; counting rows would
+    double-count them, so everything here aggregates per checkpoint.
+    """
+    fname = os.path.basename(video_filename)
+
+    cps = db.fetch_all(
+        "SELECT checkpoint_time, question, concept FROM video_checkpoint "
+        "WHERE video_filename=? ORDER BY checkpoint_time", (fname,))
+    cp_times = [c["checkpoint_time"] for c in cps]
+    final_time = cp_times[-1] if cp_times else None
+
+    cov = db.fetch_all(
+        "SELECT username, duration_sec, watched_sec, completion_pct, hidden_sec, "
+        "completed, updated_at FROM video_coverage WHERE video_filename=?", (fname,))
+
+    # One row per (student, checkpoint): did they pass, and on which attempt.
+    mcq = db.fetch_all(
+        "SELECT username, checkpoint_time, "
+        "       MAX(is_correct) AS passed, "
+        "       MIN(CASE WHEN is_correct=1 THEN attempts END) AS winning_attempt, "
+        "       MAX(attempts) AS total_attempts, "
+        "       AVG(confidence_1_5) AS avg_conf "
+        "FROM video_mcq_response WHERE video_filename=? "
+        "GROUP BY username, checkpoint_time", (fname,))
+
+    by_user = {}
+    for r in mcq:
+        by_user.setdefault(r["username"], []).append(dict(r))
+
+    students, usernames = [], set()
+    for c in cov:
+        usernames.add(c["username"])
+    usernames |= set(by_user.keys())
+
+    cov_map = {c["username"]: c for c in cov}
+
+    for u in sorted(usernames):
+        c = cov_map.get(u)
+        rows = by_user.get(u, [])
+        passed = [r for r in rows if r["passed"]]
+        first_try = [r for r in passed if (r["winning_attempt"] or 99) == 1]
+
+        fin = next((r for r in rows if final_time is not None
+                    and abs(r["checkpoint_time"] - final_time) < 0.01), None)
+
+        watched = float(c["watched_sec"] or 0) if c else 0.0
+        hidden = float(c["hidden_sec"] or 0) if c else 0.0
+        students.append({
+            "username": u,
+            "watched_sec": round(watched),
+            "duration_sec": round(float(c["duration_sec"] or 0)) if c else 0,
+            "completion_pct": round(float(c["completion_pct"] or 0), 1) if c else 0.0,
+            "hidden_sec": round(hidden),
+            # Fraction of playing time the tab was in the background. High values
+            # mean the video ran to nobody — completion_pct alone hides this.
+            "inattention_pct": round(100 * hidden / (watched + hidden), 1) if (watched + hidden) else 0.0,
+            "completed": bool(c["completed"]) if c else False,
+            "checkpoints_total": len(cp_times),
+            "checkpoints_attempted": len(rows),
+            "checkpoints_passed": len(passed),
+            "passed_first_try": len(first_try),
+            "needed_retries": len(passed) - len(first_try),
+            "avg_confidence": round(sum(r["avg_conf"] or 0 for r in rows) / len(rows), 1) if rows else None,
+            "final_attempted": bool(fin),
+            "final_passed": bool(fin and fin["passed"]),
+            "final_attempts": (fin["total_attempts"] if fin else 0),
+            "final_first_try": bool(fin and fin["passed"] and (fin["winning_attempt"] or 99) == 1),
+            "last_seen": (c["updated_at"] if c else None),
+        })
+
+    # Per-checkpoint difficulty, for spotting a question the class fell over.
+    per_cp = []
+    for cp in cps:
+        t = cp["checkpoint_time"]
+        rows = [r for rs in by_user.values() for r in rs if abs(r["checkpoint_time"] - t) < 0.01]
+        passed = [r for r in rows if r["passed"]]
+        first = [r for r in passed if (r["winning_attempt"] or 99) == 1]
+        per_cp.append({
+            "checkpoint_time": t,
+            "is_final": (final_time is not None and abs(t - final_time) < 0.01),
+            "concept": cp["concept"],
+            "question": cp["question"],
+            "attempted": len(rows),
+            "passed": len(passed),
+            "first_try": len(first),
+            "first_try_pct": round(100 * len(first) / len(rows), 1) if rows else None,
+        })
+
+    n = len(students)
+    summary = {
+        "students": n,
+        "avg_completion_pct": round(sum(s["completion_pct"] for s in students) / n, 1) if n else 0,
+        "avg_inattention_pct": round(sum(s["inattention_pct"] for s in students) / n, 1) if n else 0,
+        "finished_video": sum(1 for s in students if s["completed"]),
+        "final_attempted": sum(1 for s in students if s["final_attempted"]),
+        "final_passed": sum(1 for s in students if s["final_passed"]),
+        "final_first_try": sum(1 for s in students if s["final_first_try"]),
+    }
+
+    return {"video": fname, "checkpoints": per_cp, "students": students, "summary": summary}
+
+
 @app.post("/api/v1/video/engagement")
 async def log_video_engagement_event(req: VideoEngagementRequest, _caller: dict = Depends(auth.get_current_user)):
     # AUTHZ: identity comes from the session, not the body. `req.username`
@@ -3880,23 +4415,138 @@ async def submit_video_reflection(req: VideoReflectionRequest, _caller: dict = D
 
 @app.get("/api/v1/video/prelab/{video_filename}")
 async def get_video_prelab(video_filename: str):
-    """Return the list of prelab complex problems for a video (from prelab.json)."""
-    prelab_path = VIDEO_DIR / "prelab.json"
-    if not prelab_path.exists():
-        return {"problems": []}
+    """Prelab practice questions for one video.
+
+    prelab.json is a plain chapter -> video -> prelabs tree (see _find_video). The
+    response shape is kept as a list of {prompt} objects because that is what the
+    classroom modal already renders; `samples` and `concept` are always empty now
+    that a question is just its text.
+    """
+    fname = os.path.basename(video_filename)
     try:
-        with open(prelab_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        raw = data.get(video_filename, [])
-        # Support both the simple list form and an object with a "problems" key
-        problems = raw if isinstance(raw, list) else raw.get("problems", [])
-        # Normalize each entry to a string prompt
-        norm = [p if isinstance(p, str) else p.get("prompt", "") for p in problems]
-        norm = [p for p in norm if p and p.strip()]
-        return {"problems": norm}
+        vid = _find_video(_load_prelab_file(), fname)
     except Exception as e:
         logger.warning(f"Prelab load failed for {video_filename}: {e}")
         return {"problems": []}
+
+    problems = [{"prompt": q, "samples": [], "concept": ""}
+                for q in (vid or {}).get("prelabs", []) if (q or "").strip()]
+    return {"problems": problems}
+
+
+class PrelabSaveRequest(BaseModel):
+    video_filename: str
+    questions: List[str]
+
+
+def _prelab_path() -> Path:
+    return VIDEO_DIR / "prelab.json"
+
+
+def _load_prelab_file() -> dict:
+    """Read prelab.json. Missing file is not an error — it just means no prelabs yet."""
+    p = _prelab_path()
+    if not p.exists():
+        return {"chapters": []}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f"[prelab] unreadable prelab.json: {e}")
+        raise HTTPException(status_code=500, detail="prelab.json is unreadable")
+    data.setdefault("chapters", [])
+    return data
+
+
+def _find_video(data: dict, fname: str) -> dict | None:
+    """The prelab entry for a recording, or None.
+
+    Resolved by CATALOG SLOT (chapter + video number) rather than by filename,
+    because the same lecture slot holds a different filename in each deployment —
+    Ch1 V2 is Chapter1-part2.mp4 on a dev box and Chapter_1_Part_2.mp4 in
+    production. Keying on the filename made this one file correct in at most one
+    environment; keying on the slot lets the same file be right in both, since
+    each database knows its own filename -> slot mapping.
+
+    Falls back to a filename match for recordings that have not been assigned to a
+    chapter yet (the chapter-0 bucket), which have no slot to key on.
+    """
+    slot = None
+    try:
+        row = db.fetch_one(
+            "SELECT chapter_number, video_number FROM video_catalog WHERE filename = ?",
+            (fname,))
+        if row and row["video_number"] is not None:
+            slot = (row["chapter_number"], row["video_number"])
+    except Exception as e:
+        logger.debug(f"[prelab] catalog lookup failed for {fname}: {e}")
+
+    if slot:
+        for ch in data.get("chapters", []):
+            if ch.get("number") != slot[0]:
+                continue
+            for v in ch.get("videos", []):
+                if v.get("video_number") == slot[1]:
+                    return v
+
+    for ch in data.get("chapters", []):
+        for v in ch.get("videos", []):
+            if v.get("filename") == fname:
+                return v
+    return None
+
+
+@app.get("/api/v1/video/prelab-edit/{video_filename}")
+async def get_prelab_for_edit(video_filename: str, _: str = Depends(verify_teacher)):
+    """The editable question list for one video — one question per line in the UI."""
+    fname = os.path.basename(video_filename)
+    vid = _find_video(_load_prelab_file(), fname)
+    return {"video_filename": fname, "questions": list((vid or {}).get("prelabs", []))}
+
+
+@app.post("/api/v1/video/prelab")
+async def save_video_prelab(req: PrelabSaveRequest, _: str = Depends(verify_teacher)):
+    """Replace the prelab questions for one video.
+
+    Only that video's `prelabs` list changes; every other chapter and video is read
+    back and rewritten untouched, so editing one lecture cannot wipe another. A video
+    the tree does not know about yet is filed under chapter 0 rather than dropped —
+    otherwise a recording uploaded after the last catalog sync could never get one.
+    The write goes to a temp file and is renamed, so a crash mid-write leaves the old
+    file intact rather than a truncated one the app would fail to parse.
+    """
+    fname = os.path.basename(req.video_filename or "")
+    if not fname:
+        raise HTTPException(status_code=400, detail="video_filename is required")
+
+    questions = [q.strip() for q in (req.questions or []) if (q or "").strip()]
+
+    data = _load_prelab_file()
+    vid = _find_video(data, fname)
+    if vid is None:
+        unassigned = next((c for c in data["chapters"] if c.get("number") == 0), None)
+        if unassigned is None:
+            unassigned = {"number": 0, "title": "Unassigned recordings", "videos": []}
+            data["chapters"].insert(0, unassigned)
+        vid = {"video_number": None, "filename": fname,
+               "title": os.path.splitext(fname)[0].replace("_", " "),
+               "prelabs": []}
+        unassigned.setdefault("videos", []).append(vid)
+    vid["prelabs"] = questions
+
+    path = _prelab_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.error(f"[prelab] write failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not save prelab.json")
+
+    logger.info(f"[prelab] {fname}: saved {len(questions)} question(s)")
+    return {"status": "success", "video_filename": fname, "count": len(questions)}
 
 
 class PrelabStartRequest(BaseModel):

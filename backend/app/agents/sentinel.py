@@ -20,6 +20,15 @@ if config.INTENT_CLASSIFIER_MODE == "fast":
 
 class SentinelAgent(BaseAgent):
     
+    # Off-topic vocabulary, anchored to word boundaries so a keyword cannot match
+    # inside a longer, perfectly on-topic word.
+    _OFF_TOPIC_RE = re.compile(r"\b(?:" + "|".join([
+        "bake", "baking", "cook", "cooking", "recipe", "weather", "president",
+        "capital of", "sing", "song", "poem", "joke", "movie", "football",
+        "basketball", "soccer", "baseball", "tennis", "history", "geography",
+        "python", "java", "javascript", "html", "css", "pizza", "pasta",
+    ]) + r")\b")
+
     # --- CONFIGURATION TOGGLE ---
     # Set to True to enable the slower but smarter LLM Safety Check
     ENABLE_AI_SAFETY_JUDGE = True
@@ -579,15 +588,29 @@ Respond with ONLY a JSON object and nothing else:
         # RULE 4: S_spam (Attention Hijacking Filter)
         # S_spam = 0 if I_q = OFF_TOPIC AND N_strike >= τ_strike
         # =========================================================
-        off_topic_keywords = [
-            "bake", "baking", "cook", "cooking", "recipe", "weather", "president",
-            "capital of", "sing", "song", "poem", "joke", "movie", "football",
-            "basketball", "soccer", "baseball", "tennis", "history", "geography", 
-            "python", "java ", "javascript", "html", "css", "pizza", "pasta"
-        ]
+        # Matched on WORD BOUNDARIES (see _OFF_TOPIC_RE). As bare substrings these
+        # fire inside ordinary technical English — "sing" in "u-sing", "cook" in
+        # "cookie", "history" in "prehistory" — and every hit here costs the learner
+        # a focus-mode strike, three of which lock the tutor.
         is_analogy = any(w in query_lower for w in ["like a", "analogy", "metaphor", "compare", "imagine"])
-        is_off_topic = (any(kw in query_lower for kw in off_topic_keywords) and not has_c_context and not is_analogy)
-        
+        is_off_topic = (bool(self._OFF_TOPIC_RE.search(query_lower))
+                        and not has_c_context and not is_analogy)
+
+        # A learner mid-plan or mid-quiz is ANSWERING the tutor's own question, so
+        # their reply is never a new off-topic query. Without this, a plain-English
+        # answer to a forethought prompt ("I have no idea", "read the input first",
+        # "divide by 9") carries no C vocabulary, falls to the embedding fallback,
+        # is labelled OFF_TOPIC and earns a strike — and "I have no idea" is a
+        # suggestion chip the tutor itself offers. Three strikes lock the tutor, so
+        # the learner is punished hardest for answering honestly that they are lost,
+        # which is exactly the moment scaffolding exists to serve.
+        _plan = current_session.get("active_plan") or {}
+        is_answering_tutor = bool(_plan.get("is_active")) or is_in_quiz
+        if is_answering_tutor and (is_off_topic or state.intent == "OFF_TOPIC"):
+            self.logger.info("🎯 [S_spam] Skipped off-topic strike — learner is answering an active prompt.")
+            state.intent = "CONCEPT"
+            is_off_topic = False
+
         if is_off_topic or state.intent == "OFF_TOPIC":
             # Increment Strike in DB
             state.n_strike += 1

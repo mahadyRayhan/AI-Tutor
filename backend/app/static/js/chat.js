@@ -765,16 +765,103 @@ function autoResize(textarea) {
 }
 
 function toggleAuth(view) {
-    document.getElementById('loginForm').classList.toggle('hidden', view === 'signup');
+    document.getElementById('loginForm').classList.toggle('hidden', view !== 'login');
     document.getElementById('signupForm').classList.toggle('hidden', view !== 'signup');
+    const rec = document.getElementById('recoveryForm');
+    if (rec) rec.classList.toggle('hidden', view !== 'recovery');
     // Clear any lingering messages when switching forms
-    ['loginError', 'signupError', 'err-name', 'err-email', 'err-username',
+    ['loginError', 'signupError', 'recoveryError', 'err-name', 'err-email', 'err-username',
      'err-password', 'err-password2'].forEach(id => {
         const el = document.getElementById(id);
         if (el) { el.innerText = ''; el.classList.remove('show'); el.style.display = 'none'; }
     });
     const s = document.getElementById('signupSuccess');
     if (s) s.style.display = 'none';
+}
+
+// ── Account recovery ─────────────────────────────────────────────────────────
+let recoveryMode = 'password';   // 'password' | 'username'
+
+function openRecovery(mode) {
+    recoveryMode = mode;
+    document.getElementById('recoveryTitle').innerText =
+        mode === 'username' ? 'Forgot your username?' : 'Forgot your password?';
+    document.getElementById('recoverySub').innerText =
+        mode === 'username'
+            ? "We'll email you the username for this address."
+            : "We'll email you a link to choose a new password.";
+    document.getElementById('recoveryEmail').value = '';
+    document.getElementById('recoveryFields').style.display = '';
+    document.getElementById('recoverySent').style.display = 'none';
+    toggleAuth('recovery');
+}
+
+async function submitRecovery() {
+    const email = document.getElementById('recoveryEmail').value.trim();
+    const err   = document.getElementById('recoveryError');
+    const btn   = document.getElementById('recoveryBtn');
+    const done  = document.getElementById('recoverySent');
+
+    const showError = (text) => {
+        err.innerText = text;
+        err.style.display = 'block';
+        err.classList.add('show');
+    };
+    err.style.display = 'none';
+    err.innerText = '';
+
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        showError('Enter the email address you signed up with.');
+        return;
+    }
+
+    // Visible work state. Without this the button looks inert while the request
+    // is in flight and people click it repeatedly.
+    const label = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="rec-spinner"></span> Sending…';
+
+    const path = recoveryMode === 'username'
+        ? '/api/v1/auth/forgot-username'
+        : '/api/v1/auth/forgot-password';
+
+    try {
+        const res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+
+        if (res.status === 429) {
+            showError('Too many attempts. Wait a minute, then try again.');
+            return;
+        }
+        if (!res.ok) {
+            showError('Something went wrong. Please try again in a moment.');
+            return;
+        }
+
+        // Replace the form with a confirmation. The wording is identical whether
+        // or not the address is registered — the server will not say which, and
+        // neither will this screen.
+        document.getElementById('recoveryFields').style.display = 'none';
+        done.style.display = 'block';
+        done.innerHTML =
+            '<div class="rec-check">✓</div>' +
+            '<h3>Check your email</h3>' +
+            '<p>If <strong>' + escapeHTML(email) + '</strong> is registered, we just sent ' +
+            (recoveryMode === 'username'
+                ? 'your username to it.'
+                : 'a link to choose a new password. The link works once and expires in 1 hour.') +
+            '</p>' +
+            '<p class="rec-hint">Nothing after a few minutes? Check your spam folder, or ' +
+            'confirm you used the same address you signed up with.</p>';
+    } catch (e) {
+        showError('Network error. Please check your connection and try again.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+    }
 }
 
 function handleKeyPress(e) {
@@ -1947,7 +2034,68 @@ function updateClassroomTimeBadge(seconds) {
     if (badge) badge.textContent = `0:00 – ${str}`;
 }
 
+// A 401 means the session is gone (it expired, or the server restarted and — with
+// SAGE_JWT_SECRET unset — minted a new signing key, invalidating every cookie).
+// fetch() does NOT reject on 4xx, so an unchecked response body reads as
+// {detail: "Not authenticated"}; `data.is_correct` is then undefined, which is
+// falsy, and the checkpoint marks EVERY option wrong. The modal is deliberately
+// non-skippable, so the learner is trapped until they discover a page refresh —
+// reported as "it says the correct answer is incorrect and all four options are
+// wrong". Say what actually happened instead.
+let crSessionExpiredShown = false;
+function crSessionExpired(contextMsg) {
+    if (crSessionExpiredShown) return;
+    crSessionExpiredShown = true;
+    try { localStorage.removeItem('c_tutor_user'); } catch (e) {}
+    const v = document.getElementById('classroomVideo');
+    if (v && !v.paused) v.pause();
+    const box = document.createElement('div');
+    box.className = 'session-expired-overlay';
+    box.innerHTML = `
+        <div class="session-expired-card">
+            <h3>Your session expired</h3>
+            <p>${escapeHtmlCr(contextMsg || 'You were signed out, so that could not be saved.')}</p>
+            <p class="se-sub">Sign in again and you can pick up where you left off — your progress is saved.</p>
+            <button class="se-btn" onclick="window.location.reload()">Log in again</button>
+        </div>`;
+    document.body.appendChild(box);
+    setTimeout(() => window.location.reload(), 8000);
+}
+
 // ═══ CLASSROOM CHECKPOINT MCQ (non-skippable) ═══
+
+// Display order of the options: crCpOrder[displayPosition] = original index.
+// The server grades against the ORIGINAL index stored with the question, so every
+// answer is translated back through this map before it is submitted.
+let crCpOrder = [];
+
+// Fisher-Yates. Reshuffled on every attempt, and on the first display too: the
+// generated questions are heavily position-biased (64% of correct answers sit at
+// index 0 and none at index 3 in the current bank), so a student who always picks A
+// scores far above the 0.20 guess rate the BKT quiz tier assumes. Shuffling makes
+// the observed guess rate match the modelled one.
+function crShuffleOrder(n, prev) {
+    const order = Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+    }
+    // A reshuffle that lands on the same order reads as "nothing happened", so redraw.
+    if (n > 1 && prev && prev.length === n && prev.every((v, i) => v === order[i])) {
+        return crShuffleOrder(n, prev);
+    }
+    return order;
+}
+
+function crRenderOptions() {
+    const cp = crActiveCheckpoint;
+    if (!cp) return '';
+    return crCpOrder.map((orig, pos) =>
+        `<button class="cp-option" data-index="${pos}" onclick="crSelectOption(${pos})">
+            <span class="cp-letter">${String.fromCharCode(65 + pos)}</span> ${escapeHtmlCr(cp.options[orig])}
+         </button>`).join('');
+}
+
 function crShowCheckpointModal(cp) {
     crActiveCheckpoint = cp;
     crMcqShownAt = Date.now();
@@ -1957,10 +2105,8 @@ function crShowCheckpointModal(cp) {
 
     const body = document.getElementById('crCheckpointBody');
     const mins = Math.floor(cp.checkpoint_time / 60);
-    const optsHtml = cp.options.map((opt, i) =>
-        `<button class="cp-option" data-index="${i}" onclick="crSelectOption(${i})">
-            <span class="cp-letter">${String.fromCharCode(65 + i)}</span> ${escapeHtmlCr(opt)}
-         </button>`).join('');
+    crCpOrder = crShuffleOrder((cp.options || []).length, null);
+    const optsHtml = crRenderOptions();
 
     body.innerHTML = `
         <div class="cp-badge">⏸️ Checkpoint · ${mins} min</div>
@@ -1970,7 +2116,7 @@ function crShowCheckpointModal(cp) {
                 ${[1,2,3,4,5].map(n => `<button class="cp-conf" data-c="${n}" onclick="crSetConfidence(${n})">${n}</button>`).join('')}
             </div></div>
         <div class="cp-question">${escapeHtmlCr(cp.question)}</div>
-        <div class="cp-options">${optsHtml}</div>
+        <div class="cp-options" id="crCpOptions">${optsHtml}</div>
         <div class="cp-feedback" id="crCpFeedback"></div>
         <button class="cp-submit" id="crCpSubmit" onclick="crSubmitCheckpoint()" disabled>Submit Answer</button>`;
     document.getElementById('crCheckpointModal').classList.add('visible');
@@ -2000,9 +2146,22 @@ async function crSubmitCheckpoint() {
         const resp = await fetch('/api/v1/video/checkpoint/answer', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: crUser(), video_filename: classroomVideoFilename,
-                checkpoint_time: crActiveCheckpoint.checkpoint_time, selected_index: crCpSelected,
+                checkpoint_time: crActiveCheckpoint.checkpoint_time, selected_index: crCpOrder[crCpSelected],
                 confidence: crCpConfidence, time_to_answer_sec: tta, attempts: crMcqAttempts })
         });
+        if (resp.status === 401 || resp.status === 403) {
+            crSessionExpired('You were signed out, so your answer could not be graded.');
+            return;
+        }
+        if (!resp.ok) {
+            // A server error is not a wrong answer. Saying "Not quite" here teaches
+            // the learner their correct answer was wrong.
+            document.getElementById('crCpFeedback').innerHTML =
+                `<div class="cp-wrong">⚠️ Could not reach the server (error ${resp.status}). Your answer was not graded — try again.</div>`;
+            submitBtn.textContent = 'Submit Answer';
+            submitBtn.disabled = false;
+            return;
+        }
         const data = await resp.json();
         const fb = document.getElementById('crCpFeedback');
         if (data.is_correct) {
@@ -2016,7 +2175,11 @@ async function crSubmitCheckpoint() {
             submitBtn.textContent = 'Submit Answer';
             submitBtn.disabled = true;
             crCpSelected = null;
-            document.querySelectorAll('#crCheckpointModal .cp-option').forEach(b => b.classList.remove('selected'));
+            // Reshuffle so a retry is answered by reasoning again rather than by
+            // position memory ("it wasn't B") narrowing the field for free.
+            crCpOrder = crShuffleOrder(crCpOrder.length, crCpOrder);
+            const optsEl = document.getElementById('crCpOptions');
+            if (optsEl) optsEl.innerHTML = crRenderOptions();
         }
     } catch (e) {
         console.error('checkpoint submit failed', e);
@@ -2090,10 +2253,27 @@ function crShowPrelabModal() {
     const body = document.getElementById('crPrelabBody');
     if (!modal || !body) return;
     const idx = Math.floor(Math.random() * crPrelabProblems.length);
-    crPrelabChosen = crPrelabProblems[idx];
+    const chosen = crPrelabProblems[idx];
+    // /video/prelab returns {prompt, concept, samples} objects; older entries may
+    // still be plain strings. Reading the object directly rendered "[object Object]"
+    // where the question should be.
+    const prompt = (typeof chosen === 'string') ? chosen : (chosen && chosen.prompt) || '';
+    const concept = (typeof chosen === 'string') ? '' : (chosen && chosen.concept) || '';
+    const samples = (typeof chosen === 'string') ? [] : (chosen && chosen.samples) || [];
+    if (!prompt) return;
+    crPrelabChosen = prompt;          // downstream telemetry expects the text
+
+    const sampleHtml = samples.map(sm => `
+        <details class="prelab-sample">
+            <summary>${escapeHtmlCr(sm.label || 'Sample output')}</summary>
+            <pre>${escapeHtmlCr(sm.text || '')}</pre>
+        </details>`).join('');
+
     body.innerHTML = `
         <p class="cp-instruction">You've finished the lecture — ready to apply it? Try this challenge.</p>
-        <div class="cp-question">${escapeHtmlCr(crPrelabChosen)}</div>
+        ${concept ? `<div class="prelab-concepts"><span class="prelab-chip">${escapeHtmlCr(concept)}</span></div>` : ''}
+        <div class="cp-question prelab-prompt">${escapeHtmlCr(prompt)}</div>
+        ${sampleHtml}
         <div class="prelab-actions">
             <button class="cp-skip" onclick="crDismissPrelab()">Maybe later</button>
             <button class="cp-submit-inline" onclick="crSolveInSage()">🚀 Solve in SAGE</button>
@@ -2354,7 +2534,16 @@ async function sendClassroomMessage() {
                 timestamp: askTimestamp,
             }),
         });
-        
+
+        if (response.status === 401 || response.status === 403) {
+            classroomChatMessages.pop();          // drop the empty streaming bubble
+            renderClassroomMessages();
+            classroomIsStreaming = false;
+            document.getElementById('classroomSendBtn').disabled = false;
+            crSessionExpired('You were signed out, so your question could not be answered.');
+            return;
+        }
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
