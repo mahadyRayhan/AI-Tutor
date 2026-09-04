@@ -1108,6 +1108,24 @@ async def get_users_paginated(page: int = 1, page_size: int = 10):
         "pages": total_pages
     }
 
+@app.get("/api/v1/admin/user_emails", dependencies=[Depends(verify_teacher)])
+async def get_user_emails():
+    """
+    username -> email for the whole roster, in one call.
+
+    Every other teacher endpoint names a learner by username or by the
+    anonymised Student_NN label, neither of which an instructor can match
+    against a class list. The dashboard loads this map once and labels its
+    tables with the email, while still keying every action on the username.
+    """
+    rows = db.fetch_all("SELECT username, email FROM users")
+    return {
+        "emails": {
+            r["username"]: (r["email"] or "").strip()
+            for r in rows if (r["email"] or "").strip()
+        }
+    }
+
 @app.post("/api/v1/admin/users/update")
 async def update_user(req: AdminUserUpdate, _t: dict = Depends(verify_teacher)):
     # AUTHZ: teacher-only. These endpoints expose whole-class data and admin

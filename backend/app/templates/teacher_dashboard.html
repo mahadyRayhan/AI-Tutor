@@ -450,7 +450,7 @@
                 <table id="userTable">
                     <thead>
                         <tr>
-                            <th>Username</th>
+                            <th>Email</th>
                             <th>Name</th>
                             <th>Role</th>
                             <th>University</th>
@@ -604,7 +604,7 @@
                 <table id="riskTable">
                     <thead>
                         <tr>
-                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('id')">Student ID<span class="sort-ind" data-key="id" style="opacity:.3;"> ⇅</span></th>
+                            <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('id')">Student<span class="sort-ind" data-key="id" style="opacity:.3;"> ⇅</span></th>
                             <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('risk')">Risk<span class="sort-ind" data-key="risk" style="opacity:.3;"> ⇅</span></th>
                             <th>Reason</th>
                             <th class="sortable" style="cursor:pointer; user-select:none;" onclick="sortRisk('mastery')">Mastery %<span class="sort-ind" data-key="mastery" style="opacity:.3;"> ⇅</span></th>
@@ -710,7 +710,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <h2 style="margin:0; font-size:1.4rem;">
-                👤 <span id="modalStudentId">Student_XX</span> 
+                👤 <span id="modalStudentId">…</span> 
                 <span id="modalRiskBadge" class="status-badge"></span>
             </h2>
             <button class="close-modal" onclick="closeModal()">×</button>
@@ -753,6 +753,11 @@
     const RISK_VIEW_SIZE = 10;
     const PAGE_SIZE = 10;
     const USER_ID_MAP = {};
+    // username -> email for the whole roster, loaded once at page load. Usernames
+    // and the anonymised Student_NN labels are unmatchable against a class list,
+    // so every table LABELS students by email while still keying actions on the
+    // username. Empty until loadEmailMap() resolves; sLabel falls back until then.
+    const EMAIL_MAP = {};
     const currentUser = JSON.parse(localStorage.getItem('c_tutor_user'));
     const FILE_RULES = {
         'code': { 
@@ -959,7 +964,9 @@
             const color = MECH_COLOR[cl.mechanism] || '#7f8c8d';
             const meta = MECH_ACTION[cl.mechanism] || { verb: 'Act', label: cl.mechanism };
             const n = cl.students.length;
-            const who = n === 1 ? cl.students[0].display_id : `${n} students`;
+            const who = n === 1
+                ? escapeHtml(sLabel(cl.students[0].hidden_username, cl.students[0].display_id))
+                : `${n} students`;
             return `<tr>
                 <td style="white-space:nowrap;">
                     <span onclick="toggleCluster(${i})" style="cursor:pointer; font-weight:600; color:#2c3e50;">
@@ -987,7 +994,7 @@
         if (!cl || !detail) return;
         detail.innerHTML = cl.students.map(s =>
             `<span onclick="openStudentModal('${s.hidden_username}','${s.display_id}','','${encodeURIComponent('{}')}')"
-                style="display:inline-block; cursor:pointer; font-family:monospace; font-size:0.8rem; color:#2980b9; background:#eef4fb; padding:2px 8px; border-radius:6px; margin:2px 4px 2px 0;">${s.display_id}</span>`).join('');
+                style="display:inline-block; cursor:pointer; font-family:monospace; font-size:0.8rem; color:#2980b9; background:#eef4fb; padding:2px 8px; border-radius:6px; margin:2px 4px 2px 0;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</span>`).join('');
     }
 
     // Batch action: log the prescribed action for EVERY student in the cluster, each with
@@ -1277,7 +1284,7 @@
 
         let html = `<table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
             <thead><tr style="text-align:left; color:#7f8c8d; border-bottom:2px solid #eee;">
-                <th style="padding:8px 6px;">Student ID</th>
+                <th style="padding:8px 6px;">Student</th>
                 <th style="padding:8px 6px;">Topic</th>
                 <th style="padding:8px 6px;">Fades in</th>
                 <th style="padding:8px 6px;">First skill to go</th>
@@ -1287,7 +1294,7 @@
             const col = fcUrgencyColor(it.days_to_lapse);
             const when = it.days_to_lapse < 1 ? '&lt;1 day' : `${it.days_to_lapse.toFixed(1)} days`;
             html += `<tr class="clickable-row" onclick="openStudentModal('${it.hidden_username}', '${it.display_id}', '', '${encodeURIComponent('{}')}')" style="border-bottom:1px solid #f4f4f4;">
-                <td style="padding:8px 6px; font-family:monospace; font-weight:600; color:#2c3e50;">${it.display_id}</td>
+                <td style="padding:8px 6px; font-family:monospace; font-weight:600; color:#2c3e50;">${escapeHtml(sLabel(it.hidden_username, it.display_id))}</td>
                 <td style="padding:8px 6px;">${it.concept}</td>
                 <td style="padding:8px 6px;"><span style="background:${col}; color:#fff; padding:2px 10px; border-radius:12px; font-weight:600; font-variant-numeric:tabular-nums;">${when}</span></td>
                 <td style="padding:8px 6px; color:#555;">${it.first_tier_label} <span style="color:#aaa;">(now ${it.tier_pct_now}%)</span></td>
@@ -1374,7 +1381,7 @@
         let h = `<table style="width:100%; border-collapse:collapse; font-size:0.8rem;"><tbody>`;
         (t.students || []).forEach(s => {
             h += `<tr onclick="event.stopPropagation(); openStudentModal('${s.hidden_username}','${s.display_id}','','${encodeURIComponent('{}')}')" style="cursor:pointer; border-bottom:1px solid #f0f0f0;">
-                <td style="padding:4px 6px; font-family:monospace; color:#2c3e50;">${s.display_id}</td>
+                <td style="padding:4px 6px; font-family:monospace; color:#2c3e50;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</td>
                 <td style="padding:4px 6px; color:${cellCol(s.explain)};">explain ${s.explain}%</td>
                 <td style="padding:4px 6px; color:${cellCol(s.complete)};">complete ${s.complete}%</td>
                 <td style="padding:4px 6px; color:${cellCol(s.write)};">write ${s.write}%</td>
@@ -1445,7 +1452,7 @@
         if (!box || !r) return;
         if (box.style.display === 'none') {
             box.innerHTML = '<b>Weakest first:</b> ' + r.group.map(s =>
-                `<span style="display:inline-block; background:#f1f3f5; border-radius:10px; padding:1px 8px; margin:2px 3px; white-space:nowrap;">${s.display_id} <span style="color:#999;">·${s.weakest}%</span></span>`).join('');
+                `<span style="display:inline-block; background:#f1f3f5; border-radius:10px; padding:1px 8px; margin:2px 3px; white-space:nowrap;">${escapeHtml(sLabel(s.hidden_username, s.display_id))} <span style="color:#999;">·${s.weakest}%</span></span>`).join('');
             box.style.display = 'block';
         } else { box.style.display = 'none'; }
     }
@@ -1667,7 +1674,7 @@
                     : '<span style="color:#aaa;">—</span>';
                 tbody.innerHTML += `
                     <tr>
-                        <td><b>${m.display_id}</b></td>
+                        <td><b>${escapeHtml(sLabel(m.hidden_username, m.display_id))}</b></td>
                         <td>${badge}</td>
                         <td style="font-size:0.85rem; color:#555;">${m.risk_reason}</td>
                         <td>${m.avg_frustration} <span style="color:#aaa; font-size:0.75rem;">(${m.turns} turns)</span></td>
@@ -1684,7 +1691,8 @@
     }
 
     async function pushQuickChallenge(username, displayId) {
-        const question = prompt(`Send a custom micro-challenge to ${displayId}:`);
+        const who = sLabel(username, displayId);
+        const question = prompt(`Send a custom micro-challenge to ${who}:`);
         if (!question || !question.trim()) return;
         try {
             await fetch(`${API_URL}/api/v1/assignments/create`, {
@@ -1692,7 +1700,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ teacher: currentUser.username, student: username, question: question })
             });
-            alert(`✅ Challenge sent to ${displayId}`);
+            alert(`✅ Challenge sent to ${who}`);
         } catch (e) {
             alert("❌ Failed to send challenge.");
         }
@@ -1795,8 +1803,9 @@
 
                 tbody.innerHTML += `
                     <tr>
-                        <td style="font-weight:600;">${u.username}</td>
-                        <td>${u.name || '-'}</td>
+                        <td style="font-weight:600;">${escapeHtml(u.email || u.username)}
+                            ${u.email ? `<div style="font-weight:400; font-size:0.75rem; color:#95a5a6;">${escapeHtml(u.username)}</div>` : ''}</td>
+                        <td>${escapeHtml(u.name || '-')}</td>
                         <td>${roleSelect}</td>
                         <td>${u.university || '-'}</td>
                         <td>${blockSwitch}</td>
@@ -1953,10 +1962,6 @@
     function riskSeverityRank(tier) {
         return ({ Critical: 4, High: 3, Watch: 2, OK: 1, 'No Data': 0 })[tier] ?? 0;
     }
-    function riskStudentNum(id) {
-        const m = String(id || '').match(/(\d+)/);
-        return m ? parseInt(m[1], 10) : 0;
-    }
     function parseActiveMinutes(str) {
         if (!str) return -1;
         const h = String(str).match(/(\d+)\s*h/);
@@ -1971,6 +1976,7 @@
         let rows = RISK_ALL;
         if (q) {
             rows = rows.filter(s =>
+                sLabel(s.hidden_username, s.display_id).toLowerCase().includes(q) ||
                 (s.display_id || '').toLowerCase().includes(q) ||
                 (s.risk_tier || '').toLowerCase().includes(q) ||
                 (s.risk_reason_m || '').toLowerCase().includes(q) ||
@@ -1984,7 +1990,8 @@
         return rows.slice().sort((a, b) => {
             let av, bv;
             switch (key) {
-                case 'id':      av = riskStudentNum(a.display_id);   bv = riskStudentNum(b.display_id);   break;
+                case 'id':      av = sLabel(a.hidden_username, a.display_id).toLowerCase();
+                                bv = sLabel(b.hidden_username, b.display_id).toLowerCase();   break;
                 case 'risk':    av = riskSeverityRank(a.risk_tier);  bv = riskSeverityRank(b.risk_tier);  break;
                 case 'mastery': av = (a.avg_mastery_pct != null ? a.avg_mastery_pct : -1); bv = (b.avg_mastery_pct != null ? b.avg_mastery_pct : -1); break;
                 case 'active':  av = (a._activeMin == null ? -1 : a._activeMin); bv = (b._activeMin == null ? -1 : b._activeMin); break;
@@ -2037,7 +2044,7 @@
                     : '<span style="color:#aaa;">—</span>';
                 tbody.innerHTML += `
                     <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${tier}', '${masteryStr}')">
-                        <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
+                        <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</td>
                         <td>${riskBadge}</td>
                         <td style="font-size:0.85rem; color:#555;">${s.risk_reason_m || '—'}</td>
                         <td>${masteryPct}</td>
@@ -2221,7 +2228,7 @@
         
         // 1. Update Header to include Active Time Dropdown
         thead.innerHTML = `
-            <th>Student ID</th>
+            <th>Student</th>
             <th>
                 Attention Needed 
                 <div class="info-icon">ⓘ
@@ -2278,7 +2285,7 @@
 
             tbody.innerHTML += `
                 <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${s.risk_level}', '${masteryStr}')">
-                    <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${s.display_id}</td>
+                    <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</td>
                     <td>${riskBadge}</td>
                     
                     <!-- NEW: Active Time Cell -->
@@ -2555,7 +2562,7 @@
 
     async function openStudentModal(realUsername, displayId, riskLevel, masteryJson) {
         // 1. Header setup
-        document.getElementById('modalStudentId').innerText = displayId;
+        document.getElementById('modalStudentId').innerText = sLabel(realUsername, displayId);
         document.getElementById('studentModal').dataset.student = realUsername;
         // Badge is set from the fetched conjunctive flag (below), NOT the passed-in
         // risk tier — one severity function, so the modal can't disagree with Triage.
@@ -2799,7 +2806,7 @@
               shown.map(s => {
                 const tone = s.struggle_pct >= 40 ? 'bad' : s.struggle_pct >= 20 ? 'warn' : 'good';
                 return `<tr style="border-top:1px solid #1e2430;">
-                  <td style="padding:9px 10px; font-weight:600;">${escapeHtml(s.username)}</td>
+                  <td style="padding:9px 10px; font-weight:600;">${escapeHtml(sLabel(s.username))}</td>
                   <td style="padding:9px 10px;">${pill(s.struggle_pct + '%', tone)}</td>
                   <td style="padding:9px 10px;">${s.confusion}</td>
                   <td style="padding:9px 10px;">${s.frustration}</td>
@@ -2884,7 +2891,7 @@
               d.students.map(s => {
                 const tone = s.on_path_pct >= 60 ? 'good' : s.on_path_pct >= 30 ? 'warn' : 'bad';
                 return `<tr style="border-top:1px solid #1e2430;">
-                  <td style="padding:9px 10px; font-weight:600;">${escapeHtml(s.username)}</td>
+                  <td style="padding:9px 10px; font-weight:600;">${escapeHtml(sLabel(s.username))}</td>
                   <td style="padding:9px 10px;">${pill(s.on_path_pct + '%', tone)}
                       <span style="color:#64748b; font-size:11px;"> ${s.on_path}/${s.total}</span></td>
                   <td style="padding:9px 10px;">${s.skip_ahead || '—'}</td>
@@ -3008,7 +3015,7 @@
                     else if (s.final_passed)     finalCell = pill(`passed · ${s.final_attempts} tries`, 'warn');
                     else                         finalCell = pill(`failed · ${s.final_attempts} tries`, 'bad');
                     return `<tr style="border-top:1px solid #1e2430;">
-                        <td style="padding:9px 10px; font-weight:600;">${escapeHtml(s.username)}</td>
+                        <td style="padding:9px 10px; font-weight:600;">${escapeHtml(sLabel(s.username))}</td>
                         <td style="padding:9px 10px;">${pill(s.completion_pct + '%', wTone)}
                             <span style="color:#64748b; font-size:11px;"> ${mmss(s.watched_sec)}/${mmss(s.duration_sec)}</span></td>
                         <td style="padding:9px 10px;">${pill(s.inattention_pct + '%', iTone)}</td>
@@ -3424,6 +3431,23 @@
         }
     }
 
+    // How a student is shown anywhere on this dashboard. Email when we have one,
+    // otherwise whatever the endpoint gave us (Student_NN, or the username).
+    function sLabel(username, fallback) {
+        return EMAIL_MAP[username] || fallback || username || '\u2014';
+    }
+
+    async function loadEmailMap() {
+        try {
+            const res = await fetch(`${API_URL}/api/v1/admin/user_emails`);
+            if (!res.ok) return;                 // labels fall back; tables still render
+            const { emails } = await res.json();
+            Object.assign(EMAIL_MAP, emails || {});
+        } catch (e) {
+            console.warn('Could not load student emails; falling back to IDs.', e);
+        }
+    }
+
     function escapeHtml(s) {
         return String(s ?? '').replace(/[&<>"']/g,
             m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
@@ -3443,8 +3467,11 @@
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    window.onload = function() {
+    window.onload = async function() {
         verifyTeacherSession();   // server-side role check; redirects if not a teacher
+        // Awaited: every table below labels students through sLabel(), so the map
+        // has to be in hand before the first render, not racing it.
+        await loadEmailMap();
         loadData(); // Your existing load function
         updateUploadRules(); // Initialize file input
         // Default landing is NOW (or the last tab this browser used).
