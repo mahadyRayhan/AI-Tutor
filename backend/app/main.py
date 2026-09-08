@@ -4417,10 +4417,14 @@ async def submit_video_reflection(req: VideoReflectionRequest, _caller: dict = D
 async def get_video_prelab(video_filename: str):
     """Prelab practice questions for one video.
 
-    prelab.json is a plain chapter -> video -> prelabs tree (see _find_video). The
-    response shape is kept as a list of {prompt} objects because that is what the
-    classroom modal already renders; `samples` and `concept` are always empty now
-    that a question is just its text.
+    prelab.json is a plain chapter -> video -> prelabs tree (see _find_video).
+
+    STUDENT-FACING. A prelab now carries a rubric and a reference solution as well
+    as a prompt, and those two are the answer key — they decide whether a
+    submission is right. `student_view` keeps the prompt, the concept chip and the
+    sample output and drops the rest, so the grading criteria cannot be read out of
+    the page that poses the question. Entries stored as bare strings (everything
+    written before the upload pipeline existed) still work.
     """
     fname = os.path.basename(video_filename)
     try:
@@ -4429,8 +4433,9 @@ async def get_video_prelab(video_filename: str):
         logger.warning(f"Prelab load failed for {video_filename}: {e}")
         return {"problems": []}
 
-    problems = [{"prompt": q, "samples": [], "concept": ""}
-                for q in (vid or {}).get("prelabs", []) if (q or "").strip()]
+    from app.core import prelab_ingest
+    problems = [p for p in (prelab_ingest.student_view(q)
+                            for q in (vid or {}).get("prelabs", [])) if p]
     return {"problems": problems}
 
 
@@ -4456,6 +4461,24 @@ def _load_prelab_file() -> dict:
         raise HTTPException(status_code=500, detail="prelab.json is unreadable")
     data.setdefault("chapters", [])
     return data
+
+
+def _write_prelab_file(data: dict) -> None:
+    """Persist prelab.json atomically.
+
+    Written to a temp file and renamed, so a crash mid-write leaves the previous
+    file intact rather than a truncated one the app would refuse to parse.
+    """
+    path = _prelab_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.error(f"[prelab] write failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not save prelab.json")
 
 
 def _find_video(data: dict, fname: str) -> dict | None:
@@ -4498,10 +4521,183 @@ def _find_video(data: dict, fname: str) -> dict | None:
 
 @app.get("/api/v1/video/prelab-edit/{video_filename}")
 async def get_prelab_for_edit(video_filename: str, _: str = Depends(verify_teacher)):
-    """The editable question list for one video — one question per line in the UI."""
+    """The editable question list for one video — one question per line in the UI.
+
+    TEACHER-ONLY, so this one does include the rubric. The plain-text box still
+    edits prompts only; `details` carries the full record so the dashboard can show
+    which prelabs have a rubric and how each was verified.
+    """
+    from app.core import prelab_ingest
     fname = os.path.basename(video_filename)
     vid = _find_video(_load_prelab_file(), fname)
-    return {"video_filename": fname, "questions": list((vid or {}).get("prelabs", []))}
+    stored = list((vid or {}).get("prelabs", []))
+    details = [prelab_ingest.normalise_stored(q) for q in stored]
+    return {"video_filename": fname,
+            "questions": [d["prompt"] for d in details],
+            "details": details}
+
+
+# ── Prelab ingest: handout -> verified practice problems ────────────────────
+# An instructor uploads the .txt export of a prelab handout. The upload endpoint
+# PARSES and VERIFIES but never writes; the teacher approves what they see and
+# `commit` saves it. Splitting the two is what makes the verification useful —
+# a mismatch is something a person still has a chance to fix.
+
+class PrelabCommitSpec(BaseModel):
+    prompt: str
+    rubric: List[str] = []
+    sample_output: str = ""
+    concepts: List[str] = []
+    reference_solution: str = ""
+    origin: str = "upload"
+    verification: Dict[str, Any] = {}
+
+
+class PrelabCommitRequest(BaseModel):
+    video_filename: str
+    problems: List[PrelabCommitSpec]
+    replace: bool = False   # default appends; the teacher opts into overwriting
+
+
+@app.post("/api/v1/video/prelab/upload")
+async def upload_prelab_handout(
+    file: UploadFile = File(...),
+    video_filename: str = Form(...),
+    variants: int = Form(3),
+    _t: dict = Depends(verify_teacher),
+):
+    """Parse an uploaded prelab handout, verify it, and draft variants.
+
+    Nothing is saved. The response is a preview for the teacher to approve, which
+    matters most when verification FAILS: the handout that prompted this feature
+    contradicted its own sample output on 8 of 15 lines, and the only useful place
+    to catch that is in front of the person who can correct it.
+
+    Compiling and running C blocks, and the model is called once per problem, so
+    the whole job goes to a worker thread rather than stalling the event loop.
+    """
+    from app.core import prelab_ingest
+
+    if not (file.filename or "").lower().endswith(".txt"):
+        raise HTTPException(status_code=400,
+                            detail="Upload the .txt export of the handout. "
+                                   "PDF and LaTeX are not parsed.")
+
+    payload = await file.read()
+    if len(payload) > prelab_ingest.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File is larger than "
+                   f"{prelab_ingest.MAX_UPLOAD_BYTES // 1024} KB.")
+    try:
+        raw = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        raw = payload.decode("latin-1", errors="replace")
+
+    try:
+        spec = prelab_ingest.parse_prelab_txt(raw)
+    except prelab_ingest.PrelabParseError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    n = max(0, min(int(variants or 0), 5))
+
+    if llm_smart is None:
+        # Startup failed or is still running. Without a model there is no reference
+        # solution, so there is no verification — and an unverified prelab is
+        # exactly what this endpoint exists to prevent.
+        raise HTTPException(status_code=503,
+                            detail="The reasoning model is not available, so this "
+                                   "handout cannot be verified. Try again shortly.")
+
+    def _work():
+        # llm_smart is the reasoning model; writing a correct reference solution
+        # is the whole basis of the check, so it is not the place to save tokens.
+        gen = llm_smart.generate_response
+        checked = prelab_ingest.verify_spec(spec, gen)
+        drafts = [] if n == 0 else prelab_ingest.generate_variants(checked, gen, n)
+        return checked, drafts
+
+    try:
+        checked, drafts = await asyncio.to_thread(_work)
+    except Exception as e:
+        logger.error(f"[prelab] ingest failed for {file.filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=502,
+                            detail=f"Could not process the handout: {e}")
+
+    status = checked.verification.get("status")
+    logger.info(f"[prelab] ingested {file.filename} for {video_filename}: "
+                f"{status}, {len(drafts)} variant(s)")
+    return {
+        "video_filename": os.path.basename(video_filename or ""),
+        "source": checked.to_dict(),
+        "variants": [d.to_dict() for d in drafts],
+        # A failed check is ADVISORY. The teacher wrote the handout and may have a
+        # reason the checker cannot see, so it is surfaced prominently and left to
+        # them — the review panel just does not pre-select a problem that failed.
+        "has_warning": status in ("mismatch", "format_differs", "error",
+                                  "unavailable", "no_sample"),
+        "compiler_available": prelab_ingest.compiler_path() is not None,
+    }
+
+
+@app.post("/api/v1/video/prelab/commit")
+async def commit_prelab_problems(req: PrelabCommitRequest,
+                                 _t: dict = Depends(verify_teacher)):
+    """Save the problems the teacher approved onto one video.
+
+    Saves whatever the teacher approved, including a problem whose check failed —
+    the verification is advisory and the instructor is the authority on their own
+    handout. The verdict is stored on the record and logged, so a prelab saved over
+    a warning stays identifiable afterwards rather than becoming indistinguishable
+    from a verified one. Appends by default: uploading a second handout for a
+    lecture should add to its practice set, not silently replace what is there.
+    """
+    from app.core import prelab_ingest
+
+    fname = os.path.basename(req.video_filename or "")
+    if not fname:
+        raise HTTPException(status_code=400, detail="video_filename is required")
+
+    incoming = []
+    for p in req.problems:
+        if not (p.prompt or "").strip():
+            continue
+        incoming.append({
+            "prompt": p.prompt.strip(),
+            "rubric": [r.strip() for r in p.rubric if r.strip()],
+            "sample_output": p.sample_output,
+            "concepts": [c.strip() for c in p.concepts if c.strip()],
+            "reference_solution": p.reference_solution,
+            "origin": p.origin,
+            "verification": p.verification,
+        })
+    if not incoming:
+        raise HTTPException(status_code=400, detail="No problems to save.")
+
+    data = _load_prelab_file()
+    vid = _find_video(data, fname)
+    if vid is None:
+        unassigned = next((c for c in data["chapters"] if c.get("number") == 0), None)
+        if unassigned is None:
+            unassigned = {"number": 0, "title": "Unassigned recordings", "videos": []}
+            data["chapters"].insert(0, unassigned)
+        vid = {"video_number": None, "filename": fname,
+               "title": os.path.splitext(fname)[0].replace("_", " "),
+               "prelabs": []}
+        unassigned.setdefault("videos", []).append(vid)
+
+    existing = [] if req.replace else list(vid.get("prelabs", []))
+    vid["prelabs"] = existing + incoming
+    _write_prelab_file(data)
+
+    flagged = sum(1 for p in incoming
+                  if (p["verification"] or {}).get("status") == "mismatch")
+    logger.info(f"[prelab] {fname}: committed {len(incoming)} problem(s) "
+                f"({'replaced' if req.replace else 'appended'})"
+                + (f", {flagged} saved despite a failed check" if flagged else ""))
+    return {"status": "success", "video_filename": fname,
+            "added": len(incoming), "total": len(vid["prelabs"]),
+            "flagged": flagged}
 
 
 @app.post("/api/v1/video/prelab")
@@ -4532,20 +4728,30 @@ async def save_video_prelab(req: PrelabSaveRequest, _: str = Depends(verify_teac
                "title": os.path.splitext(fname)[0].replace("_", " "),
                "prelabs": []}
         unassigned.setdefault("videos", []).append(vid)
-    vid["prelabs"] = questions
 
-    path = _prelab_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, path)
-    except Exception as e:
-        logger.error(f"[prelab] write failed: {e}")
-        raise HTTPException(status_code=500, detail="Could not save prelab.json")
+    # This editor is a list of prompts, but a prelab may now also carry a rubric,
+    # a sample output and a reference solution. Assigning the strings straight
+    # back would silently discard all of that — an instructor fixing one typo
+    # would destroy the grading criteria for every problem on the lecture. So an
+    # edited prompt is merged INTO the record it came from, matched by position,
+    # and only genuinely new lines are stored as bare prompts.
+    previous = list(vid.get("prelabs", []))
+    merged = []
+    for i, text in enumerate(questions):
+        prior = previous[i] if i < len(previous) else None
+        if isinstance(prior, dict):
+            kept = dict(prior)
+            kept["prompt"] = text
+            merged.append(kept)
+        else:
+            merged.append(text)
+    dropped = len(previous) - len(questions)
+    vid["prelabs"] = merged
 
-    logger.info(f"[prelab] {fname}: saved {len(questions)} question(s)")
+    _write_prelab_file(data)
+
+    logger.info(f"[prelab] {fname}: saved {len(questions)} question(s)"
+                + (f", {dropped} removed" if dropped > 0 else ""))
     return {"status": "success", "video_filename": fname, "count": len(questions)}
 
 

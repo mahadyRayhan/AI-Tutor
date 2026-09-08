@@ -3064,6 +3064,29 @@
                 Optionally prefix a line with <code>[Concept]</code> to tag it.
                 Students get <strong>one at random</strong> when the video ends.
             </div>
+            <div style="border:1px dashed #2a2f3a; border-radius:8px; padding:10px; margin-bottom:10px;">
+                <div style="font-size:12px; font-weight:600; margin-bottom:4px;">⬆️ Upload a prelab handout</div>
+                <div style="font-size:11px; color:#64748b; margin-bottom:8px;">
+                    Plain-text export (<code>.txt</code>) with <code>DESCRIPTION</code> and
+                    <code>SAMPLE OUTPUT</code> headings. SAGE reads the first paragraph as the
+                    question and the rest as the grading rubric, checks the two agree by
+                    compiling and running a solution, and drafts similar problems.
+                    <strong>Nothing is saved until you approve it.</strong>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <input type="file" id="prelabFile" accept=".txt,text/plain"
+                           style="font-size:11px; color:#94a3b8; max-width:230px;">
+                    <label style="font-size:11px; color:#64748b;">Variants
+                        <select id="prelabVariantN" style="background:#0b0d12; color:#e2e8f0;
+                                border:1px solid #2a2f3a; border-radius:5px; padding:2px 4px; font-size:11px;">
+                            <option>0</option><option>2</option><option selected>3</option>
+                        </select></label>
+                    <button class="btn btn-sm" id="prelabUploadBtn"
+                            onclick="prelabUploadHandout('${escapeHtml(filename)}')">Analyze</button>
+                    <span id="prelabUploadStatus" style="font-size:11px; color:#94a3b8;"></span>
+                </div>
+                <div id="prelabReview"></div>
+            </div>
             <textarea id="prelabText" rows="12" spellcheck="false"
                 style="width:100%; box-sizing:border-box; padding:10px; border-radius:8px;
                        background:#0b0d12; color:#e2e8f0; border:1px solid #2a2f3a;
@@ -3139,6 +3162,217 @@
         } catch (e) {
             status.style.color = '#f87171';
             status.textContent = `Save failed — ${e.message}`;
+            btn.disabled = false;
+            btn.innerHTML = label;
+        }
+    }
+
+    // ── Handout upload: analyze, review, then commit ─────────────────────────
+    // Deliberately two steps. The analyze call never writes, so a handout whose
+    // rubric disagrees with its own sample output stops in front of the teacher
+    // instead of reaching students.
+    let PRELAB_REVIEW = null;
+
+    const VSTATE = {
+        verified:    { color: '#34d399', bg: '#064e3b55', icon: '✓' },
+        mismatch:      { color: '#f87171', bg: '#7f1d1d55', icon: '✕' },
+        format_differs:{ color: '#38bdf8', bg: '#07598555', icon: 'i' },
+        no_sample:   { color: '#fbbf24', bg: '#78350f55', icon: '!' },
+        unavailable: { color: '#fbbf24', bg: '#78350f55', icon: '!' },
+        error:       { color: '#fbbf24', bg: '#78350f55', icon: '!' },
+    };
+
+    async function prelabUploadHandout(filename) {
+        const input  = document.getElementById('prelabFile');
+        const btn    = document.getElementById('prelabUploadBtn');
+        const status = document.getElementById('prelabUploadStatus');
+        const review = document.getElementById('prelabReview');
+        if (!input || !input.files.length) {
+            status.style.color = '#fbbf24';
+            status.textContent = 'Choose a .txt file first.';
+            return;
+        }
+
+        const body = new FormData();
+        body.append('file', input.files[0]);
+        body.append('video_filename', filename);
+        body.append('variants', document.getElementById('prelabVariantN').value);
+
+        btn.disabled = true;
+        const label = btn.innerHTML;
+        // Compiling and running a program per problem takes real time; say so
+        // rather than leaving a dead button.
+        btn.innerHTML = '<span class="pl-spin"></span> Analyzing…';
+        status.style.color = '#94a3b8';
+        status.textContent = 'parsing, compiling and checking — this takes a moment';
+        review.innerHTML = '';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/prelab/upload`,
+                                    { method: 'POST', headers: TEACHER_HDR(), body });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+            PRELAB_REVIEW = d;
+            status.textContent = '';
+            renderPrelabReview(filename);
+        } catch (e) {
+            status.style.color = '#f87171';
+            status.textContent = e.message;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = label;
+        }
+    }
+
+    function prelabCard(spec, idx) {
+        const v = spec.verification || {};
+        const st = VSTATE[v.status] || VSTATE.error;
+        const dd = v.diff || {};
+        // On a real contradiction show ONLY the lines whose VALUES differ. Listing
+        // every line that also happens to be worded differently buries the eight
+        // that matter among fifteen that do not, and makes a sound handout look
+        // broken. When the values all agree, the wording differences ARE the story.
+        const isValueFault = v.status === 'mismatch';
+        const diff = (isValueFault ? dd.value_mismatches : dd.mismatches) || [];
+        const shownTotal = isValueFault ? dd.value_mismatch_count : dd.mismatch_count;
+        const wordingOnly = isValueFault
+            ? Math.max(0, (dd.mismatch_count || 0) - (dd.value_mismatch_count || 0)) : 0;
+        const diffHtml = diff.length ? `
+            <table style="width:100%; border-collapse:collapse; font-size:11px; margin-top:6px;
+                          font-family:ui-monospace,Menlo,monospace;">
+              <thead><tr style="color:#64748b; text-align:left;">
+                <th style="padding:2px 6px;">Line</th>
+                <th style="padding:2px 6px;">Handout says</th>
+                <th style="padding:2px 6px;">Requirements produce</th>
+              </tr></thead><tbody>` +
+              diff.map(r => `<tr>
+                  <td style="padding:2px 6px; color:#64748b;">${r.line}</td>
+                  <td style="padding:2px 6px; color:#94a3b8;">${escapeHtml(r.expected ?? '—')}</td>
+                  <td style="padding:2px 6px; color:${isValueFault ? '#f87171' : '#38bdf8'};">${escapeHtml(r.actual ?? '—')}</td>
+                </tr>`).join('') + '</tbody></table>' +
+              (shownTotal > diff.length
+                ? `<div style="font-size:11px; color:#64748b; margin-top:4px;">
+                     …and ${shownTotal - diff.length} more.</div>` : '') +
+              (wordingOnly
+                ? `<div style="font-size:11px; color:#64748b; margin-top:4px;">
+                     ${wordingOnly} further line${wordingOnly === 1 ? '' : 's'} differ only in
+                     wording, not in any value — not counted as a fault.</div>` : '')
+            : '';
+
+        return `<div style="border:1px solid #2a2f3a; border-radius:8px; padding:10px; margin-top:8px; background:#0b0d12;">
+            <div style="display:flex; gap:8px; align-items:flex-start;">
+                <input type="checkbox" class="prelab-keep" data-idx="${idx}"
+                       ${v.status === 'mismatch' ? '' : 'checked'} style="margin-top:3px;">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:.04em;">
+                        ${spec.origin === 'generated' ? 'Generated variant' : 'From the handout'}</div>
+                    <div style="font-size:12.5px; color:#e2e8f0; margin:4px 0 6px; line-height:1.5;">
+                        ${escapeHtml(spec.prompt)}</div>
+                    <div style="display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px;
+                                color:${st.color}; background:${st.bg}; border:1px solid ${st.color}55;">
+                        ${st.icon} ${escapeHtml(v.message || v.status || 'unchecked')}</div>
+                    ${diffHtml}
+                    <details style="margin-top:8px;">
+                        <summary style="font-size:11px; color:#64748b; cursor:pointer;">
+                            Rubric (${(spec.rubric || []).length}) · sample output · reference solution
+                        </summary>
+                        <ul style="font-size:11.5px; color:#94a3b8; margin:6px 0; padding-left:18px; line-height:1.6;">
+                            ${(spec.rubric || []).map(r => `<li>${escapeHtml(r)}</li>`).join('') ||
+                              '<li style="color:#64748b;">none</li>'}
+                        </ul>
+                        ${spec.sample_output ? `<pre style="font-size:11px; background:#0f1115; color:#94a3b8;
+                             padding:8px; border-radius:6px; overflow-x:auto; max-height:180px;">${escapeHtml(spec.sample_output)}</pre>` : ''}
+                        ${spec.reference_solution ? `<pre style="font-size:11px; background:#0f1115; color:#64748b;
+                             padding:8px; border-radius:6px; overflow-x:auto; max-height:180px;">${escapeHtml(spec.reference_solution)}</pre>` : ''}
+                    </details>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function renderPrelabReview(filename) {
+        const host = document.getElementById('prelabReview');
+        const d = PRELAB_REVIEW;
+        if (!host || !d) return;
+
+        const all = [d.source, ...(d.variants || [])];
+        const failed = d.source.verification && d.source.verification.status === 'mismatch';
+        // Advisory, not a gate. The instructor wrote the handout and may know
+        // something the checker does not, so this says what was found and leaves
+        // the decision with them — it only declines to pre-tick a failed problem.
+        const banner = failed
+            ? `<div style="margin-top:10px; padding:10px; border-radius:8px; background:#78350f33;
+                          border:1px solid #fbbf2455; color:#fcd34d; font-size:12px; line-height:1.6;">
+                 <strong>Warning — this handout disagrees with its own sample output.</strong><br>
+                 A program written from the requirements alone does not reproduce the sample
+                 output, so a student who follows the requirements exactly would be marked wrong
+                 on the lines below. You can fix the handout and re-upload, or save it anyway —
+                 it is left unticked so saving it is a deliberate choice.
+               </div>`
+            : (!d.compiler_available
+                ? `<div style="margin-top:10px; padding:8px 10px; border-radius:8px; background:#78350f33;
+                              border:1px solid #fbbf2455; color:#fcd34d; font-size:12px;">
+                     No C compiler on this server, so nothing below was verified by running it.
+                   </div>` : '');
+
+        host.innerHTML = banner +
+            all.map((sp, i) => prelabCard(sp, i)).join('') + `
+              <div style="display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;">
+                  <button class="btn btn-sm" id="prelabCommitBtn"
+                          onclick="commitPrelabReview('${escapeHtml(filename)}')">Save selected</button>
+                  <label style="font-size:11px; color:#64748b;">
+                      <input type="checkbox" id="prelabReplace"> replace existing questions
+                  </label>
+                  <span id="prelabCommitStatus" style="font-size:11px; margin-left:auto;"></span>
+              </div>`;
+    }
+
+    async function commitPrelabReview(filename) {
+        const d = PRELAB_REVIEW;
+        if (!d) return;
+        const all = [d.source, ...(d.variants || [])];
+        const chosen = [...document.querySelectorAll('.prelab-keep')]
+            .filter(c => c.checked).map(c => all[parseInt(c.dataset.idx, 10)]);
+        const status = document.getElementById('prelabCommitStatus');
+        const btn = document.getElementById('prelabCommitBtn');
+        if (!chosen.length) {
+            status.style.color = '#fbbf24';
+            status.textContent = 'Nothing selected.';
+            return;
+        }
+
+        btn.disabled = true;
+        const label = btn.innerHTML;
+        btn.innerHTML = '<span class="pl-spin"></span> Saving…';
+        status.style.color = '#94a3b8';
+        status.textContent = '';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/prelab/commit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify({
+                    video_filename: filename,
+                    problems: chosen,
+                    replace: document.getElementById('prelabReplace').checked,
+                })
+            });
+            const r = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(r.detail || `HTTP ${res.status}`);
+            status.style.color = r.flagged ? '#fcd34d' : '#34d399';
+            status.textContent = `✓ Saved ${r.added} — ${r.total} on this video`
+                + (r.flagged ? ` (${r.flagged} with a warning)` : '');
+            btn.innerHTML = '✓ Saved';
+            markPrelabCount(filename, r.total);
+            // Reopening reloads from disk, so the text box reflects what was saved
+            // rather than the state it held before the upload.
+            setTimeout(() => {
+                const panel = document.getElementById('prelabEditorPanel');
+                if (panel) panel.remove();
+            }, 1200);
+        } catch (e) {
+            status.style.color = '#f87171';
+            status.textContent = e.message;
             btn.disabled = false;
             btn.innerHTML = label;
         }
