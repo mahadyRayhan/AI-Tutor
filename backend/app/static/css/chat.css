@@ -6,7 +6,7 @@
     --sidebar-hover: #1e2330;
     --input-bg: #1a1e28;
     --surface-raised: #232a38;      /* cards, code blocks, raised chips */
-    --code-bg: var(--code-bg);
+    --code-bg: #161a22;              /* raised, one step off --bg-color */
     /* Text */
     --text-primary: #e6ebf2;
     --text-secondary: #9fb0c4;      /* was #a8c7fa — decoupled from the accent */
@@ -22,7 +22,7 @@
     /* Borders */
     --border-color: rgba(255, 255, 255, 0.08);
     --border-hover: rgba(255, 255, 255, 0.15);
-    --hover-overlay: var(--hover-overlay);
+    --hover-overlay: rgba(255, 255, 255, 0.06);
     /* Semantic status (success/warning were referenced in code but never defined) */
     --success-color: #34d399;
     --warning-color: #fbbf24;
@@ -1146,7 +1146,9 @@ body.a11y-contrast .message.bot {
     gap: 12px;
     padding-bottom: 8px;
     margin-bottom: 14px;
-    border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+    /* --border was never defined, so the white fallback always won — invisible
+       on the light theme. --border-color is the real token, and is theme-aware. */
+    border-bottom: 1px solid var(--border-color);
 }
 
 .chapter-title {
@@ -1197,7 +1199,7 @@ body.a11y-contrast .message.bot {
     letter-spacing: 0.04em;
     color: #cbd5e1;
     background: rgba(15, 17, 21, 0.78);
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    border: 1px solid var(--border-color);
     border-radius: 5px;
     padding: 2px 7px;
 }
@@ -1716,13 +1718,22 @@ textarea {
     flex: 1;
     background: transparent;
     border: none;
-    color: white;
+    /* Was `white`, which made everything a student typed invisible on the light
+       theme — the one element where unreadable text costs them their work. */
+    color: var(--text-primary);
     font-size: 1rem;
     padding: 12px 0;
     resize: none;
     max-height: 150px;
     outline: none;
     font-family: inherit;
+}
+
+/* Without this the browser derives the placeholder from `color`, and each one
+   has its own idea of how much to fade it. */
+#userInput::placeholder,
+.input-wrapper textarea::placeholder {
+    color: var(--text-muted);
 }
 
 .send-icon-btn {
@@ -1857,7 +1868,7 @@ textarea {
 /* Small icon button for collapsing panels */
 .panel-toggle-btn {
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid var(--border-color);
     color: var(--text-secondary);
     border-radius: 10px;
     padding: 6px 10px;
@@ -1914,7 +1925,7 @@ body.in-classroom #navSettings {
 .top-toggle {
     background: transparent;
     color: var(--text-secondary);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid var(--border-color);
     border-radius: 8px;
     padding: 4px 10px;
     cursor: pointer;
@@ -2053,7 +2064,7 @@ body.in-classroom #navSettings {
 
 .feedback-btn {
     background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border-color);
     color: var(--text-primary);
     border-radius: 8px;
     padding: 6px 12px;
@@ -2383,7 +2394,7 @@ body.in-classroom #navSettings {
 .cp-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(4px);
     display: none; align-items: center; justify-content: center; z-index: 3000; padding: 20px; }
 .cp-modal-overlay.visible { display: flex; }
-.cp-modal { background: var(--sidebar-bg); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
+.cp-modal { background: var(--sidebar-bg); border: 1px solid var(--border-color); border-radius: 16px;
     box-shadow: 0 8px 40px rgba(0,0,0,0.5); max-width: 560px; width: 100%; padding: 28px;
     max-height: 90vh; overflow-y: auto; color: var(--text-primary); animation: cpPop 0.2s ease-out; }
 @keyframes cpPop { from { transform: scale(0.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
@@ -2395,7 +2406,7 @@ body.in-classroom #navSettings {
     background: var(--input-bg); border-radius: 10px; border-left: 3px solid #8ab4f8; }
 .cp-options { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
 .cp-option { display: flex; align-items: center; gap: 10px; text-align: left; background: var(--input-bg);
-    border: 1px solid rgba(255,255,255,0.08); color: var(--text-primary); padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--border-color); color: var(--text-primary); padding: 12px 14px; border-radius: 10px;
     cursor: pointer; font-size: 0.9rem; font-family: inherit; transition: all 0.15s; }
 .cp-option:hover { border-color: rgba(138,180,248,0.4); }
 .cp-option.selected { border-color: #8ab4f8; background: rgba(138,180,248,0.12); }
@@ -2404,7 +2415,7 @@ body.in-classroom #navSettings {
 .cp-confidence { display: flex; align-items: center; justify-content: space-between; gap: 10px;
     font-size: 0.82rem; color: var(--text-muted); margin: 8px 0; }
 .cp-conf-btns { display: flex; gap: 6px; }
-.cp-conf { width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);
+.cp-conf { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border-color);
     background: var(--input-bg); color: var(--text-muted); cursor: pointer; font-weight: 600; }
 .cp-conf.selected { border-color: #8ab4f8; background: rgba(138,180,248,0.12); color: #8ab4f8; }
 .cp-feedback { margin: 10px 0; font-size: 0.88rem; }
@@ -2414,11 +2425,11 @@ body.in-classroom #navSettings {
     background: linear-gradient(135deg, #6e9df5, #a78bfa); color: #0f1117; border: none; padding: 12px;
     border-radius: 10px; font-weight: 700; font-size: 0.92rem; cursor: pointer; font-family: inherit; }
 .cp-submit:disabled { opacity: 0.5; cursor: not-allowed; }
-.cp-textarea { width: 100%; box-sizing: border-box; background: var(--input-bg); border: 1px solid rgba(255,255,255,0.08);
+.cp-textarea { width: 100%; box-sizing: border-box; background: var(--input-bg); border: 1px solid var(--border-color);
     border-radius: 10px; color: var(--text-primary); padding: 12px; font-family: inherit; font-size: 0.9rem; resize: vertical; margin-top: 10px; }
 .cp-modal-actions { display: flex; gap: 10px; margin-top: 14px; }
 .cp-modal-actions .cp-submit-inline { flex: 1; margin-top: 0; }
-.cp-skip { background: var(--input-bg); border: 1px solid rgba(255,255,255,0.08); color: var(--text-muted);
+.cp-skip { background: var(--input-bg); border: 1px solid var(--border-color); color: var(--text-muted);
     padding: 12px 20px; border-radius: 10px; cursor: pointer; font-family: inherit; }
 .prelab-actions { display: flex; gap: 10px; margin-top: 16px; }
 .prelab-actions .cp-submit-inline { flex: 1; margin-top: 0; }

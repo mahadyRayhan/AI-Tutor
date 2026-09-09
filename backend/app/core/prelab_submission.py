@@ -29,25 +29,63 @@ from app.db.sqlite_db import db
 # Off switch. Set PRELAB_AUTOSAVE=0 to run the tutor with no capture at all.
 AUTOSAVE = os.getenv("PRELAB_AUTOSAVE", "1") not in ("0", "false", "False", "")
 
-# A fenced block, language tag optional. The student's C is what a grader opens
-# first, so it is lifted out of the transcript rather than left to be hunted for.
+# A fenced block, language tag optional. Students in this course mostly do NOT
+# fence their code — they paste it straight into the box — so the fence is one
+# way to find a program, not the definition of one.
 _FENCE = re.compile(r"```(?:c|cpp|C|C\+\+)?\s*\n(.*?)```", re.DOTALL)
+
+# Marks that separate pasted C from an English sentence about C.
+_C_MARKERS = ("#include", "int main", "void main", "printf(", "scanf(",
+              "while (", "while(", "for (", "for(", "if (", "if(")
+
+
+def _looks_like_c(text: str) -> bool:
+    """Rough test for 'this message is code, not prose'."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if not any(m in t for m in _C_MARKERS):
+        return False
+    # Prose quoting a function name is not a program; code has statements.
+    return ";" in t or "{" in t
 
 
 def extract_last_code(messages: List[Dict[str, Any]]) -> str:
-    """The last fenced block the STUDENT sent, or "".
+    """The student's most recent COMPLETE program, or their last code otherwise.
 
-    Student messages only: the tutor also posts code (partial-code escalation,
-    pseudocode hints), and grading the tutor's own snippet as the student's
-    answer would be wrong in the one direction that matters.
+    Two things this has to get right, both learned from real transcripts:
+
+    * Fences are optional. The chat UI renders pasted code as a block on its own,
+      so students never type ```; keying off the fence found nothing in every
+      captured run and graded them all as "no program".
+    * The last code in the conversation is usually NOT the program. Guided mode
+      ends on single-step fragments — an if/else chain, one printf — because the
+      final steps only ask for the piece being added. A submission whose last
+      message is a fragment must still be graded on the last full program.
+
+    Student messages only: the tutor also posts C (partial-code escalation,
+    pseudocode hints), and grading its snippet as the student's answer is wrong
+    in the one direction that matters.
     """
-    for m in reversed(messages or []):
+    programs, snippets = [], []
+    for m in messages or []:
         if (m.get("role") or "").lower() != "user":
             continue
-        blocks = _FENCE.findall(m.get("content") or "")
-        if blocks:
-            return blocks[-1].strip()
-    return ""
+        content = m.get("content") or ""
+        blocks = _FENCE.findall(content)
+        candidate = blocks[-1].strip() if blocks else (
+            content.strip() if _looks_like_c(content) else "")
+        if not candidate:
+            continue
+        # "main(" rather than "int main": it survives `int  main`, `main (void)`
+        # and the occasional `void main`.
+        if "main" in candidate and "(" in candidate.split("main", 1)[1][:4]:
+            programs.append(candidate)
+        else:
+            snippets.append(candidate)
+    if programs:
+        return programs[-1]
+    return snippets[-1] if snippets else ""
 
 
 def _plan_stats(plan: Dict[str, Any]) -> Dict[str, int]:
@@ -81,7 +119,8 @@ def save_solved(username: str, session_id: str, plan: Dict[str, Any],
     code = extract_last_code(messages)
     # Graded here, once, rather than when the dashboard opens: compiling on page
     # load would make a class list slow and would re-run every refresh.
-    verdict = grade(code, plan.get("prelab_sample_output") or "")
+    sample = plan.get("prelab_sample_output") or _sample_output_for(prompt)
+    verdict = grade(code, sample)
     flags = integrity_flags(plan, messages)
 
     prior = db.fetch_one(
@@ -259,6 +298,43 @@ def grade(code: str, sample_output: str) -> dict:
                        "mismatch_count": d.get("mismatch_count", 0),
                        "value_mismatch_count": d.get("value_mismatch_count", 0),
                        "rows": (rows or [])[:40]}}
+
+
+def _sample_output_for(prompt: str) -> str:
+    """The handout's expected output, looked up by prompt.
+
+    A fallback for the plan's own copy: rows captured before the plan carried it,
+    and any run whose session state was rebuilt mid-flight, would otherwise be
+    ungradable forever through no fault of the student's.
+    """
+    from app.core import prelab_ingest
+    rec = prelab_ingest.find_by_prompt(prompt, prelab_ingest.load_prelab_file())
+    return (rec or {}).get("sample_output") or ""
+
+
+def regrade(sub_id: int) -> Optional[str]:
+    """Re-run the check on a stored submission. Returns the new verdict.
+
+    Needed whenever the inputs to the check change and the student's work has
+    not: a corrected sample output in the handout, or a fix to how code is
+    pulled out of a transcript. Re-deriving beats asking a student to redo work
+    that was already right.
+    """
+    row = db.fetch_one("SELECT prelab_prompt, transcript FROM prelab_submission WHERE id = ?",
+                       (sub_id,))
+    if not row:
+        return None
+    try:
+        messages = json.loads(row["transcript"] or "[]")
+    except Exception:
+        messages = []
+    code = extract_last_code(messages)
+    verdict = grade(code, _sample_output_for(row["prelab_prompt"]))
+    db.execute("UPDATE prelab_submission SET final_code = ?, grade_status = ?, "
+               "grade_detail = ?, updated_at = ? WHERE id = ?",
+               (code, verdict["status"], json.dumps(verdict["detail"]),
+                datetime.now(), sub_id))
+    return verdict["status"]
 
 
 def set_teacher_grade(sub_id: int, score: float = None, note: str = None) -> bool:

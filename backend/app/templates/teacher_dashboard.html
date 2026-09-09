@@ -35,6 +35,50 @@
         .tab-btn:hover { background: #f2f4f6; }
         .tab-btn.active { background: var(--primary, #2c3e50); color: #fff; }
         .tab-btn.active small { color: rgba(255,255,255,0.75); }
+        /* --- PRELAB SUBMISSIONS ---------------------------------------------
+           Scoped because the global th/td padding (15px) is tuned for four-column
+           tables; this one carries nine and needs to stay readable without a
+           horizontal scrollbar. Colours come from the page's own light palette —
+           an earlier pass used a dark set and washed out on white. */
+        .psub table { min-width: 0; }
+        .psub th { padding: 10px 12px; font-size: 0.72rem; letter-spacing: .03em; }
+        .psub td { padding: 11px 12px; font-size: 0.88rem; }
+        .psub tr:last-child td { border-bottom: none; }
+        .psub tbody tr:hover { background: #faf8fc; }
+        .psub .num { text-align: center; font-variant-numeric: tabular-nums; }
+        .psub .who { font-weight: 600; color: #2c3e50; }
+        .psub .dim { color: #9aa0a6; }
+        .psub .clip { max-width: 230px; overflow: hidden; text-overflow: ellipsis;
+                      white-space: nowrap; }
+
+        /* Verdict + status chips. nowrap so a two-word label never becomes a blob. */
+        .psub .chip { display: inline-block; white-space: nowrap; padding: 3px 9px;
+                      border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+                      border: 1px solid; }
+        .chip-good { color: #1e7e4f; background: #e8f7ef; border-color: #b7e4cb; }
+        .chip-warn { color: #9a6207; background: #fdf3e2; border-color: #f2dcae; }
+        .chip-bad  { color: #b3261e; background: #fdecea; border-color: #f5c3bf; }
+        .chip-mute { color: #6b7280; background: #f3f4f6; border-color: #e0e2e6; }
+
+        /* Review flags: an icon, with the reason on hover.
+           The tooltip lives on <body>, not inside the row. The scroll container
+           around this table sets overflow-x, and CSS turns the other axis into a
+           clipping one too — so any tooltip positioned inside it gets cut off at
+           the table edge, which is exactly what happened to the first row. A
+           fixed-position node parented to <body> escapes every such container. */
+        .psub .flag { display: inline-block; cursor: help;
+                      font-size: 15px; color: #d97706; margin-right: 4px; }
+        #psubTip {
+            position: fixed; z-index: 9999; display: none; max-width: 300px;
+            padding: 10px 12px; border-radius: 9px;
+            background: #2c3e50; color: #fff; font-size: 0.76rem; font-weight: 400;
+            line-height: 1.5; text-align: left;
+            box-shadow: 0 8px 24px rgba(0,0,0,.22);
+            pointer-events: none;   /* never eat the hover that summoned it */
+        }
+        #psubTip b { display: block; margin-bottom: 4px; color: #fcd34d; }
+        .psub .none { color: #d1d5db; }
+
         .grid-container[data-tab] { display: none; }
         .grid-container[data-tab].tab-visible { display: grid; }
 
@@ -403,15 +447,16 @@
              this is where the work arrives. -->
         <div class="card full-width">
             <h2>📝 Prelab Submissions <span id="prelabSubCount" style="color:#94a3b8; font-weight:400; font-size:13px;"></span></h2>
-            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+            <p style="color:#7f8c8d; font-size:13px; margin:-4px 0 12px;">
                 Captured automatically when a student finishes a prelab in guided mode —
                 nothing is uploaded or submitted by hand. Open a row to read the whole
                 conversation that produced the code.
             </p>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
                 <select id="prelabSubVideo" onchange="loadPrelabSubmissions()"
-                        style="flex:1; min-width:280px; padding:9px; background:#0f1115;
-                               border:1px solid #2a2f3a; border-radius:8px; color:#e2e8f0;">
+                        style="flex:1; min-width:280px; padding:9px; background:#fff;
+                               border:1px solid #e5e7eb; border-radius:8px; color:#333;
+                               font-family:inherit;">
                     <option value="">All lectures</option>
                 </select>
                 <button class="btn" onclick="loadPrelabSubmissions()">Refresh</button>
@@ -2976,40 +3021,80 @@
     // The automatic verdict from compiling and running their program against the
     // handout's own sample output. Wording and values are separate on purpose: a
     // different printf phrasing is a style note, a different number is a defect.
+    // Short labels: the column is narrow and a sentence in a pill wraps into a
+    // blob. The full phrasing lives in the title and in the detail panel.
+    const GRADE_LABEL = {
+        pass:            ['Matches',      'chip-good', 'Output matches the handout exactly, wording included'],
+        wording_differs: ['Values OK',    'chip-warn', 'Every value is right; only the printf wording differs'],
+        values_differ:   ['Wrong output', 'chip-bad',  'The program computes something else'],
+        compile_error:   ["Won't build",  'chip-bad',  'The program does not compile'],
+        no_code:         ['No program',   'chip-mute', 'No complete program was found in the conversation'],
+        not_gradable:    ['No sample',    'chip-mute', 'The handout stores no sample output to check against'],
+    };
+
     function gradePill(status) {
-        switch (status) {
-            case 'pass':            return pill('Matches handout', 'good');
-            case 'wording_differs': return pill('Right values, different wording', 'warn');
-            case 'values_differ':   return pill('Wrong output', 'bad');
-            case 'compile_error':   return pill('Does not compile', 'bad');
-            case 'no_code':         return pill('No program', 'mute');
-            case 'not_gradable':    return pill('No sample to check', 'mute');
-            default:                return pill('Not checked', 'mute');
-        }
+        const [label, cls, why] = GRADE_LABEL[status] || ['Not checked', 'chip-mute', ''];
+        return `<span class="chip ${cls}" title="${escapeHtml(why)}">${label}</span>`;
     }
 
     // Signals worth a second look before grading — never an accusation. A guided
     // prelab is meant to be got wrong on the way through, so a run with no wrong
-    // turns at all is the one an instructor should read rather than skim.
+    // turns at all is the one to read rather than skim.
     function flagPills(raw) {
         let flags = [];
         try { flags = typeof raw === 'string' ? JSON.parse(raw || '[]') : (raw || []); }
         catch (e) { flags = []; }
-        if (!flags.length) return '<span style="color:#475569;">—</span>';
+        if (!flags.length) return '<span class="none">–</span>';
+        const ICON = { flawless_run: '⚑', fast_replies: '⏱' };
         return flags.map(f =>
-            `<span title="${escapeHtml(f.why || '')}" style="display:inline-block;
-                    padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600;
-                    color:#fbbf24; background:#fbbf2422; border:1px solid #fbbf2455;
-                    margin-right:4px; cursor:help;">⚑ ${escapeHtml(f.label || f.code)}</span>`
+            `<span class="flag" data-label="${escapeHtml(f.label || f.code)}"
+                   data-why="${escapeHtml(f.why || '')}">${ICON[f.code] || '⚑'}</span>`
         ).join('');
     }
+
+    // One shared tooltip node, positioned from the icon's viewport rect. Delegated
+    // so it keeps working after the table re-renders.
+    function psubTipEl() {
+        let el = document.getElementById('psubTip');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'psubTip';
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
+    document.addEventListener('mouseover', function (e) {
+        const flag = e.target.closest && e.target.closest('.psub .flag');
+        if (!flag) return;
+        const el = psubTipEl();
+        el.innerHTML = `<b>${flag.dataset.label || ''}</b>${flag.dataset.why || ''}`;
+        el.style.display = 'block';
+
+        const r = flag.getBoundingClientRect();
+        const t = el.getBoundingClientRect();
+        // Above the icon when there is room, otherwise below it.
+        const above = r.top - t.height - 10;
+        el.style.top = (above > 8 ? above : r.bottom + 10) + 'px';
+        // Right-align to the icon, then keep the whole box on screen.
+        let left = r.right - t.width;
+        left = Math.max(8, Math.min(left, window.innerWidth - t.width - 8));
+        el.style.left = left + 'px';
+    });
+
+    document.addEventListener('mouseout', function (e) {
+        if (e.target.closest && e.target.closest('.psub .flag')) {
+            const el = document.getElementById('psubTip');
+            if (el) el.style.display = 'none';
+        }
+    });
 
     async function loadPrelabSubmissions() {
         const body  = document.getElementById('prelabSubBody');
         const count = document.getElementById('prelabSubCount');
         const fname = (document.getElementById('prelabSubVideo') || {}).value || '';
         document.getElementById('prelabSubDetail').style.display = 'none';
-        body.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading…</div>';
+        body.innerHTML = '<div style="color:#9aa0a6; font-size:13px;">Loading…</div>';
         try {
             const qs = fname ? `?video_filename=${encodeURIComponent(fname)}` : '';
             const res = await fetch(`${API_URL}/api/v1/prelab/submissions${qs}`, { headers: TEACHER_HDR() });
@@ -3018,57 +3103,61 @@
             count.textContent = d.count ? `(${d.count})` : '';
 
             if (!d.count) {
-                body.innerHTML = `<div style="color:#64748b; font-size:13px; padding:10px 0;">
+                body.innerHTML = `<div style="color:#9aa0a6; font-size:13px; padding:10px 0;">
                     No prelab work captured yet${fname ? ' for this lecture' : ''}. A submission appears
                     here the moment a student finishes the last step of a prelab in guided mode.</div>`;
                 return;
             }
 
             const rows = d.submissions.map(r => {
-                const who = escapeHtml(r.email || r.username || '—');
-                const when = r.updated_at ? String(r.updated_at).slice(0, 16) : '—';
+                const who  = escapeHtml(r.email || r.username || '—');
+                const when = r.updated_at ? String(r.updated_at).slice(0, 10) : '—';
+                const time = r.updated_at ? String(r.updated_at).slice(11, 16) : '';
                 const done = r.has_reflection
-                    ? pill('Solved + explained', 'good')
-                    : pill('Solved', 'warn');
-                const verdict = gradePill(r.grade_status);
-                const mark = (r.teacher_score === null || r.teacher_score === undefined)
-                    ? '<span style="color:#475569;">—</span>'
-                    : `<strong>${r.teacher_score}</strong>`;
+                    ? '<span class="chip chip-good" title="Solved and explained in their own words">Explained</span>'
+                    : '<span class="chip chip-warn" title="Solved, but stopped before writing the explanation">Solved</span>';
+                // Attempts only earn ink when there was more than one.
                 const tries = (r.attempt_count || 1) > 1
-                    ? `<span style="color:#fbbf24;">${r.attempt_count} attempts</span>` : '1';
+                    ? ` <span style="color:#d97706; font-weight:600;">·&nbsp;${r.attempt_count}&nbsp;tries</span>`
+                    : '';
+                const wrong = (r.total_fails || 0) === 0
+                    ? '<span class="dim">0</span>'
+                    : `<strong>${r.total_fails}</strong>`;
+                const mark = (r.teacher_score === null || r.teacher_score === undefined)
+                    ? '<span class="none">–</span>'
+                    : `<strong style="color:#8e44ad;">${r.teacher_score}</strong>`;
+
                 return `<tr>
-                    <td>${who}</td>
-                    <td style="color:#94a3b8;">${escapeHtml(r.video_title || r.video_filename || '—')}</td>
-                    <td style="color:#94a3b8; max-width:320px; overflow:hidden; text-overflow:ellipsis;
-                               white-space:nowrap;" title="${escapeHtml(r.prelab_prompt || '')}">
-                        ${escapeHtml((r.prelab_prompt || '').slice(0, 90))}</td>
-                    <td style="text-align:center;">${r.steps_passed || 0}/${r.steps_total || 0}</td>
-                    <td style="text-align:center;">${r.total_fails || 0}</td>
-                    <td style="text-align:center;">${tries}</td>
-                    <td>${verdict}</td>
+                    <td class="who">${who}</td>
+                    <td class="clip dim" title="${escapeHtml(r.video_title || r.video_filename || '')}"
+                        style="max-width:150px;">${escapeHtml(r.video_title || r.video_filename || '—')}</td>
+                    <td class="clip" title="${escapeHtml(r.prelab_prompt || '')}">
+                        ${escapeHtml(r.prelab_prompt || '')}</td>
+                    <td class="num">${r.steps_passed || 0}/${r.steps_total || 0}${tries}</td>
+                    <td class="num">${wrong}</td>
+                    <td>${gradePill(r.grade_status)}</td>
                     <td>${done}</td>
-                    <td>${flagPills(r.flags)}</td>
-                    <td style="text-align:center;">${mark}</td>
-                    <td style="color:#64748b; font-size:12px;">${when}</td>
+                    <td class="num">${flagPills(r.flags)}</td>
+                    <td class="num">${mark}</td>
+                    <td class="dim" style="font-size:0.78rem; white-space:nowrap;">${when}<br>${time}</td>
                     <td><button class="btn" style="padding:4px 10px; font-size:12px;"
                                 onclick="openPrelabSubmission(${r.id})">Open</button></td>
                 </tr>`;
             }).join('');
 
-            body.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:13px;">
-                <thead><tr style="text-align:left; color:#64748b; font-size:11px;
-                                  text-transform:uppercase; letter-spacing:.04em;">
+            body.innerHTML = `<div class="psub"><table>
+                <thead><tr>
                     <th>Student</th><th>Lecture</th><th>Prelab</th>
-                    <th style="text-align:center;">Steps</th>
-                    <th style="text-align:center;">Wrong turns</th>
-                    <th style="text-align:center;">Attempts</th>
-                    <th>Output check</th><th>Status</th>
-                    <th>Review</th>
-                    <th style="text-align:center;">Mark</th>
+                    <th class="num">Steps</th>
+                    <th class="num" title="Steps the student got wrong before passing">Wrong</th>
+                    <th title="Compiled and diffed against the handout's sample output">Output</th>
+                    <th>Status</th>
+                    <th class="num" title="Signals worth a second look before grading">Review</th>
+                    <th class="num">Mark</th>
                     <th>Updated</th><th></th>
-                </tr></thead><tbody>${rows}</tbody></table>`;
+                </tr></thead><tbody>${rows}</tbody></table></div>`;
         } catch (e) {
-            body.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load submissions (${e.message}).</div>`;
+            body.innerHTML = `<div style="color:#e74c3c; font-size:13px;">Could not load submissions (${e.message}).</div>`;
         }
     }
 
@@ -3078,27 +3167,48 @@
     function gradeDetailHtml(d) {
         const det = d.grade_detail || {};
         if (d.grade_status === 'compile_error') {
-            return `<pre style="margin:0; white-space:pre-wrap; font-size:12px; color:#fca5a5;
-                        max-height:180px; overflow:auto;">${escapeHtml(det.error || '')}</pre>`;
+            return `<pre style="margin:0; white-space:pre-wrap; font-size:0.75rem; color:#b3261e;
+                        max-height:220px; overflow:auto; line-height:1.45;">${escapeHtml(det.error || '')}</pre>`;
         }
         if (d.grade_status === 'pass') {
-            return `<div style="color:#64748b;">Every line matched, including the wording.</div>`;
+            return `<div style="color:#6b7280;">Every line matched, including the wording.</div>`;
         }
         if (!det.rows || !det.rows.length) {
-            return `<div style="color:#64748b;">${escapeHtml(det.reason || 'Nothing to compare.')}</div>`;
+            return `<div style="color:#6b7280;">${escapeHtml(det.reason || 'Nothing to compare.')}</div>`;
         }
+        const wordingOnly = d.grade_status === 'wording_differs';
         const rows = det.rows.map(r => `<tr>
-            <td style="color:#64748b; padding:2px 8px 2px 0;">${r.line}</td>
-            <td style="color:#94a3b8; padding:2px 8px 2px 0;">${escapeHtml(r.expected === null ? '(no line)' : r.expected)}</td>
-            <td style="color:#fca5a5; padding:2px 0;">${escapeHtml(r.actual === null ? '(no line)' : r.actual)}</td>
+            <td style="color:#9aa0a6; padding:3px 10px 3px 0; vertical-align:top;">${r.line}</td>
+            <td style="color:#555; padding:3px 10px 3px 0; font-family:ui-monospace,Menlo,monospace;
+                       font-size:0.72rem;">${escapeHtml(r.expected === null ? '(no line)' : r.expected)}</td>
+            <td style="color:${wordingOnly ? '#9a6207' : '#b3261e'}; padding:3px 0;
+                       font-family:ui-monospace,Menlo,monospace; font-size:0.72rem;">${
+                escapeHtml(r.actual === null ? '(no line)' : r.actual)}</td>
         </tr>`).join('');
-        return `<div style="color:#64748b; margin-bottom:6px;">
-                    ${det.expected_lines} line(s) expected, ${det.actual_lines} printed.</div>
-                <div style="overflow-x:auto;"><table style="font-size:12px; border-collapse:collapse;">
-                <thead><tr style="color:#64748b; text-align:left;">
-                    <th style="padding-right:8px;">#</th><th style="padding-right:8px;">Handout</th>
-                    <th>Their program</th></tr></thead>
+        const summary = wordingOnly
+            ? `All ${det.expected_lines} values are correct; ${det.mismatch_count} line(s) are worded differently.`
+            : `${det.value_mismatch_count} of ${det.expected_lines} line(s) print the wrong value.`;
+        return `<div style="color:#6b7280; margin-bottom:8px;">${summary}</div>
+                <div style="overflow-x:auto;"><table style="border-collapse:collapse; min-width:0;">
+                <thead><tr style="color:#9aa0a6; text-align:left; font-size:0.7rem;
+                                  text-transform:uppercase; letter-spacing:.04em;">
+                    <th style="padding:0 10px 4px 0;">#</th>
+                    <th style="padding:0 10px 4px 0;">Handout</th>
+                    <th style="padding:0 0 4px;">Their program</th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
+    }
+
+    async function recheckPrelab(id) {
+        try {
+            const res = await fetch(`${API_URL}/api/v1/prelab/submissions/${id}/recheck`, {
+                method: 'POST', headers: TEACHER_HDR()
+            });
+            if (!res.ok) throw new Error(res.status);
+            await openPrelabSubmission(id);
+            loadPrelabSubmissions();
+        } catch (e) {
+            alert(`Re-check failed (${e.message}).`);
+        }
     }
 
     async function savePrelabGrade(id) {
@@ -3124,92 +3234,110 @@
     async function openPrelabSubmission(id) {
         const box = document.getElementById('prelabSubDetail');
         box.style.display = 'block';
-        box.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading transcript…</div>';
+        box.innerHTML = '<div style="color:#9aa0a6; font-size:13px;">Loading transcript…</div>';
         try {
             const res = await fetch(`${API_URL}/api/v1/prelab/submissions/${id}`, { headers: TEACHER_HDR() });
             if (!res.ok) throw new Error(res.status);
             const d = await res.json();
 
+            const H = (t) => `<div style="font-size:0.7rem; color:#9aa0a6; text-transform:uppercase;
+                                          letter-spacing:.05em; font-weight:700; margin:18px 0 7px;">${t}</div>`;
+            const BOX = 'background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:13px;';
+
+            // Every turn, in order, full width. This is the point of capturing a
+            // conversation instead of a file: the wrong turns and the hints spent
+            // are the evidence, and they do not fit in a narrow side column.
             const turns = (d.transcript || []).map(m => {
                 const student = (m.role || '').toLowerCase() === 'user';
-                return `<div style="margin-bottom:10px; padding:9px 12px; border-radius:8px;
-                             background:${student ? '#152033' : '#0f1115'};
-                             border:1px solid ${student ? '#2b4267' : '#2a2f3a'};">
-                    <div style="font-size:10px; text-transform:uppercase; letter-spacing:.05em;
-                                color:${student ? '#60a5fa' : '#64748b'}; margin-bottom:4px;">
+                const raw = m.content || '';
+                const isCode = /[;{}]/.test(raw) && /\n/.test(raw);
+                return `<div style="display:flex; gap:12px; margin-bottom:9px;">
+                    <div style="flex:0 0 54px; text-align:right; padding-top:9px; font-size:0.65rem;
+                                text-transform:uppercase; letter-spacing:.05em; font-weight:700;
+                                color:${student ? '#8e44ad' : '#9aa0a6'};">
                         ${student ? 'Student' : 'Tutor'}</div>
-                    <div style="white-space:pre-wrap; font-size:12.5px; line-height:1.5;
-                                color:#cbd5e1;">${escapeHtml(m.content || '')}</div>
+                    <div style="flex:1; min-width:0; padding:9px 12px; border-radius:9px;
+                                background:${student ? '#f7f2fb' : '#f8f9fa'};
+                                border:1px solid ${student ? '#e6d8f0' : '#eceef1'};
+                                white-space:pre-wrap; overflow-x:auto; color:#333;
+                                line-height:1.5; font-size:${isCode ? '0.78' : '0.85'}rem;
+                                font-family:${isCode ? "ui-monospace, SFMono-Regular, Menlo, monospace" : 'inherit'};
+                        ">${escapeHtml(raw)}</div>
                 </div>`;
-            }).join('') || '<div style="color:#64748b;">No transcript stored.</div>';
+            }).join('') || '<div style="color:#9aa0a6;">No transcript stored.</div>';
 
             box.innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:center;
-                            margin-bottom:12px; gap:10px; flex-wrap:wrap;">
-                    <h3 style="margin:0; font-size:15px;">${escapeHtml(d.email || d.username || '')}
-                        <span style="color:#64748b; font-weight:400;">· ${escapeHtml(d.video_title || '')}</span></h3>
-                    <button class="btn" style="padding:4px 10px; font-size:12px;"
+              <div style="border-top:2px solid #f0f0f4; padding-top:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;
+                            gap:12px; flex-wrap:wrap; margin-bottom:6px;">
+                    <div>
+                        <h3 style="margin:0; font-size:1.05rem; color:#2c3e50;">${escapeHtml(d.email || d.username || '')}</h3>
+                        <div style="color:#9aa0a6; font-size:0.8rem; margin-top:2px;">
+                            ${escapeHtml(d.video_title || '')}</div>
+                    </div>
+                    <button class="btn" style="padding:5px 12px; font-size:12px;"
                             onclick="document.getElementById('prelabSubDetail').style.display='none'">Close</button>
                 </div>
-                <div style="color:#94a3b8; font-size:12.5px; margin-bottom:14px;">
+                <div style="color:#555; font-size:0.85rem; line-height:1.5; margin:10px 0 4px;">
                     ${escapeHtml(d.prelab_prompt || '')}</div>
 
-                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px;">
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px;">
                     <div>
-                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
-                                    letter-spacing:.04em; margin-bottom:6px;">Final code</div>
-                        <pre style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px;
-                                    padding:12px; overflow-x:auto; font-size:12.5px; margin:0;
-                                    color:#cbd5e1;">${escapeHtml(d.final_code || '(no code block found)')}</pre>
-                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
-                                    letter-spacing:.04em; margin:14px 0 6px;">Automatic check</div>
-                        <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px;
-                                    padding:12px; font-size:12.5px; color:#cbd5e1;">
-                            <div style="margin-bottom:8px;">${gradePill(d.grade_status)}</div>
+                        ${H('Final program')}
+                        <pre style="${BOX} margin:0; overflow:auto; max-height:330px;
+                                    font-size:0.78rem; line-height:1.5; color:#333;">${
+                            escapeHtml(d.final_code || '(no complete program found in the conversation)')}</pre>
+                    </div>
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;
+                                    margin:18px 0 7px;">
+                            <span style="font-size:0.7rem; color:#9aa0a6; text-transform:uppercase;
+                                         letter-spacing:.05em; font-weight:700;">Output check</span>
+                            <button class="btn" style="padding:3px 9px; font-size:11px;"
+                                    onclick="recheckPrelab(${d.id})">Re-check</button>
+                        </div>
+                        <div style="${BOX} max-height:330px; overflow:auto; font-size:0.83rem; color:#333;">
+                            <div style="margin-bottom:9px;">${gradePill(d.grade_status)}</div>
                             ${gradeDetailHtml(d)}
                         </div>
-
-                        ${(d.flags && d.flags.length) ? `
-                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
-                                    letter-spacing:.04em; margin:14px 0 6px;">Worth a look</div>
-                        <div style="background:#1c1708; border:1px solid #fbbf2444; border-radius:8px;
-                                    padding:12px; font-size:12.5px; color:#fcd34d;">
-                            ${d.flags.map(f => `<div style="margin-bottom:6px;">
-                                <strong>${escapeHtml(f.label || f.code)}</strong>
-                                <div style="color:#94a3b8; margin-top:2px;">${escapeHtml(f.why || '')}</div>
-                            </div>`).join('')}
-                            <div style="color:#64748b; margin-top:8px; font-size:11.5px;">
-                                A signal to read the transcript, not a finding. The conversation
-                                on the right is the evidence.</div>
-                        </div>` : ''}
-
-                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
-                                    letter-spacing:.04em; margin:14px 0 6px;">Your mark</div>
-                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                            <input id="gradeScore" type="number" step="0.5" placeholder="Score"
-                                   value="${d.teacher_score === null || d.teacher_score === undefined ? '' : d.teacher_score}"
-                                   style="width:90px; padding:8px; background:#0f1115; border:1px solid #2a2f3a;
-                                          border-radius:8px; color:#e2e8f0;">
-                            <input id="gradeNote" type="text" placeholder="Note to yourself (optional)"
-                                   value="${escapeHtml(d.teacher_note || '')}"
-                                   style="flex:1; min-width:180px; padding:8px; background:#0f1115;
-                                          border:1px solid #2a2f3a; border-radius:8px; color:#e2e8f0;">
-                            <button class="btn" onclick="savePrelabGrade(${d.id})">Save</button>
-                            <span id="gradeSaved" style="font-size:12px; color:#34d399;"></span>
-                        </div>
-
-                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
-                                    letter-spacing:.04em; margin:14px 0 6px;">Their own explanation</div>
-                        <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px;
-                                    padding:12px; font-size:12.5px; color:#cbd5e1; white-space:pre-wrap;">${
-                            escapeHtml(d.reflection || 'Not written — the student stopped before the summary.')}</div>
                     </div>
-                    <div>
-                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
-                                    letter-spacing:.04em; margin-bottom:6px;">How they got there</div>
-                        <div style="max-height:520px; overflow-y:auto; padding-right:4px;">${turns}</div>
-                    </div>
-                </div>`;
+                </div>
+
+                ${(d.flags && d.flags.length) ? `
+                ${H('Worth a look')}
+                <div style="background:#fdf8ee; border:1px solid #f2dcae; border-radius:10px;
+                            padding:13px; font-size:0.85rem;">
+                    ${d.flags.map(f => `<div style="margin-bottom:8px;">
+                        <strong style="color:#9a6207;">⚑ ${escapeHtml(f.label || f.code)}</strong>
+                        <div style="color:#555; margin-top:2px; line-height:1.5;">${escapeHtml(f.why || '')}</div>
+                    </div>`).join('')}
+                    <div style="color:#9aa0a6; font-size:0.78rem; border-top:1px solid #f2dcae;
+                                padding-top:8px; margin-top:4px;">
+                        A signal to read the transcript, not a finding. The conversation below is the evidence.</div>
+                </div>` : ''}
+
+                ${H('Their own explanation')}
+                <div style="${BOX} font-size:0.85rem; color:#333; white-space:pre-wrap; line-height:1.55;">${
+                    escapeHtml(d.reflection || 'Not written — the student stopped before the summary.')}</div>
+
+                ${H('Your mark')}
+                <div style="display:flex; gap:9px; align-items:center; flex-wrap:wrap;">
+                    <input id="gradeScore" type="number" step="0.5" placeholder="Score"
+                           value="${d.teacher_score === null || d.teacher_score === undefined ? '' : d.teacher_score}"
+                           style="width:92px; padding:9px; background:#fff; border:1px solid #e5e7eb;
+                                  border-radius:8px; color:#333; font-family:inherit;">
+                    <input id="gradeNote" type="text" placeholder="Note to yourself (optional)"
+                           value="${escapeHtml(d.teacher_note || '')}"
+                           style="flex:1; min-width:200px; padding:9px; background:#fff;
+                                  border:1px solid #e5e7eb; border-radius:8px; color:#333; font-family:inherit;">
+                    <button class="btn" onclick="savePrelabGrade(${d.id})">Save mark</button>
+                    <span id="gradeSaved" style="font-size:12px; color:#27ae60;"></span>
+                </div>
+
+                ${H(`The whole conversation · ${(d.transcript || []).length} turns`)}
+                <div style="border:1px solid #e5e7eb; border-radius:10px; padding:13px;
+                            background:#fcfcfd;">${turns}</div>
+              </div>`;
             box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         } catch (e) {
             box.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load transcript (${e.message}).</div>`;

@@ -4663,6 +4663,20 @@ async def upload_prelab_handout(
     }
 
 
+@app.post("/api/v1/prelab/submissions/{sub_id}/recheck")
+async def recheck_prelab_submission(sub_id: int, _t: dict = Depends(verify_teacher)):
+    """Re-run the automatic check against the current handout.
+
+    Use after correcting a handout's sample output: the student's work has not
+    changed, so re-deriving the verdict is right and asking them to redo it is not.
+    """
+    from app.core import prelab_submission
+    status = await asyncio.to_thread(prelab_submission.regrade, sub_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="No such submission.")
+    return {"ok": True, "id": sub_id, "grade_status": status}
+
+
 class PrelabGradeRequest(BaseModel):
     score: float = None
     note: str = ""

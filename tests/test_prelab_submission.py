@@ -414,3 +414,73 @@ def test_a_real_explanation_is_not_a_deflection():
             "number to decide how much to add.")
     assert d(real) is False
     assert d("It counts up to 14 and adds 7 or 5 depending on odd or even") is False
+
+
+# --- pulling the program out of a real transcript -----------------------------
+#
+# Both cases below were found in captured runs, and each on its own made every
+# submission grade as "no program".
+
+FULL_PROGRAM = ("#include <stdio.h>\n\nint main() {\n    int depth = 0;\n"
+                "    while (depth < 14) { depth++; }\n    return 0;\n}")
+FRAGMENT = ('if (depth < 35) {\n    printf("Shallow\\n");\n} else {\n    printf("Deep\\n");\n}')
+
+
+def test_unfenced_code_is_found(ps):
+    """Students paste straight into the box; the chat UI adds the styling.
+
+    Keying off ``` found nothing in every real transcript.
+    """
+    msgs = [{"role": "user", "content": FULL_PROGRAM}]
+    assert "int main()" in ps.extract_last_code(msgs)
+
+
+def test_the_last_full_program_beats_a_later_fragment(ps):
+    """Guided mode ends on single-step fragments.
+
+    The final steps ask only for the piece being added, so the LAST code in the
+    conversation is usually not the program. Grading the fragment reports a
+    compile error for work that was complete.
+    """
+    msgs = [{"role": "user", "content": FULL_PROGRAM},
+            {"role": "user", "content": "it just works"},
+            {"role": "user", "content": FRAGMENT}]
+    got = ps.extract_last_code(msgs)
+    assert "int main()" in got
+    assert got != FRAGMENT
+
+
+def test_the_newest_program_wins(ps):
+    older = FULL_PROGRAM
+    newer = FULL_PROGRAM.replace("depth = 0", "depth = 999")
+    msgs = [{"role": "user", "content": older}, {"role": "user", "content": newer}]
+    assert "999" in ps.extract_last_code(msgs)
+
+
+def test_prose_about_code_is_not_code(ps):
+    msgs = [{"role": "user", "content": "I used a while loop and printf to show the depth"},
+            {"role": "user", "content": "I have no idea"}]
+    assert ps.extract_last_code(msgs) == ""
+
+
+def test_a_fragment_is_still_used_when_there_is_no_program(ps):
+    assert ps.extract_last_code([{"role": "user", "content": FRAGMENT}]) == FRAGMENT
+
+
+def test_tutor_code_is_still_ignored_when_unfenced(ps):
+    msgs = [{"role": "bot", "content": FULL_PROGRAM.replace("depth", "TUTORVAR")},
+            {"role": "user", "content": "thanks"}]
+    assert ps.extract_last_code(msgs) == ""
+
+
+def test_regrade_recovers_a_submission_whose_check_was_wrong(ps, monkeypatch):
+    """The path that matters after fixing extraction: the student's work is
+    unchanged and already right, so the verdict is re-derived rather than the
+    student being asked to redo it."""
+    monkeypatch.setattr(ps, "_sample_output_for", lambda prompt: SAMPLE)
+    plan = _plan(prelab_sample_output="")          # captured with no sample: ungradable
+    msgs = [{"role": "user", "content": GOOD}]
+    rid = ps.save_solved("s1", "sess-1", plan, msgs)
+    assert ps.regrade(rid) == "pass"
+    assert ps.list_submissions()[0]["grade_status"] == "pass"
+    assert ps.regrade(999999) is None

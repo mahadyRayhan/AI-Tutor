@@ -517,13 +517,12 @@ class ScaffoldingAgent(BaseAgent):
         """
         try:
             from app.core import prelab_ingest, prelab_submission
-            from app.main import _load_prelab_file
             video = plan.get("prelab_video_filename")
             if not video:
                 return {}
             done = prelab_submission.solved_prompts(state.user_id, video)
             done.append(plan.get("original_problem") or "")
-            nxt = prelab_ingest.next_unsolved(_load_prelab_file(), video, done)
+            nxt = prelab_ingest.next_unsolved(prelab_ingest.load_prelab_file(), video, done)
             if not nxt:
                 return {}
             return {"prompt": nxt["prompt"]}
@@ -583,8 +582,7 @@ class ScaffoldingAgent(BaseAgent):
         """
         try:
             from app.core import prelab_ingest
-            from app.main import _load_prelab_file
-            rec = prelab_ingest.find_by_prompt(text, _load_prelab_file())
+            rec = prelab_ingest.find_by_prompt(text, prelab_ingest.load_prelab_file())
             if not rec:
                 return {}
             c = prelab_ingest.teaching_constraints(rec)

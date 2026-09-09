@@ -54,6 +54,8 @@ import shutil
 import signal
 import subprocess
 import tempfile
+
+from app.core import config
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable
 
@@ -620,6 +622,26 @@ def generate_variants(spec: PrelabSpec, generate: Callable[[str], str],
 # ══════════════════════════════════════════════════════════════════════════
 # 5. Storage shape
 # ══════════════════════════════════════════════════════════════════════════
+
+def load_prelab_file() -> dict:
+    """Read prelab.json, straight from config.
+
+    Deliberately not `app.main._load_prelab_file`: importing the FastAPI module to
+    read one JSON file drags the whole web app in, and every caller that reached
+    for it did so inside a try/except — so when the import failed (a worker, a
+    test, a script) the file silently looked empty and prelabs looked ungradable.
+    """
+    path = config.DB_DIR / "video" / "prelab.json"
+    if not path.exists():
+        return {"chapters": []}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return {"chapters": []}
+    data.setdefault("chapters", [])
+    return data
+
 
 def normalise_stored(entry: Any) -> dict:
     """Read one stored prelab, old shape or new.
