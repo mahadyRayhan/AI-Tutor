@@ -120,6 +120,23 @@ class Topology:
         This set is the Zone of Proximal Development and the authorization
         boundary at the same time; that they coincide is the conceptual claim the
         whole layer rests on.
+
+        OPEN QUESTION — what counts as "certified" here decides how often CAC
+        fires, and the current answer is the strictest one available. Replay over
+        real turns shows 3 of 630 learners hold a LIVE certification (conjunctive,
+        θ=0.95 on all three tiers, n>=3 each), so for almost everyone this returns
+        {Variables} and 91% of asks land beyond the frontier.
+
+        That may be correct — a beginner asking about pointers arguably should get
+        an orienting answer. But 91% is high enough that the alternatives deserve
+        measuring before the term starts:
+
+            ever_certified   sticky: once earned, the frontier never retreats
+            P̃ >= 0.5         "enough to build on" rather than "mastered"
+            any evidence     has touched the topic at all
+
+        `scripts/cac_replay.py` can answer this empirically; the caller supplies
+        the certified set, so no change here is needed to try one.
         """
         return {n for n in self.nodes
                 if n not in certified and self._preds[n] <= certified}
@@ -170,17 +187,24 @@ class Rung(IntEnum):
     was never "may they see it" but "how much of it" — which makes this a
     declassification policy rather than an access policy, and makes an attack
     measurable as *moving the rung* rather than only as defeating a block.
+
+    ORIENT is the rung for a request that sits past what the learner has built up
+    to. It answers — briefly — and spends the rest of its space on why the missing
+    prerequisite is worth having. A full answer with a prerequisite note appended
+    would not do this: nobody reads the note once the answer is already there, so
+    the suggestion only lands if the answer is short enough to leave room for it.
     """
     NONE = 0        # refuse outright (reserved: hard blocks stay in the Sentinel)
-    DIAGRAM = 1     # visual / memory model only
-    HINT = 2        # + a nudge toward the next step
-    EXAMPLE = 3     # + an analogous worked example, different problem
-    CODE = 4        # + code for the problem actually asked
+    ORIENT = 1      # one or two lines, and why the missing prerequisite matters
+    DIAGRAM = 2     # visual / memory model
+    HINT = 3        # + a nudge toward the next step
+    EXAMPLE = 4     # + an analogous worked example, different problem
+    CODE = 5        # + code for the problem actually asked
 
     @property
     def label(self) -> str:
-        return {0: "refuse", 1: "diagram only", 2: "hints",
-                3: "worked example", 4: "full code"}[int(self)]
+        return {0: "refuse", 1: "orienting answer", 2: "diagram",
+                3: "hints", 4: "worked example", 5: "full code"}[int(self)]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -223,6 +247,11 @@ class LearnerView:
 class Decision:
     """What CAC concluded, and why.
 
+    `beyond_region` is an OBSERVATION, deliberately separate from the fields that
+    restrict. A request past the frontier is worth recording — it is the A1
+    signal — but on this course it is usually just curiosity, so by default it
+    annotates and does not narrow. See `cac_region_gate`.
+
     `reasons` is not decoration: it is the audit record. Every entry names the
     signal, the graph level it acted on, and the effect — which is what STRIDE
     Repudiation asks for and what makes a decision reproducible after the fact.
@@ -231,13 +260,18 @@ class Decision:
     in_horizon: bool = True
     edge_ok: bool = True
     redirect_to: str | None = None
+    beyond_region: bool = False
     reasons: list[str] = field(default_factory=list)
 
     @property
     def is_permissive(self) -> bool:
-        """True when this decision changes nothing — the ablation-off baseline."""
-        return (self.rung_cap is Rung.CODE and self.in_horizon
-                and self.edge_ok and self.redirect_to is None)
+        """True when this decision changes nothing the learner would notice.
+
+        `beyond_region` and `redirect_to` are excluded on purpose: a suggested
+        prerequisite is information offered alongside a full answer, not a
+        restriction, so a turn carrying one is still permissive.
+        """
+        return (self.rung_cap is Rung.CODE and self.in_horizon and self.edge_ok)
 
     def audit(self) -> dict:
         """Flat record for turn_log."""
@@ -247,6 +281,7 @@ class Decision:
             "in_horizon": self.in_horizon,
             "edge_ok": self.edge_ok,
             "redirect_to": self.redirect_to,
+            "beyond_region": self.beyond_region,
             "reasons": list(self.reasons),
         }
 
@@ -281,20 +316,30 @@ def _tighten(decision: Decision, *, rung: Rung | None = None,
 # ── Signal hooks. Phase 0 lands them neutral; one phase fills in each. ──────
 
 def _signal_help_seeking(view: LearnerView, decision: Decision) -> None:
-    """Phase 2 — executive help-seeking caps the disclosure rung."""
+    """Phase 2 · switch `cac_rung` — executive help-seeking caps the rung."""
     return
 
 
 def _signal_cognitive_load(view: LearnerView, topo: Topology,
                            concepts: set[str], decision: Decision) -> None:
-    """Phase 3 — load contracts the traversal horizon."""
+    """Phase 3 · switch `cac_horizon` — load contracts the traversal horizon."""
     return
 
 
 def _signal_calibration(view: LearnerView, topo: Topology,
                         concepts: set[str], decision: Decision) -> None:
-    """Phase 4 — overconfidence tightens the prerequisite edge."""
+    """Phase 4 · switch `cac_edge` — overconfidence tightens a prerequisite edge."""
     return
+
+
+# Signal -> the switch that connects it. `decide()` consults this so a signal can
+# be attributed in isolation; passing signals=None runs every implemented one,
+# which is what offline replay wants when sweeping configurations by hand.
+SIGNAL_SWITCHES = {
+    "cac_rung": _signal_help_seeking,
+    "cac_horizon": _signal_cognitive_load,
+    "cac_edge": _signal_calibration,
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -302,7 +347,9 @@ def _signal_calibration(view: LearnerView, topo: Topology,
 # ══════════════════════════════════════════════════════════════════════════
 
 def decide(view: LearnerView, query_concepts: Iterable[str],
-           topo: Topology | None = None) -> Decision:
+           topo: Topology | None = None,
+           signals: set[str] | None = None,
+           region_gate: bool = False) -> Decision:
     """Evaluate CAC for one turn. Pure: no I/O, no model call, no mutation of `view`.
 
     The baseline is permissive and derived from K alone. Each signal may then
@@ -312,6 +359,7 @@ def decide(view: LearnerView, query_concepts: Iterable[str],
     honest learner better off than before they asked.
     """
     topo = topo or CURRICULUM
+    active = SIGNAL_SWITCHES.keys() if signals is None else signals
     decision = Decision()
 
     concepts = {canonical_concept(c) for c in query_concepts if c}
@@ -324,22 +372,41 @@ def decide(view: LearnerView, query_concepts: Iterable[str],
     certified = set(view.certified)
     authorized = topo.authorized(certified)
 
-    # ── K baseline: is the asked concept even in the authorized region? ──
+    # ── K baseline: is the asked concept inside the authorized region? ──
+    # Recorded either way. Whether it RESTRICTS is `region_gate`. When it does,
+    # the rung is ORIENT: answer in a line or two and spend the response on why
+    # the missing prerequisite matters. That is the pedagogical call — a full
+    # answer carrying a prerequisite footnote teaches nobody, because the footnote
+    # is never read.
+    #
+    # How OFTEN this fires is a separate question, and it is governed by how the
+    # frontier is defined rather than by this rung. See `frontier()`.
     beyond = concepts - authorized
     if beyond:
         target = sorted(beyond)[0]
         missing = topo.missing_prerequisites(target, certified)
-        _tighten(
-            decision, redirect=sorted(missing)[0] if missing else None,
-            rung=Rung.HINT,
-            reason=f"K/region: '{target}' is beyond the authorized region"
-                   + (f"; missing prerequisite '{sorted(missing)[0]}'" if missing else ""),
-        )
+        hint = sorted(missing)[0] if missing else None
+        decision.beyond_region = True
+        if region_gate:
+            _tighten(
+                decision, redirect=hint, rung=Rung.ORIENT,
+                reason=f"K/region: '{target}' is beyond the frontier"
+                       + (f"; answer briefly and motivate '{hint}'" if hint
+                          else "; answer briefly"),
+            )
+        else:
+            decision.redirect_to = hint
+            decision.reasons.append(
+                f"K/region (advisory): '{target}' is beyond the frontier"
+                + (f"; '{hint}' would help first" if hint else ""))
 
-    # ── C signals: each may only narrow further ──
-    _signal_help_seeking(view, decision)
-    _signal_cognitive_load(view, topo, concepts, decision)
-    _signal_calibration(view, topo, concepts, decision)
+    # ── C signals: each may only narrow further, and each is switchable ──
+    if "cac_rung" in active:
+        _signal_help_seeking(view, decision)
+    if "cac_horizon" in active:
+        _signal_cognitive_load(view, topo, concepts, decision)
+    if "cac_edge" in active:
+        _signal_calibration(view, topo, concepts, decision)
 
     return decision
 
@@ -391,17 +458,41 @@ def build_view(username: str) -> LearnerView:
     )
 
 
-def evaluate(username: str, query_concepts: Iterable[str]) -> Decision:
-    """Convenience wrapper for callers in the request path.
+def active_signals() -> set[str]:
+    """The signal switches currently connected."""
+    from app.core import config
+    return {name for name in SIGNAL_SWITCHES if config.feature_enabled(name)}
 
-    Returns the permissive no-op when the `cac_graph` ablation switch is off, so a
-    disabled layer is provably inert rather than merely quiet.
+
+def enforcing() -> bool:
+    """Whether a decision may CHANGE anything, as opposed to only being recorded.
+
+    Computing and enforcing are separate switches on purpose. With `cac_enforce`
+    off the layer runs in shadow: a full decision is formed and logged on every
+    turn, and no learner is affected — so the policy can be measured against real
+    traffic before it is trusted with any. Callers must consult this before acting
+    on a Decision; `evaluate()` cannot enforce it for them because it does not
+    know what the caller intends to do with the answer.
+    """
+    from app.core import config
+    return config.feature_enabled("cac_graph") and config.feature_enabled("cac_enforce")
+
+
+def evaluate(username: str, query_concepts: Iterable[str]) -> Decision:
+    """Form a decision for one turn, honouring the live switch configuration.
+
+    Always safe to call. Returns the permissive no-op when `cac_graph` is off, so
+    a disconnected layer is provably inert rather than merely quiet. Note this
+    RETURNS a decision regardless of `cac_enforce` — recording it is the point of
+    shadow mode; see `enforcing()` for whether it may be acted on.
     """
     from app.core import config
     if not config.feature_enabled("cac_graph"):
         return Decision()
     try:
-        return decide(build_view(username), query_concepts)
+        return decide(build_view(username), query_concepts,
+                      signals=active_signals(),
+                      region_gate=config.feature_enabled("cac_region_gate"))
     except Exception as e:
         # Fail OPEN, deliberately. This layer only ever narrows, so a crash here
         # must not become a block: the Sentinel's hard blocks and the K-based

@@ -363,6 +363,41 @@ class SQLiteDB:
                 )
             """)
 
+            # Cognitive Access Control: one row per turn where CAC formed an opinion.
+            #
+            # Distinct from path_event, which classifies against the learner's chosen
+            # GOAL path and therefore only exists once a goal is set. This table
+            # records the access region derived from CERTIFICATION, which is always
+            # defined — so "the learner reached past what they have earned" is
+            # answerable for every student, not only the ones with a goal.
+            #
+            # Written even when the decision changes nothing, because the denominator
+            # matters: a probe rate is meaningless without the count of turns that
+            # were in-region. ablation_config is stamped per row so a decision stays
+            # attributable to the configuration that produced it (STRIDE Repudiation).
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS cac_access_event (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    study_id         TEXT,
+                    username         TEXT,
+                    session_id       TEXT,
+                    concept_asked    TEXT,
+                    in_region        INTEGER,
+                    redirect_to      TEXT,
+                    rung_cap         INTEGER,
+                    deviation_type   TEXT,
+                    reasons          TEXT,
+                    ablation_config  TEXT,
+                    ts_utc           TIMESTAMP
+                )
+            """)
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cac_user_session "
+                "ON cac_access_event(username, session_id)")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cac_region "
+                "ON cac_access_event(username, in_region)")
+
             # Item-level quiz record (psychometrics: question, answer, timing)
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS quiz_log (

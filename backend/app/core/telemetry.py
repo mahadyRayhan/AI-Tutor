@@ -333,6 +333,63 @@ def log_path_event(username: str, concept_asked: str, expected_concept: str,
         logger.warning(f"[telemetry] log_path_event failed: {e}")
 
 
+def log_cac_access(username: str, session_id: str, concept_asked: str,
+                   decision, deviation_type: str = None) -> None:
+    """Record one Cognitive Access Control decision.
+
+    Called on every turn CAC has an opinion about, including the in-region ones.
+    Logging only the probes would make the probe RATE uncomputable — a count of
+    out-of-region asks means nothing without the count of turns that were fine.
+
+    `decision` is a cac_graph.Decision. Never raises: this is observability, and
+    an analytics failure must not cost the learner their turn.
+    """
+    try:
+        from app.core import config
+        sid = get_study_id(username)
+        a = decision.audit()
+        db.execute(
+            "INSERT INTO cac_access_event "
+            "(study_id, username, session_id, concept_asked, in_region, redirect_to, "
+            " rung_cap, deviation_type, reasons, ablation_config, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (sid, username, session_id, concept_asked,
+             1 if a["redirect_to"] is None and not a["reasons"] else 0,
+             a["redirect_to"], a["rung_cap"], deviation_type,
+             json.dumps(a["reasons"]), json.dumps(config.active_ablation_config()),
+             _now()),
+        )
+    except Exception as e:
+        logger.warning(f"[telemetry] log_cac_access failed: {e}")
+
+
+def cac_probe_stats(username: str, session_id: str = None) -> dict:
+    """Out-of-region reach attempts, for the A1 adversary and the E7 detector.
+
+    Scoped to one session when `session_id` is given, else the whole account.
+    Returns a rate as well as a count: a student who asks a hundred questions and
+    over-reaches twice is not the same as one who over-reaches on both of their
+    only two turns, and a bare count cannot tell them apart.
+    """
+    try:
+        where = "username=?"
+        params = [username]
+        if session_id:
+            where += " AND session_id=?"
+            params.append(session_id)
+        row = db.fetch_one(
+            f"SELECT COUNT(*) AS n, "
+            f"       COALESCE(SUM(CASE WHEN in_region=0 THEN 1 ELSE 0 END), 0) AS probes "
+            f"FROM cac_access_event WHERE {where}", tuple(params))
+        n = int(row["n"] or 0) if row else 0
+        probes = int(row["probes"] or 0) if row else 0
+        return {"turns": n, "probes": probes,
+                "probe_rate": round(probes / n, 3) if n else 0.0}
+    except Exception as e:
+        logger.warning(f"[telemetry] cac_probe_stats failed: {e}")
+        return {"turns": 0, "probes": 0, "probe_rate": 0.0}
+
+
 def classify_path_deviation(path: list, concept_asked: str) -> tuple:
     """Given a learning path (list of {concept,status}) and the asked concept,
     return (deviation_type, expected_concept). Pure function, no DB."""

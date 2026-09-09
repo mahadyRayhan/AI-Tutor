@@ -196,12 +196,59 @@ SECURITY_FEATURE_NAMES = (
     "judge_escalation",
     "context_gating",
     "earned_credentials",
-    # Cognitive Access Control over the curriculum graph. Off => cac_graph.evaluate
-    # returns the permissive no-op, so the layer is provably inert rather than
-    # merely quiet. Separate from cac_evidence_weight (Phase 5), which is the only
-    # part that can move mastery numbers.
+
+    # ── Cognitive Access Control ────────────────────────────────────────────
+    # Deliberately one switch per moving part, not one for the layer. Each phase
+    # can then be connected and disconnected on its own to attribute a result to
+    # it, which is what the ablation study (E1) needs and what makes a partially
+    # built layer safe to carry in the branch.
+    #
+    #   cac_graph      master: compute a decision at all
+    #   cac_enforce    ACT on the decision. Default OFF — see _FEATURE_DEFAULTS.
+    #   cac_region_gate
+    #                  Let the K-derived region RESTRICT, not merely annotate.
+    #                  Default OFF — see _FEATURE_DEFAULTS.
+    #   cac_rung       Phase 2 · help-seeking caps the disclosure rung
+    #   cac_horizon    Phase 3 · cognitive load contracts the traversal horizon
+    #   cac_edge       Phase 4 · calibration tightens a prerequisite edge
+    #   cac_evidence_weight
+    #                  Phase 5 · rushing discounts evidence. The ONLY switch that
+    #                  can move mastery numbers, so it is isolated from the rest.
+    #   cac_breakglass Phase 6 · persistence earns an audited override
     "cac_graph",
+    "cac_enforce",
+    "cac_region_gate",
+    "cac_rung",
+    "cac_horizon",
+    "cac_edge",
+    "cac_evidence_weight",
+    "cac_breakglass",
 )
+
+# Components that are OFF unless explicitly switched on, against the
+# enabled-by-default rule below.
+#
+# cac_enforce is the shadow-mode gate. With it off, CAC computes and records a
+# full decision on every turn and no learner is affected — which is how the
+# policy can be measured on real traffic before it is trusted with any. Enforcing
+# by default would mean that merely landing a phase changed what students see,
+# and the whole point of the switch surface is that landing code and changing
+# behaviour are two separate acts.
+# cac_region_gate ON: a request past the learner's frontier is capped at the
+# ORIENT rung — answered in a line or two, with the response spent on why the
+# missing prerequisite is worth having. A full answer with a prerequisite note
+# appended was tried and rejected: the note is never read once the answer is
+# already there, so the suggestion only lands if the answer leaves room for it.
+#
+# This is a pedagogical position, and it is separate from HOW OFTEN it fires.
+# Replay over the 1248 topic-bearing turns puts that at 91%, because 3 of 630
+# learners hold a live certification and the frontier therefore collapses to
+# {Variables} for almost everyone. That rate is a property of how the frontier is
+# defined, not of this rung — see cac_graph.frontier() for the open question.
+_FEATURE_DEFAULTS = {
+    "cac_enforce": False,
+    "cac_region_gate": True,
+}
 
 _ABLATE_DISABLED = {
     s.strip().lower()
@@ -210,11 +257,17 @@ _ABLATE_DISABLED = {
 }
 
 def _resolve_feature(name: str) -> bool:
-    """Enabled unless individually overridden or named in SAGE_ABLATE."""
+    """Enabled unless individually overridden, named in SAGE_ABLATE, or
+    listed in _FEATURE_DEFAULTS as off-by-default.
+
+    Precedence: explicit env override > SAGE_ABLATE > per-feature default > on.
+    """
     override = os.getenv(f"SAGE_{name.upper()}_ENABLED")
     if override is not None:
         return override.strip().lower() in ("1", "true", "yes", "on")
-    return name not in _ABLATE_DISABLED
+    if name in _ABLATE_DISABLED:
+        return False
+    return _FEATURE_DEFAULTS.get(name, True)
 
 SECURITY_FEATURES = {name: _resolve_feature(name) for name in SECURITY_FEATURE_NAMES}
 

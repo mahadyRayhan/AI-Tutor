@@ -190,6 +190,7 @@ def test_frontier_request_is_fully_permissive():
     d = decide(view, ["Arrays"])
     assert d.is_permissive
     assert d.rung_cap is Rung.CODE
+    assert d.beyond_region is False
     assert d.reasons == []
 
 
@@ -198,14 +199,46 @@ def test_mastered_request_is_permissive_in_phase_0():
     assert decide(view, ["Variables"]).is_permissive
 
 
-def test_beyond_region_redirects_and_names_the_prerequisite():
-    """A refusal that does not teach is a failure — the redirect must be actionable."""
+def test_beyond_frontier_caps_at_an_orienting_answer():
+    """The pedagogical call: answer briefly, spend the response on the prerequisite.
+
+    A full answer with a prerequisite note appended does not work — the note is
+    never read once the answer is already there. Capping at ORIENT is what makes
+    the suggestion the point rather than a footnote.
+    """
     view = LearnerView("u", frozenset({"Variables"}))
-    d = decide(view, ["Strings"])
-    assert not d.is_permissive
+    d = decide(view, ["Strings"], region_gate=True)
+    assert d.beyond_region is True
     assert d.redirect_to == "Arrays"
-    assert d.rung_cap is Rung.HINT
-    assert "beyond the authorized region" in d.reasons[0]
+    assert d.rung_cap is Rung.ORIENT
+    assert not d.is_permissive
+    assert "motivate 'Arrays'" in d.reasons[0]
+
+
+def test_orient_is_below_every_teaching_rung():
+    """ORIENT must be less revealing than a diagram, a hint or an example."""
+    assert Rung.NONE < Rung.ORIENT < Rung.DIAGRAM < Rung.HINT < Rung.EXAMPLE < Rung.CODE
+    assert Rung.ORIENT.label == "orienting answer"
+
+
+def test_advisory_mode_stays_available_for_comparison():
+    """The un-gated reading is kept so the paper can report both."""
+    view = LearnerView("u", frozenset({"Variables"}))
+    d = decide(view, ["Strings"], region_gate=False)
+    assert d.beyond_region is True
+    assert d.redirect_to == "Arrays"
+    assert d.rung_cap is Rung.CODE
+    assert "advisory" in d.reasons[0]
+
+
+def test_region_gate_only_ever_tightens():
+    """Turning the gate on must never widen relative to advisory mode."""
+    view = LearnerView("u", frozenset({"Variables"}))
+    for concept in SKILL_TOPICS:
+        loose = decide(view, [concept])
+        strict = decide(view, [concept], region_gate=True)
+        assert strict.rung_cap <= loose.rung_cap
+        assert strict.beyond_region == loose.beyond_region
 
 
 def test_unknown_concept_yields_no_opinion():
@@ -230,13 +263,79 @@ def test_rungs_are_ordered_and_labelled():
 
 
 def test_audit_record_is_flat_and_complete():
-    d = decide(LearnerView("u", frozenset({"Variables"})), ["Strings"])
+    d = decide(LearnerView("u", frozenset({"Variables"})), ["Strings"],
+               region_gate=True)
     a = d.audit()
+    assert a["rung_label"] == "orienting answer"
     assert set(a) == {"rung_cap", "rung_label", "in_horizon",
-                      "edge_ok", "redirect_to", "reasons"}
-    assert a["rung_label"] == "hints"
+                      "edge_ok", "redirect_to", "beyond_region", "reasons"}
     assert a["reasons"], "an audit record with no reason explains nothing"
 
 
 def test_no_op_decision_is_permissive():
     assert Decision().is_permissive
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Phase 1 — observation only
+# ══════════════════════════════════════════════════════════════════════════
+
+@pytest.fixture
+def probe_user():
+    from app.db.sqlite_db import db
+    name = "cac_test_probe_user"
+    db.execute("DELETE FROM cac_access_event WHERE username=?", (name,))
+    yield name
+    db.execute("DELETE FROM cac_access_event WHERE username=?", (name,))
+
+
+def test_every_turn_is_logged_not_only_probes(probe_user):
+    """A probe COUNT without a turn count is not a rate, and a rate is what the
+    A1 signal actually needs."""
+    from app.core import telemetry
+    view = LearnerView(probe_user, frozenset({"Variables", "Control Flow"}))
+    for concept in ("Arrays", "Strings", "Arrays"):
+        telemetry.log_cac_access(probe_user, "s1", concept,
+                                 decide(view, [concept]))
+    stats = telemetry.cac_probe_stats(probe_user, "s1")
+    assert stats == {"turns": 3, "probes": 1, "probe_rate": round(1 / 3, 3)}
+
+
+def test_probe_stats_scope_to_a_session(probe_user):
+    from app.core import telemetry
+    view = LearnerView(probe_user, frozenset({"Variables"}))
+    telemetry.log_cac_access(probe_user, "s1", "Strings", decide(view, ["Strings"]))
+    telemetry.log_cac_access(probe_user, "s2", "Strings", decide(view, ["Strings"]))
+    assert telemetry.cac_probe_stats(probe_user, "s1")["turns"] == 1
+    assert telemetry.cac_probe_stats(probe_user)["turns"] == 2
+
+
+def test_access_row_stamps_the_ablation_config(probe_user):
+    """A decision must stay attributable to the configuration that produced it."""
+    import json
+    from app.core import telemetry
+    from app.db.sqlite_db import db
+    view = LearnerView(probe_user, frozenset({"Variables"}))
+    telemetry.log_cac_access(probe_user, "s1", "Strings", decide(view, ["Strings"]))
+    row = db.fetch_one("SELECT ablation_config, reasons, redirect_to "
+                       "FROM cac_access_event WHERE username=?", (probe_user,))
+    assert "cac_graph" in json.loads(row["ablation_config"])
+    assert json.loads(row["reasons"]), "a logged probe with no reason explains nothing"
+    assert row["redirect_to"] == "Arrays"
+
+
+def test_logging_never_raises_on_a_bad_write(probe_user):
+    """Observability must not cost a learner their turn."""
+    from app.core import telemetry
+
+    class Exploding:
+        def audit(self):
+            raise RuntimeError("boom")
+
+    telemetry.log_cac_access(probe_user, "s1", "Arrays", Exploding())  # must not raise
+    assert telemetry.cac_probe_stats(probe_user)["turns"] == 0
+
+
+def test_probe_stats_on_unknown_user_is_zero():
+    from app.core import telemetry
+    assert telemetry.cac_probe_stats("nobody_at_all")["turns"] == 0

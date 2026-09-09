@@ -682,12 +682,37 @@ async def chat_stream(request: ChatRequest, _caller: dict = Depends(auth.get_cur
                             traj_peak=_state.get("traj_peak"),
                         )
                         # Path deviation (Forethought / SRL) using cached learning path
+                        _dev = None
                         if detected_topic and detected_topic != "General":
                             _goal = knowledge_manager.get_goal(request.username)
                             _path = _path_for_telemetry(request.username, _goal)
                             _dev, _expected = telemetry.classify_path_deviation(_path, detected_topic)
                             telemetry.log_path_event(request.username, detected_topic,
                                                      _expected, _dev, _goal)
+
+                        # Cognitive Access Control.
+                        # The decision is always computed and recorded; whether it
+                        # may CHANGE anything is the separate `cac_enforce` switch
+                        # (default off = shadow mode). Landing a phase and turning
+                        # it on are deliberately two different acts, so the layer
+                        # can be measured against real traffic before it touches
+                        # any. Consumers act on the decision only when
+                        # cac_graph.enforcing() is true.
+                        if detected_topic and detected_topic != "General":
+                            try:
+                                from app.core import cac_graph
+                                _cac = cac_graph.evaluate(request.username, [detected_topic])
+                                telemetry.log_cac_access(
+                                    request.username, request.session_id,
+                                    detected_topic, _cac, _dev)
+                                if cac_graph.enforcing() and not _cac.is_permissive:
+                                    # No consumer yet — Phase 2 attaches the rung
+                                    # cap to the Scaffolding agent here. Logged so
+                                    # a premature enable is visible, not silent.
+                                    logger.info(
+                                        f"[cac] ENFORCE would apply: {_cac.audit()}")
+                            except Exception as cac_err:
+                                logger.warning(f"[cac] observation failed: {cac_err}")
                         # Strip internal telemetry key before sending to client
                         final_data.pop("_state", None)
                     except Exception as tele_err:
