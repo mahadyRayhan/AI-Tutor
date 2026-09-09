@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Dynamic DAG — SAGE Cognitive Access Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<style>
+:root{--ground:#F7F9F9;--panel:#FFFFFF;--panel-sunk:#EEF3F4;--ink:#101619;--ink-2:#3D4B50;--ink-3:#6B7A80;
+--rule:#D8E1E3;--rule-strong:#B4C3C7;--accent:#0E6D7C;--accent-soft:#E2F0F2;
+--certified:#257F4B;--frontier:#A96A11;--hazard:#B23A26;--locked:#93A1A6;
+--certified-bg:#E6F2EA;--frontier-bg:#FBF0DC;--hazard-bg:#F8E7E3;
+--shadow:0 1px 2px rgba(16,22,25,.06),0 8px 24px -16px rgba(16,22,25,.28)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ground:#0C1114;--panel:#131B1F;--panel-sunk:#0F171A;--ink:#E3EBEE;--ink-2:#AEBDC2;--ink-3:#7E8F95;
+--rule:#253236;--rule-strong:#35474D;--accent:#4FB6C6;--accent-soft:#123035;--certified:#4FBE7E;--frontier:#D9A245;--hazard:#E4715A;--locked:#6B7B81;
+--certified-bg:#12291D;--frontier-bg:#2B2110;--hazard-bg:#2E1815;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.8)}}
+:root[data-theme="dark"]{--ground:#0C1114;--panel:#131B1F;--panel-sunk:#0F171A;--ink:#E3EBEE;--ink-2:#AEBDC2;--ink-3:#7E8F95;
+--rule:#253236;--rule-strong:#35474D;--accent:#4FB6C6;--accent-soft:#123035;--certified:#4FBE7E;--frontier:#D9A245;--hazard:#E4715A;--locked:#6B7B81;
+--certified-bg:#12291D;--frontier-bg:#2B2110;--hazard-bg:#2E1815;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.8)}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:980px;margin:0 auto;padding:52px 24px 110px}
+h1,h2{font-family:"IBM Plex Serif",Georgia,serif;text-wrap:balance;margin:0}
+h1{font-size:clamp(1.9rem,4vw,2.6rem);font-weight:600;line-height:1.12;letter-spacing:-.015em}
+h2{font-size:1.25rem;font-weight:600;line-height:1.3}
+p{margin:0}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:.7rem;font-weight:500;letter-spacing:.13em;text-transform:uppercase;color:var(--accent)}
+.dek{color:var(--ink-2);font-size:1.05rem;max-width:62ch}
+header{display:flex;flex-direction:column;gap:12px;padding-bottom:26px;border-bottom:2px solid var(--ink)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 20px;padding:18px 0 6px}
+.legend span{display:inline-flex;align-items:center;gap:7px;font-size:.78rem;color:var(--ink-2)}
+.dot{width:11px;height:11px;border-radius:50%;flex:none;border:2px solid}
+.bar{width:18px;height:4px;flex:none;border-radius:2px}
+.steps{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);gap:28px;align-items:center;padding:30px 0;border-bottom:1px solid var(--rule)}
+.step:last-child{border-bottom:none}
+.fig{margin:0;background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 12px 8px;box-shadow:var(--shadow)}
+.txt{display:flex;flex-direction:column;gap:8px;max-width:48ch}
+.txt p{font-size:.93rem;color:var(--ink-2)}
+.txt em{color:var(--ink);font-style:normal;font-weight:600}
+@media (max-width:720px){.step{grid-template-columns:1fr;gap:14px}}
+.where{margin-top:44px;border:1px solid var(--rule);border-radius:8px;background:var(--panel);overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.875rem}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--rule);vertical-align:top}
+thead th{font-family:"IBM Plex Mono",monospace;font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);font-weight:500;background:var(--panel-sunk);white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+td.k{font-family:"IBM Plex Mono",monospace;color:var(--accent);white-space:nowrap}
+.foot{font-size:.8rem;color:var(--ink-3);padding-top:16px;max-width:62ch}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+</style>
+<style>body{margin:0}img{max-width:100%}</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">SAGE · Cognitive Access Control</div>
+  <h1>The Dynamic DAG</h1>
+  <p class="dek">One map, one student, one signal added per panel. Mastery colors the nodes. Metacognition reshapes everything else.</p>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--certified-bg);border-color:var(--certified)"></i>earned</span>
+    <span><i class="dot" style="background:var(--frontier-bg);border-color:var(--frontier)"></i>unlocked</span>
+    <span><i class="dot" style="background:var(--panel-sunk);border-color:var(--locked)"></i>locked</span>
+    <span><i class="bar" style="background:var(--hazard)"></i>tightened edge</span>
+    <span><i class="bar" style="background:var(--ink-3);opacity:.6"></i>horizon</span>
+    <span><i class="bar" style="background:var(--accent)"></i>open rung</span>
+  </div>
+</header>
+
+<div class="steps">
+<div class="step">
+  <figure class="fig"><svg viewBox="0 0 380 210" role="img" aria-label="0" style="max-width:100%;height:auto;display:block">
+<defs><marker id="ah0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--rule-strong)"/></marker><marker id="ahh0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--hazard)"/></marker></defs>
+<line x1="66" y1="78" x2="115" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah0)"/>
+<line x1="161" y1="78" x2="210" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah0)"/>
+<line x1="256" y1="78" x2="305" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah0)"/>
+<line x1="140" y1="99" x2="140" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah0)"/>
+<line x1="235" y1="99" x2="235" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah0)"/>
+<g>
+<circle cx="45" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--ink-3)" stroke-width="3"/>
+<text x="45" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Variables</text>
+</g>
+<g>
+<circle cx="140" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--ink-3)" stroke-width="3"/>
+<text x="140" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Loops</text>
+</g>
+<g>
+<circle cx="235" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--ink-3)" stroke-width="3"/>
+<text x="235" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Arrays</text>
+</g>
+<g>
+<circle cx="330" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--ink-3)" stroke-width="3"/>
+<text x="330" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Strings</text>
+</g>
+<g>
+<circle cx="140" cy="165" r="21" fill="var(--panel-sunk)" stroke="var(--ink-3)" stroke-width="3"/>
+<text x="140" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Functions</text>
+</g>
+<g>
+<circle cx="235" cy="165" r="21" fill="var(--panel-sunk)" stroke="var(--ink-3)" stroke-width="3"/>
+<text x="235" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Structures</text>
+</g>
+</svg></figure>
+  <div class="txt">
+    <div class="eyebrow">Start</div>
+    <h2>The instructor's map</h2>
+    <p>A fixed prerequisite graph. Same for every student. Nothing on it moves.</p>
+  </div>
+</div>
+<div class="step">
+  <figure class="fig"><svg viewBox="0 0 380 210" role="img" aria-label="1" style="max-width:100%;height:auto;display:block">
+<defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--rule-strong)"/></marker><marker id="ahh1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--hazard)"/></marker></defs>
+<line x1="66" y1="78" x2="115" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah1)"/>
+<line x1="161" y1="78" x2="210" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah1)"/>
+<line x1="256" y1="78" x2="305" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah1)"/>
+<line x1="140" y1="99" x2="140" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah1)"/>
+<line x1="235" y1="99" x2="235" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah1)"/>
+<g>
+<circle cx="45" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="45" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Variables</text>
+</g>
+<g>
+<circle cx="140" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="140" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Loops</text>
+</g>
+<g>
+<circle cx="235" cy="78" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="235" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Arrays</text>
+</g>
+<g>
+<circle cx="330" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="330" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Strings</text>
+</g>
+<g>
+<circle cx="140" cy="165" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="140" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Functions</text>
+</g>
+<g>
+<circle cx="235" cy="165" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="235" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Structures</text>
+</g>
+</svg></figure>
+  <div class="txt">
+    <div class="eyebrow">+ Mastery</div>
+    <h2>BKT colors the nodes</h2>
+    <p>Green is earned, amber is unlocked, grey is locked. This is what ABAC reads: <em>what</em> may be opened.</p>
+  </div>
+</div>
+<div class="step">
+  <figure class="fig"><svg viewBox="0 0 380 210" role="img" aria-label="2" style="max-width:100%;height:auto;display:block">
+<defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--rule-strong)"/></marker><marker id="ahh2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--hazard)"/></marker></defs>
+<line x1="66" y1="78" x2="115" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah2)"/>
+<line x1="161" y1="78" x2="210" y2="78" stroke="var(--hazard)" stroke-width="4" marker-end="url(#ahh2)"/>
+<rect x="178" y="56" width="14" height="11" rx="2" fill="var(--panel)" stroke="var(--hazard)" stroke-width="1.5"/>
+<path d="M181 56 a4 4 0 0 1 8 0" fill="none" stroke="var(--hazard)" stroke-width="1.5"/>
+<line x1="256" y1="78" x2="305" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah2)"/>
+<line x1="140" y1="99" x2="140" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah2)"/>
+<line x1="235" y1="99" x2="235" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah2)"/>
+<g>
+<circle cx="45" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="45" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Variables</text>
+</g>
+<g>
+<circle cx="140" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="140" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Loops</text>
+</g>
+<g>
+<circle cx="235" cy="78" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="235" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Arrays</text>
+</g>
+<g>
+<circle cx="330" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="330" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Strings</text>
+</g>
+<g>
+<circle cx="140" cy="165" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="140" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Functions</text>
+</g>
+<g>
+<circle cx="235" cy="165" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="235" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Structures</text>
+</g>
+</svg></figure>
+  <div class="txt">
+    <div class="eyebrow">+ Calibration</div>
+    <h2>The edge tightens</h2>
+    <p>The student is <em>overconfident</em> on Loops — confidence higher than results. The edge to Arrays now binds tighter than the map says. It is harder to cross, for this student only.</p>
+  </div>
+</div>
+<div class="step">
+  <figure class="fig"><svg viewBox="0 0 380 210" role="img" aria-label="3" style="max-width:100%;height:auto;display:block">
+<defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--rule-strong)"/></marker><marker id="ahh3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--hazard)"/></marker></defs>
+<rect x="284" y="6" width="90" height="198" rx="6" fill="var(--panel-sunk)" opacity="0.55"/>
+<line x1="284" y1="8" x2="284" y2="202" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text x="290" y="200" font-family="IBM Plex Mono,monospace" font-size="9.5" fill="var(--ink-3)">out of reach</text>
+<line x1="66" y1="78" x2="115" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah3)"/>
+<line x1="161" y1="78" x2="210" y2="78" stroke="var(--hazard)" stroke-width="4" marker-end="url(#ahh3)"/>
+<rect x="178" y="56" width="14" height="11" rx="2" fill="var(--panel)" stroke="var(--hazard)" stroke-width="1.5"/>
+<path d="M181 56 a4 4 0 0 1 8 0" fill="none" stroke="var(--hazard)" stroke-width="1.5"/>
+<line x1="256" y1="78" x2="305" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah3)" opacity="0.25"/>
+<line x1="140" y1="99" x2="140" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah3)"/>
+<line x1="235" y1="99" x2="235" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah3)"/>
+<g>
+<circle cx="45" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="45" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Variables</text>
+</g>
+<g>
+<circle cx="140" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="140" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Loops</text>
+</g>
+<g>
+<circle cx="235" cy="78" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="235" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Arrays</text>
+</g>
+<g opacity="0.28">
+<circle cx="330" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="330" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-3)">Strings</text>
+</g>
+<g>
+<circle cx="140" cy="165" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="140" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Functions</text>
+</g>
+<g opacity="0.28">
+<circle cx="235" cy="165" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="235" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-3)">Structures</text>
+</g>
+</svg></figure>
+  <div class="txt">
+    <div class="eyebrow">+ Cognitive load</div>
+    <h2>The horizon shrinks</h2>
+    <p>Load is high. Reach contracts to one step. Strings and Structures are still on the map, but off the horizon for this session.</p>
+  </div>
+</div>
+<div class="step">
+  <figure class="fig"><svg viewBox="0 0 380 210" role="img" aria-label="4" style="max-width:100%;height:auto;display:block">
+<defs><marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--rule-strong)"/></marker><marker id="ahh4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--hazard)"/></marker></defs>
+<rect x="284" y="6" width="90" height="198" rx="6" fill="var(--panel-sunk)" opacity="0.55"/>
+<line x1="284" y1="8" x2="284" y2="202" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text x="290" y="200" font-family="IBM Plex Mono,monospace" font-size="9.5" fill="var(--ink-3)">out of reach</text>
+<line x1="66" y1="78" x2="115" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah4)"/>
+<line x1="161" y1="78" x2="210" y2="78" stroke="var(--hazard)" stroke-width="4" marker-end="url(#ahh4)"/>
+<rect x="178" y="56" width="14" height="11" rx="2" fill="var(--panel)" stroke="var(--hazard)" stroke-width="1.5"/>
+<path d="M181 56 a4 4 0 0 1 8 0" fill="none" stroke="var(--hazard)" stroke-width="1.5"/>
+<line x1="256" y1="78" x2="305" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah4)" opacity="0.25"/>
+<line x1="140" y1="99" x2="140" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah4)"/>
+<line x1="235" y1="99" x2="235" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah4)"/>
+<g>
+<circle cx="45" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="45" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Variables</text>
+</g>
+<g>
+<circle cx="140" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="140" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Loops</text>
+</g>
+<g>
+<circle cx="235" cy="78" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="235" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Arrays</text>
+</g>
+<g opacity="0.28">
+<circle cx="330" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="330" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-3)">Strings</text>
+</g>
+<g>
+<circle cx="140" cy="165" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="140" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Functions</text>
+</g>
+<g opacity="0.28">
+<circle cx="235" cy="165" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="235" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-3)">Structures</text>
+</g>
+<rect x="262" y="58" width="15" height="8" rx="1.5" fill="var(--panel)" stroke="var(--locked)" stroke-width="1.2" stroke-dasharray="2 2"/>
+<rect x="262" y="69" width="15" height="8" rx="1.5" fill="var(--panel)" stroke="var(--locked)" stroke-width="1.2" stroke-dasharray="2 2"/>
+<rect x="262" y="80" width="15" height="8" rx="1.5" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+<rect x="262" y="91" width="15" height="8" rx="1.5" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+<text x="270" y="52" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="var(--ink-3)">shown</text>
+</svg></figure>
+  <div class="txt">
+    <div class="eyebrow">+ Help-seeking</div>
+    <h2>The rung is capped</h2>
+    <p>Help-seeking is executive — asking for answers, not understanding. At Arrays only the bottom rungs are open: <em>diagrams and hints, no code</em>. This is the sentence you already had, and it is one rung of one node.</p>
+  </div>
+</div>
+<div class="step">
+  <figure class="fig"><svg viewBox="0 0 380 210" role="img" aria-label="5" style="max-width:100%;height:auto;display:block">
+<defs><marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--rule-strong)"/></marker><marker id="ahh5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--hazard)"/></marker></defs>
+<rect x="284" y="6" width="90" height="198" rx="6" fill="var(--panel-sunk)" opacity="0.55"/>
+<line x1="284" y1="8" x2="284" y2="202" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text x="290" y="200" font-family="IBM Plex Mono,monospace" font-size="9.5" fill="var(--ink-3)">out of reach</text>
+<line x1="66" y1="78" x2="115" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah5)"/>
+<line x1="161" y1="78" x2="210" y2="78" stroke="var(--hazard)" stroke-width="4" marker-end="url(#ahh5)"/>
+<rect x="178" y="56" width="14" height="11" rx="2" fill="var(--panel)" stroke="var(--hazard)" stroke-width="1.5"/>
+<path d="M181 56 a4 4 0 0 1 8 0" fill="none" stroke="var(--hazard)" stroke-width="1.5"/>
+<line x1="256" y1="78" x2="305" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah5)" opacity="0.25"/>
+<line x1="140" y1="99" x2="140" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah5)"/>
+<line x1="235" y1="99" x2="235" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah5)"/>
+<g>
+<circle cx="45" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="45" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Variables</text>
+</g>
+<g>
+<circle cx="140" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3" stroke-dasharray="5 4"/>
+<text x="140" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Loops</text>
+</g>
+<circle cx="156" cy="62" r="9" fill="var(--hazard)"/>
+<text x="156" y="66" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="11" font-weight="600" fill="var(--panel)">?</text>
+<g>
+<circle cx="235" cy="78" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="235" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Arrays</text>
+</g>
+<g opacity="0.28">
+<circle cx="330" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="330" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-3)">Strings</text>
+</g>
+<g>
+<circle cx="140" cy="165" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="140" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Functions</text>
+</g>
+<g opacity="0.28">
+<circle cx="235" cy="165" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="235" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-3)">Structures</text>
+</g>
+<rect x="262" y="58" width="15" height="8" rx="1.5" fill="var(--panel)" stroke="var(--locked)" stroke-width="1.2" stroke-dasharray="2 2"/>
+<rect x="262" y="69" width="15" height="8" rx="1.5" fill="var(--panel)" stroke="var(--locked)" stroke-width="1.2" stroke-dasharray="2 2"/>
+<rect x="262" y="80" width="15" height="8" rx="1.5" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+<rect x="262" y="91" width="15" height="8" rx="1.5" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+<text x="270" y="52" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="var(--ink-3)">shown</text>
+</svg></figure>
+  <div class="txt">
+    <div class="eyebrow">+ Rushing</div>
+    <h2>Evidence flows back</h2>
+    <p>Answers on Loops came faster than the mastery they show. That evidence is discounted, and the green on Loops is now in doubt. Metacognition reaches <em>back</em> into mastery.</p>
+  </div>
+</div>
+<div class="step">
+  <figure class="fig"><svg viewBox="0 0 380 210" role="img" aria-label="6" style="max-width:100%;height:auto;display:block">
+<defs><marker id="ah6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--rule-strong)"/></marker><marker id="ahh6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--hazard)"/></marker></defs>
+<rect x="284" y="6" width="90" height="198" rx="6" fill="var(--panel-sunk)" opacity="0.55"/>
+<line x1="284" y1="8" x2="284" y2="202" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text x="290" y="200" font-family="IBM Plex Mono,monospace" font-size="9.5" fill="var(--ink-3)">out of reach</text>
+<line x1="66" y1="78" x2="115" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah6)"/>
+<line x1="161" y1="78" x2="210" y2="78" stroke="var(--hazard)" stroke-width="4" marker-end="url(#ahh6)"/>
+<rect x="178" y="56" width="14" height="11" rx="2" fill="var(--panel)" stroke="var(--hazard)" stroke-width="1.5"/>
+<path d="M181 56 a4 4 0 0 1 8 0" fill="none" stroke="var(--hazard)" stroke-width="1.5"/>
+<line x1="256" y1="78" x2="305" y2="78" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah6)" opacity="0.25"/>
+<line x1="140" y1="99" x2="140" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah6)"/>
+<line x1="235" y1="99" x2="235" y2="140" stroke="var(--rule-strong)" stroke-width="1.6" marker-end="url(#ah6)"/>
+<g>
+<circle cx="45" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3"/>
+<text x="45" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Variables</text>
+</g>
+<g>
+<circle cx="140" cy="78" r="21" fill="var(--certified-bg)" stroke="var(--certified)" stroke-width="3" stroke-dasharray="5 4"/>
+<text x="140" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Loops</text>
+</g>
+<circle cx="156" cy="62" r="9" fill="var(--hazard)"/>
+<text x="156" y="66" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="11" font-weight="600" fill="var(--panel)">?</text>
+<g>
+<circle cx="235" cy="78" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="235" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Arrays</text>
+</g>
+<g opacity="0.28">
+<circle cx="330" cy="78" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="330" y="114" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-3)">Strings</text>
+</g>
+<g>
+<circle cx="140" cy="165" r="21" fill="var(--frontier-bg)" stroke="var(--frontier)" stroke-width="3"/>
+<text x="140" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">Functions</text>
+</g>
+<g opacity="0.28">
+<circle cx="235" cy="165" r="21" fill="var(--panel-sunk)" stroke="var(--locked)" stroke-width="3"/>
+<text x="235" y="201" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-3)">Structures</text>
+</g>
+<rect x="262" y="58" width="15" height="8" rx="1.5" fill="var(--panel)" stroke="var(--locked)" stroke-width="1.2" stroke-dasharray="2 2"/>
+<rect x="262" y="69" width="15" height="8" rx="1.5" fill="var(--panel)" stroke="var(--locked)" stroke-width="1.2" stroke-dasharray="2 2"/>
+<rect x="262" y="80" width="15" height="8" rx="1.5" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+<rect x="262" y="91" width="15" height="8" rx="1.5" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+<text x="270" y="52" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8.5" fill="var(--ink-3)">shown</text>
+</svg></figure>
+  <div class="txt">
+    <div class="eyebrow">Together</div>
+    <h2>The dynamic DAG</h2>
+    <p>Same map, same student. Five signals, each acting on a different part of the graph: nodes, an edge, the horizon, a rung, and the evidence behind a node.</p>
+  </div>
+</div>
+</div>
+
+<div class="where">
+<table>
+<thead><tr><th>Signal</th><th>Acts on</th><th>What changes</th><th>Layer</th></tr></thead>
+<tbody>
+<tr><td class="k">mastery</td><td>nodes</td><td>which topics are open</td><td>ABAC</td></tr>
+<tr><td class="k">calibration</td><td>an edge</td><td>how hard a prerequisite binds</td><td>CAC</td></tr>
+<tr><td class="k">cognitive load</td><td>the horizon</td><td>how far ahead is reachable</td><td>CAC</td></tr>
+<tr><td class="k">help-seeking</td><td>a rung</td><td>how much is shown at a node</td><td>CAC</td></tr>
+<tr><td class="k">rushing</td><td>the evidence</td><td>whether a node's color can be trusted</td><td>CAC → ABAC</td></tr>
+</tbody>
+</table>
+</div>
+<p class="foot">Two more signals act without changing the picture: a <strong>skip-ahead</strong> attempt at a locked node is written down as an access event, and <strong>persistence</strong> decides who is offered a way through when stuck. Nothing metacognitive ever opens a node the map keeps closed — it can only narrow.</p>
+</div>
+</body>
+</html>
