@@ -196,6 +196,11 @@ SECURITY_FEATURE_NAMES = (
     "judge_escalation",
     "context_gating",
     "earned_credentials",
+    # Cognitive Access Control over the curriculum graph. Off => cac_graph.evaluate
+    # returns the permissive no-op, so the layer is provably inert rather than
+    # merely quiet. Separate from cac_evidence_weight (Phase 5), which is the only
+    # part that can move mastery numbers.
+    "cac_graph",
 )
 
 _ABLATE_DISABLED = {

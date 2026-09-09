@@ -3152,18 +3152,17 @@ async def get_head_start(username: str, concept: str, _caller: dict = Depends(au
 
 # Canonical C-curriculum prerequisite edges among the dashboard skill topics.
 # Used as a reliable fallback when the graph DB is empty or names don't line up.
-SKILL_TOPICS = ["Variables", "Control Flow", "Functions", "Arrays", "Strings",
-                "Pointers", "Structures", "Memory Allocation", "File I/O"]
-CANONICAL_PREREQ_EDGES = [
-    ("Variables", "Control Flow"),
-    ("Variables", "Pointers"),
-    ("Control Flow", "Functions"),
-    ("Control Flow", "Arrays"),
-    ("Arrays", "Strings"),
-    ("Arrays", "Structures"),
-    ("Pointers", "Memory Allocation"),
-    ("Strings", "File I/O"),
-]
+# The coarse topic list and its prerequisite edges now live in cac_graph, which
+# is the component that reasons over the curriculum's shape. Imported rather than
+# restated so the dashboard's skill network and the access policy can never drift
+# apart — two copies of a DAG is two DAGs.
+from app.core.cac_graph import (  # noqa: E402
+    SKILL_TOPICS as _CAC_SKILL_TOPICS,
+    CANONICAL_PREREQ_EDGES as _CAC_PREREQ_EDGES,
+)
+
+SKILL_TOPICS = list(_CAC_SKILL_TOPICS)
+CANONICAL_PREREQ_EDGES = list(_CAC_PREREQ_EDGES)
 
 
 @app.get("/api/v1/skill-network/{username}")
