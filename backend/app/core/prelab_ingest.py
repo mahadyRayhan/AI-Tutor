@@ -645,6 +645,111 @@ def normalise_stored(entry: Any) -> dict:
             "concepts": [], "origin": "unknown", "verification": {}}
 
 
+def _norm_prompt(text: str) -> str:
+    """Whitespace- and case-insensitive form, for matching a prompt to its record."""
+    return " ".join((text or "").lower().split())
+
+
+def find_by_prompt(text: str, data: dict) -> dict | None:
+    """The stored prelab whose prompt this message is, or None.
+
+    The guided tutor needs the handout's CONCEPTS and RUBRIC, and the chat request
+    carries neither — only the prompt the learner was shown. Rather than have the
+    browser send the constraints (which it could then forge, and which would put
+    the grading criteria in a page the learner can read), the server recovers them
+    from prelab.json by matching the prompt it issued.
+
+    Matching is exact on normalised text, plus a containment fallback for the
+    handoff path, which prefixes the prompt with a routing tag. Deliberately not
+    fuzzy: a near-miss would attach the WRONG handout's constraints to a plan,
+    which is worse than attaching none.
+    """
+    needle = _norm_prompt(text)
+    if not needle:
+        return None
+    best = None
+    for ch in data.get("chapters", []):
+        for vid in ch.get("videos", []):
+            for entry in vid.get("prelabs", []):
+                rec = normalise_stored(entry)
+                prompt = _norm_prompt(rec["prompt"])
+                if not prompt:
+                    continue
+                # Where this prelab lives, so finished work can be filed under the
+                # right video without the client naming it (and without a second
+                # pass over the file at save time).
+                rec["video_filename"] = vid.get("filename") or ""
+                rec["video_title"] = vid.get("title") or ""
+                rec["chapter_title"] = ch.get("title") or ""
+                if prompt == needle:
+                    return rec
+                # The learner's message may carry a routing tag or trailing text.
+                # Require the stored prompt to be a substantial part of it so a
+                # one-line question cannot match a long handout.
+                if prompt in needle and len(prompt) >= 0.6 * len(needle):
+                    best = best or rec
+    return best
+
+
+def siblings(data: dict, video_filename: str) -> list[dict]:
+    """Every stored prelab attached to one lecture.
+
+    Uploading a handout drafts two or three variants of the same exercise, and
+    this is what makes them reachable: a student who finishes one can be offered
+    another on the same concepts rather than being told to come back later.
+    """
+    fname = (video_filename or "").strip()
+    if not fname:
+        return []
+    out = []
+    for ch in data.get("chapters", []):
+        for vid in ch.get("videos", []):
+            if (vid.get("filename") or "") != fname:
+                continue
+            for entry in vid.get("prelabs", []):
+                rec = normalise_stored(entry)
+                if rec["prompt"]:
+                    rec["video_filename"] = fname
+                    rec["video_title"] = vid.get("title") or ""
+                    rec["chapter_title"] = ch.get("title") or ""
+                    out.append(rec)
+    return out
+
+
+def next_unsolved(data: dict, video_filename: str, done_prompts) -> dict | None:
+    """A prelab on this lecture the student has not finished yet, or None.
+
+    `done_prompts` is compared on the normalised form, the same way a prompt is
+    matched back to its record, so a difference in whitespace cannot hand someone
+    the exercise they just completed.
+    """
+    seen = {_norm_prompt(p) for p in (done_prompts or [])}
+    for rec in siblings(data, video_filename):
+        if _norm_prompt(rec["prompt"]) not in seen:
+            return rec
+    return None
+
+
+def teaching_constraints(rec: dict) -> dict:
+    """The parts of a prelab that should shape guided practice.
+
+    `concepts` is the instructor's explicit statement of the allowed toolset, and
+    `rubric` carries the requirements — including the prohibitions, which is the
+    half that matters most here. "Do not write 15 separate print statements or
+    hard-code the sample output" is a constraint the tutor should be ENFORCING;
+    without it a guided plan can walk a student straight into the solution the
+    handout forbids.
+
+    `reference_solution` is deliberately NOT included. The rubric is printed in the
+    learner's own handout, so using it costs nothing; the worked solution is not,
+    and must never reach a prompt that produces text the learner sees.
+    """
+    return {
+        "concepts": list(rec.get("concepts") or []),
+        "rubric": list(rec.get("rubric") or []),
+    }
+
+
 def student_view(entry: Any) -> dict | None:
     """The part of a prelab a STUDENT may see.
 

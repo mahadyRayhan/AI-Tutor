@@ -398,6 +398,28 @@
             <div id="analyticsBody" style="overflow-x:auto;"></div>
         </div>
 
+        <!-- Prelab work captured from guided practice. There is no upload step
+             for the student: finishing the last guided step files the run, so
+             this is where the work arrives. -->
+        <div class="card full-width">
+            <h2>📝 Prelab Submissions <span id="prelabSubCount" style="color:#94a3b8; font-weight:400; font-size:13px;"></span></h2>
+            <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
+                Captured automatically when a student finishes a prelab in guided mode —
+                nothing is uploaded or submitted by hand. Open a row to read the whole
+                conversation that produced the code.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
+                <select id="prelabSubVideo" onchange="loadPrelabSubmissions()"
+                        style="flex:1; min-width:280px; padding:9px; background:#0f1115;
+                               border:1px solid #2a2f3a; border-radius:8px; color:#e2e8f0;">
+                    <option value="">All lectures</option>
+                </select>
+                <button class="btn" onclick="loadPrelabSubmissions()">Refresh</button>
+            </div>
+            <div id="prelabSubBody" style="overflow-x:auto;"></div>
+            <div id="prelabSubDetail" style="display:none; margin-top:16px;"></div>
+        </div>
+
         <div class="card full-width">
             <h2>🎬 Upload a Lecture Recording</h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 14px;">
@@ -2932,6 +2954,268 @@
         if (prev) sel.value = prev;
     }
 
+    // ── Prelab submissions ────────────────────────────────────────────────
+    // The list view deliberately shows attempts and total wrong turns next to the
+    // result: a student who reached the same code after nine failed steps has not
+    // done the same work as one who reached it after none, and that difference is
+    // invisible in a submitted file.
+    function fillPrelabSubPicker(catalog) {
+        const sel = document.getElementById('prelabSubVideo');
+        if (!sel) return;
+        const prev = sel.value;
+        const opts = ['<option value="">All lectures</option>'];
+        (catalog || []).forEach(ch => (ch.videos || []).forEach(v => {
+            if (v.filename) {
+                opts.push(`<option value="${escapeHtml(v.filename)}">Ch${ch.number} · ${escapeHtml(v.title)}</option>`);
+            }
+        }));
+        sel.innerHTML = opts.join('');
+        if (prev) sel.value = prev;
+    }
+
+    // The automatic verdict from compiling and running their program against the
+    // handout's own sample output. Wording and values are separate on purpose: a
+    // different printf phrasing is a style note, a different number is a defect.
+    function gradePill(status) {
+        switch (status) {
+            case 'pass':            return pill('Matches handout', 'good');
+            case 'wording_differs': return pill('Right values, different wording', 'warn');
+            case 'values_differ':   return pill('Wrong output', 'bad');
+            case 'compile_error':   return pill('Does not compile', 'bad');
+            case 'no_code':         return pill('No program', 'mute');
+            case 'not_gradable':    return pill('No sample to check', 'mute');
+            default:                return pill('Not checked', 'mute');
+        }
+    }
+
+    // Signals worth a second look before grading — never an accusation. A guided
+    // prelab is meant to be got wrong on the way through, so a run with no wrong
+    // turns at all is the one an instructor should read rather than skim.
+    function flagPills(raw) {
+        let flags = [];
+        try { flags = typeof raw === 'string' ? JSON.parse(raw || '[]') : (raw || []); }
+        catch (e) { flags = []; }
+        if (!flags.length) return '<span style="color:#475569;">—</span>';
+        return flags.map(f =>
+            `<span title="${escapeHtml(f.why || '')}" style="display:inline-block;
+                    padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600;
+                    color:#fbbf24; background:#fbbf2422; border:1px solid #fbbf2455;
+                    margin-right:4px; cursor:help;">⚑ ${escapeHtml(f.label || f.code)}</span>`
+        ).join('');
+    }
+
+    async function loadPrelabSubmissions() {
+        const body  = document.getElementById('prelabSubBody');
+        const count = document.getElementById('prelabSubCount');
+        const fname = (document.getElementById('prelabSubVideo') || {}).value || '';
+        document.getElementById('prelabSubDetail').style.display = 'none';
+        body.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading…</div>';
+        try {
+            const qs = fname ? `?video_filename=${encodeURIComponent(fname)}` : '';
+            const res = await fetch(`${API_URL}/api/v1/prelab/submissions${qs}`, { headers: TEACHER_HDR() });
+            if (!res.ok) throw new Error(res.status);
+            const d = await res.json();
+            count.textContent = d.count ? `(${d.count})` : '';
+
+            if (!d.count) {
+                body.innerHTML = `<div style="color:#64748b; font-size:13px; padding:10px 0;">
+                    No prelab work captured yet${fname ? ' for this lecture' : ''}. A submission appears
+                    here the moment a student finishes the last step of a prelab in guided mode.</div>`;
+                return;
+            }
+
+            const rows = d.submissions.map(r => {
+                const who = escapeHtml(r.email || r.username || '—');
+                const when = r.updated_at ? String(r.updated_at).slice(0, 16) : '—';
+                const done = r.has_reflection
+                    ? pill('Solved + explained', 'good')
+                    : pill('Solved', 'warn');
+                const verdict = gradePill(r.grade_status);
+                const mark = (r.teacher_score === null || r.teacher_score === undefined)
+                    ? '<span style="color:#475569;">—</span>'
+                    : `<strong>${r.teacher_score}</strong>`;
+                const tries = (r.attempt_count || 1) > 1
+                    ? `<span style="color:#fbbf24;">${r.attempt_count} attempts</span>` : '1';
+                return `<tr>
+                    <td>${who}</td>
+                    <td style="color:#94a3b8;">${escapeHtml(r.video_title || r.video_filename || '—')}</td>
+                    <td style="color:#94a3b8; max-width:320px; overflow:hidden; text-overflow:ellipsis;
+                               white-space:nowrap;" title="${escapeHtml(r.prelab_prompt || '')}">
+                        ${escapeHtml((r.prelab_prompt || '').slice(0, 90))}</td>
+                    <td style="text-align:center;">${r.steps_passed || 0}/${r.steps_total || 0}</td>
+                    <td style="text-align:center;">${r.total_fails || 0}</td>
+                    <td style="text-align:center;">${tries}</td>
+                    <td>${verdict}</td>
+                    <td>${done}</td>
+                    <td>${flagPills(r.flags)}</td>
+                    <td style="text-align:center;">${mark}</td>
+                    <td style="color:#64748b; font-size:12px;">${when}</td>
+                    <td><button class="btn" style="padding:4px 10px; font-size:12px;"
+                                onclick="openPrelabSubmission(${r.id})">Open</button></td>
+                </tr>`;
+            }).join('');
+
+            body.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead><tr style="text-align:left; color:#64748b; font-size:11px;
+                                  text-transform:uppercase; letter-spacing:.04em;">
+                    <th>Student</th><th>Lecture</th><th>Prelab</th>
+                    <th style="text-align:center;">Steps</th>
+                    <th style="text-align:center;">Wrong turns</th>
+                    <th style="text-align:center;">Attempts</th>
+                    <th>Output check</th><th>Status</th>
+                    <th>Review</th>
+                    <th style="text-align:center;">Mark</th>
+                    <th>Updated</th><th></th>
+                </tr></thead><tbody>${rows}</tbody></table>`;
+        } catch (e) {
+            body.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load submissions (${e.message}).</div>`;
+        }
+    }
+
+    // What the automatic check actually disagreed about — the compiler's message,
+    // or the specific lines whose output differed. A bare verdict is not enough to
+    // grade from, and an instructor should not have to re-run the program to see it.
+    function gradeDetailHtml(d) {
+        const det = d.grade_detail || {};
+        if (d.grade_status === 'compile_error') {
+            return `<pre style="margin:0; white-space:pre-wrap; font-size:12px; color:#fca5a5;
+                        max-height:180px; overflow:auto;">${escapeHtml(det.error || '')}</pre>`;
+        }
+        if (d.grade_status === 'pass') {
+            return `<div style="color:#64748b;">Every line matched, including the wording.</div>`;
+        }
+        if (!det.rows || !det.rows.length) {
+            return `<div style="color:#64748b;">${escapeHtml(det.reason || 'Nothing to compare.')}</div>`;
+        }
+        const rows = det.rows.map(r => `<tr>
+            <td style="color:#64748b; padding:2px 8px 2px 0;">${r.line}</td>
+            <td style="color:#94a3b8; padding:2px 8px 2px 0;">${escapeHtml(r.expected === null ? '(no line)' : r.expected)}</td>
+            <td style="color:#fca5a5; padding:2px 0;">${escapeHtml(r.actual === null ? '(no line)' : r.actual)}</td>
+        </tr>`).join('');
+        return `<div style="color:#64748b; margin-bottom:6px;">
+                    ${det.expected_lines} line(s) expected, ${det.actual_lines} printed.</div>
+                <div style="overflow-x:auto;"><table style="font-size:12px; border-collapse:collapse;">
+                <thead><tr style="color:#64748b; text-align:left;">
+                    <th style="padding-right:8px;">#</th><th style="padding-right:8px;">Handout</th>
+                    <th>Their program</th></tr></thead>
+                <tbody>${rows}</tbody></table></div>`;
+    }
+
+    async function savePrelabGrade(id) {
+        const score = document.getElementById('gradeScore').value;
+        const note  = document.getElementById('gradeNote').value;
+        const flag  = document.getElementById('gradeSaved');
+        try {
+            const res = await fetch(`${API_URL}/api/v1/prelab/submissions/${id}/grade`, {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/json' }, TEACHER_HDR()),
+                body: JSON.stringify({ score: score === '' ? null : parseFloat(score), note: note })
+            });
+            if (!res.ok) throw new Error(res.status);
+            flag.textContent = 'Saved';
+            setTimeout(() => { flag.textContent = ''; }, 2000);
+            loadPrelabSubmissions();
+        } catch (e) {
+            flag.style.color = '#f87171';
+            flag.textContent = `Failed (${e.message})`;
+        }
+    }
+
+    async function openPrelabSubmission(id) {
+        const box = document.getElementById('prelabSubDetail');
+        box.style.display = 'block';
+        box.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading transcript…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/prelab/submissions/${id}`, { headers: TEACHER_HDR() });
+            if (!res.ok) throw new Error(res.status);
+            const d = await res.json();
+
+            const turns = (d.transcript || []).map(m => {
+                const student = (m.role || '').toLowerCase() === 'user';
+                return `<div style="margin-bottom:10px; padding:9px 12px; border-radius:8px;
+                             background:${student ? '#152033' : '#0f1115'};
+                             border:1px solid ${student ? '#2b4267' : '#2a2f3a'};">
+                    <div style="font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+                                color:${student ? '#60a5fa' : '#64748b'}; margin-bottom:4px;">
+                        ${student ? 'Student' : 'Tutor'}</div>
+                    <div style="white-space:pre-wrap; font-size:12.5px; line-height:1.5;
+                                color:#cbd5e1;">${escapeHtml(m.content || '')}</div>
+                </div>`;
+            }).join('') || '<div style="color:#64748b;">No transcript stored.</div>';
+
+            box.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;
+                            margin-bottom:12px; gap:10px; flex-wrap:wrap;">
+                    <h3 style="margin:0; font-size:15px;">${escapeHtml(d.email || d.username || '')}
+                        <span style="color:#64748b; font-weight:400;">· ${escapeHtml(d.video_title || '')}</span></h3>
+                    <button class="btn" style="padding:4px 10px; font-size:12px;"
+                            onclick="document.getElementById('prelabSubDetail').style.display='none'">Close</button>
+                </div>
+                <div style="color:#94a3b8; font-size:12.5px; margin-bottom:14px;">
+                    ${escapeHtml(d.prelab_prompt || '')}</div>
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px;">
+                    <div>
+                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
+                                    letter-spacing:.04em; margin-bottom:6px;">Final code</div>
+                        <pre style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px;
+                                    padding:12px; overflow-x:auto; font-size:12.5px; margin:0;
+                                    color:#cbd5e1;">${escapeHtml(d.final_code || '(no code block found)')}</pre>
+                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
+                                    letter-spacing:.04em; margin:14px 0 6px;">Automatic check</div>
+                        <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px;
+                                    padding:12px; font-size:12.5px; color:#cbd5e1;">
+                            <div style="margin-bottom:8px;">${gradePill(d.grade_status)}</div>
+                            ${gradeDetailHtml(d)}
+                        </div>
+
+                        ${(d.flags && d.flags.length) ? `
+                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
+                                    letter-spacing:.04em; margin:14px 0 6px;">Worth a look</div>
+                        <div style="background:#1c1708; border:1px solid #fbbf2444; border-radius:8px;
+                                    padding:12px; font-size:12.5px; color:#fcd34d;">
+                            ${d.flags.map(f => `<div style="margin-bottom:6px;">
+                                <strong>${escapeHtml(f.label || f.code)}</strong>
+                                <div style="color:#94a3b8; margin-top:2px;">${escapeHtml(f.why || '')}</div>
+                            </div>`).join('')}
+                            <div style="color:#64748b; margin-top:8px; font-size:11.5px;">
+                                A signal to read the transcript, not a finding. The conversation
+                                on the right is the evidence.</div>
+                        </div>` : ''}
+
+                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
+                                    letter-spacing:.04em; margin:14px 0 6px;">Your mark</div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <input id="gradeScore" type="number" step="0.5" placeholder="Score"
+                                   value="${d.teacher_score === null || d.teacher_score === undefined ? '' : d.teacher_score}"
+                                   style="width:90px; padding:8px; background:#0f1115; border:1px solid #2a2f3a;
+                                          border-radius:8px; color:#e2e8f0;">
+                            <input id="gradeNote" type="text" placeholder="Note to yourself (optional)"
+                                   value="${escapeHtml(d.teacher_note || '')}"
+                                   style="flex:1; min-width:180px; padding:8px; background:#0f1115;
+                                          border:1px solid #2a2f3a; border-radius:8px; color:#e2e8f0;">
+                            <button class="btn" onclick="savePrelabGrade(${d.id})">Save</button>
+                            <span id="gradeSaved" style="font-size:12px; color:#34d399;"></span>
+                        </div>
+
+                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
+                                    letter-spacing:.04em; margin:14px 0 6px;">Their own explanation</div>
+                        <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:8px;
+                                    padding:12px; font-size:12.5px; color:#cbd5e1; white-space:pre-wrap;">${
+                            escapeHtml(d.reflection || 'Not written — the student stopped before the summary.')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:11px; color:#64748b; text-transform:uppercase;
+                                    letter-spacing:.04em; margin-bottom:6px;">How they got there</div>
+                        <div style="max-height:520px; overflow-y:auto; padding-right:4px;">${turns}</div>
+                    </div>
+                </div>`;
+            box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (e) {
+            box.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load transcript (${e.message}).</div>`;
+        }
+    }
+
     async function loadVideoAnalytics() {
         const fname = document.getElementById('analyticsVideo').value;
         const body = document.getElementById('analyticsBody');
@@ -3309,11 +3593,19 @@
                  on the lines below. You can fix the handout and re-upload, or save it anyway —
                  it is left unticked so saving it is a deliberate choice.
                </div>`
+            : (d.uncovered_concepts && d.uncovered_concepts.length
+                ? `<div style="margin-top:10px; padding:10px; border-radius:8px; background:#07598533;
+                              border:1px solid #38bdf855; color:#7dd3fc; font-size:12px; line-height:1.6;">
+                     <strong>Ahead of the recordings.</strong> These concepts have no completed
+                     lecture yet: ${d.uncovered_concepts.map(escapeHtml).join(', ')}.<br>
+                     The guided tutor keeps students inside the concept list, so they will be
+                     coached with material the class has not covered. Fine if that is intended.
+                   </div>`
             : (!d.compiler_available
                 ? `<div style="margin-top:10px; padding:8px 10px; border-radius:8px; background:#78350f33;
                               border:1px solid #fbbf2455; color:#fcd34d; font-size:12px;">
                      No C compiler on this server, so nothing below was verified by running it.
-                   </div>` : '');
+                   </div>` : ''));
 
         host.innerHTML = banner +
             all.map((sp, i) => prelabCard(sp, i)).join('') + `
@@ -3406,6 +3698,8 @@
             renderUnassigned();
             renderChapters();
             fillAnalyticsPicker(cat.chapters);
+            fillPrelabSubPicker(cat.chapters);
+            loadPrelabSubmissions();
         } catch (e) {
             console.error('Content load failed', e);
         }

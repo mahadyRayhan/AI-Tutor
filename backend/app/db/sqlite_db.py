@@ -591,6 +591,57 @@ class SQLiteDB:
                 )
             """)
 
+            # Auto-captured prelab work. A guided-practice run that reaches the
+            # last step IS the submission — the student never uploads anything,
+            # so the grader needs the whole conversation, not just final code.
+            # UNIQUE(username, video_filename, prelab_prompt) makes a re-attempt
+            # overwrite rather than accumulate: the row is the student's current
+            # standing on that prelab, and attempt_count records the retries.
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS prelab_submission (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username       TEXT NOT NULL,
+                    video_filename TEXT,
+                    video_title    TEXT,
+                    chapter_title  TEXT,
+                    prelab_prompt  TEXT NOT NULL,
+                    session_id     TEXT,
+                    status         TEXT,      -- 'solved' | 'reflected'
+                    steps_total    INTEGER,
+                    steps_passed   INTEGER,
+                    total_fails    INTEGER,
+                    final_code     TEXT,      -- last C block the student submitted
+                    reflection     TEXT,      -- their own summary, when they write it
+                    transcript     TEXT,      -- full chat history, JSON
+                    grade_status   TEXT,      -- 'pass' | 'values_differ' | 'wording_differs'
+                                              -- | 'compile_error' | 'no_code' | 'not_gradable'
+                    grade_detail   TEXT,      -- JSON: the failing lines, or the compiler error
+                    flags          TEXT,      -- JSON: integrity signals worth a second look
+                    teacher_score  REAL,      -- the instructor's own mark, when they set one
+                    teacher_note   TEXT,
+                    attempt_count  INTEGER DEFAULT 1,
+                    solved_at      TIMESTAMP,
+                    updated_at     TIMESTAMP,
+                    UNIQUE(username, video_filename, prelab_prompt)
+                )
+            """)
+
+            # The grading columns arrived after the table, and a database created
+            # in between has the table without them — CREATE TABLE IF NOT EXISTS
+            # will not add a column to a table that already exists.
+            for col, definition in [
+                ("grade_status",  "TEXT"),
+                ("grade_detail",  "TEXT"),
+                ("flags",         "TEXT"),
+                ("teacher_score", "REAL"),
+                ("teacher_note",  "TEXT"),
+            ]:
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE prelab_submission ADD COLUMN {col} {definition}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
             # Safe catch to add the column to existing databases without breaking.
             # NOTE: do NOT re-import sqlite3 here. It is already imported at module
             # level, and a function-local `import sqlite3` rebinds the name for the

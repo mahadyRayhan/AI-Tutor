@@ -4624,6 +4624,28 @@ async def upload_prelab_handout(
         raise HTTPException(status_code=502,
                             detail=f"Could not process the handout: {e}")
 
+    # Coverage check: does the handout practise anything the class has not reached?
+    # Advisory, like the sample-output check — a prelab may legitimately run ahead
+    # of the recordings, and only the instructor knows whether it should.
+    taught = []
+    try:
+        for r in db.fetch_all(
+                "SELECT title FROM video_catalog WHERE status='complete' "
+                "AND filename IS NOT NULL AND filename != ''"):
+            taught.append((r["title"] or "").lower())
+    except Exception as e:
+        logger.debug(f"[prelab] catalog coverage lookup failed: {e}")
+
+    def _covered(concept: str) -> bool:
+        # A concept counts as taught when a recorded lecture's title shares a
+        # substantive word with it. Deliberately loose: this is a prompt to the
+        # instructor, not a gate, and a false "not covered" costs more attention
+        # than a missed one.
+        words = {w for w in re.findall(r"[a-z]{4,}", concept.lower())}
+        return any(w in title for w in words for title in taught)
+
+    uncovered = [c for c in checked.concepts if not _covered(c)] if taught else []
+
     status = checked.verification.get("status")
     logger.info(f"[prelab] ingested {file.filename} for {video_filename}: "
                 f"{status}, {len(drafts)} variant(s)")
@@ -4634,10 +4656,56 @@ async def upload_prelab_handout(
         # A failed check is ADVISORY. The teacher wrote the handout and may have a
         # reason the checker cannot see, so it is surfaced prominently and left to
         # them — the review panel just does not pre-select a problem that failed.
+        "uncovered_concepts": uncovered,
         "has_warning": status in ("mismatch", "format_differs", "error",
-                                  "unavailable", "no_sample"),
+                                  "unavailable", "no_sample") or bool(uncovered),
         "compiler_available": prelab_ingest.compiler_path() is not None,
     }
+
+
+class PrelabGradeRequest(BaseModel):
+    score: float = None
+    note: str = ""
+
+
+@app.post("/api/v1/prelab/submissions/{sub_id}/grade")
+async def grade_prelab_submission(sub_id: int, req: PrelabGradeRequest,
+                                  _t: dict = Depends(verify_teacher)):
+    """Record the instructor's mark on one submission.
+
+    The automatic verdict stored at capture time is evidence — it says whether the
+    program builds and matches the handout's output. It is not the grade, and it
+    never overwrites this.
+    """
+    from app.core import prelab_submission
+    if not prelab_submission.set_teacher_grade(sub_id, req.score, req.note):
+        raise HTTPException(status_code=404, detail="No such submission.")
+    return {"ok": True, "id": sub_id, "score": req.score}
+
+
+@app.get("/api/v1/prelab/submissions")
+async def list_prelab_submissions(video_filename: str = None, username: str = None,
+                                  _t: dict = Depends(verify_teacher)):
+    """Prelab work captured automatically from guided practice.
+
+    There is no upload step for the student: reaching the last guided step files
+    the run. This is the grader's list view, so transcripts are left out and only
+    their size is reported — a class of them would be megabytes.
+    """
+    from app.core import prelab_submission
+    rows = prelab_submission.list_submissions(video_filename=video_filename,
+                                              username=username)
+    return {"count": len(rows), "submissions": rows}
+
+
+@app.get("/api/v1/prelab/submissions/{sub_id}")
+async def get_prelab_submission(sub_id: int, _t: dict = Depends(verify_teacher)):
+    """One submission with the full conversation that produced it."""
+    from app.core import prelab_submission
+    rec = prelab_submission.get_submission(sub_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="No such submission.")
+    return rec
 
 
 @app.post("/api/v1/video/prelab/commit")
