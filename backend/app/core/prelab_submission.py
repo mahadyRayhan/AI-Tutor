@@ -384,6 +384,38 @@ def solved_prompts(username: str, video_filename: str = None) -> List[str]:
     return [r["prelab_prompt"] for r in rows]
 
 
+def lecture_options() -> List[Dict]:
+    """Lectures for the submissions filter, keyed the way submissions are filed.
+
+    Derived from prelab.json, NOT the video catalogue. The two disagree: a slot's
+    catalogue filename changes when a teacher re-attaches a recording, while
+    prelab.json keeps the filename its prelabs were saved under — and capture files
+    a submission by the latter. A picker built from the catalogue therefore offered
+    a filename no row carried, so selecting any single lecture returned nothing
+    while "All lectures" worked.
+    """
+    from app.core import prelab_ingest
+
+    out, seen = [], set()
+    for ch in prelab_ingest.load_prelab_file().get("chapters", []):
+        for vid in ch.get("videos", []):
+            fname = vid.get("filename") or ""
+            if not fname or fname in seen or not vid.get("prelabs"):
+                continue
+            seen.add(fname)
+            out.append({"filename": fname, "title": vid.get("title") or fname,
+                        "chapter": ch.get("number")})
+    # Work captured under a filename prelab.json no longer lists still has to be
+    # reachable, or it becomes invisible to the grader.
+    for r in list_submissions():
+        f = r.get("video_filename") or ""
+        if f and f not in seen:
+            seen.add(f)
+            out.append({"filename": f, "title": r.get("video_title") or f,
+                        "chapter": None})
+    return out
+
+
 def get_submission(sub_id: int) -> Optional[Dict]:
     """One submission with its full transcript, for the grading view."""
     row = db.fetch_one(

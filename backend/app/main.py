@@ -4709,7 +4709,8 @@ async def list_prelab_submissions(video_filename: str = None, username: str = No
     from app.core import prelab_submission
     rows = prelab_submission.list_submissions(video_filename=video_filename,
                                               username=username)
-    return {"count": len(rows), "submissions": rows}
+    return {"count": len(rows), "submissions": rows,
+            "lectures": prelab_submission.lecture_options()}
 
 
 @app.get("/api/v1/prelab/submissions/{sub_id}")

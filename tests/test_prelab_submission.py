@@ -484,3 +484,49 @@ def test_regrade_recovers_a_submission_whose_check_was_wrong(ps, monkeypatch):
     assert ps.regrade(rid) == "pass"
     assert ps.list_submissions()[0]["grade_status"] == "pass"
     assert ps.regrade(999999) is None
+
+
+# --- the lecture filter -------------------------------------------------------
+#
+# The bug this pins: the picker was built from the video catalogue while rows are
+# filed by prelab.json's filename. When a teacher re-attached a recording the two
+# diverged, and every single-lecture selection returned nothing while "All
+# lectures" still worked — a filter that silently hides work rather than erroring.
+
+def test_every_lecture_option_is_a_key_submissions_are_actually_filed_under(ps, monkeypatch):
+    monkeypatch.setattr("app.core.prelab_ingest.load_prelab_file", lambda: CATALOG)
+    ps.save_solved("s1", "sess-1", _plan(), MESSAGES)
+    opts = ps.lecture_options()
+    files = [o["filename"] for o in opts]
+    assert "C_Control_Structures.mp4" in files
+    # the option the row was filed under must return that row
+    assert len(ps.list_submissions(video_filename="C_Control_Structures.mp4")) == 1
+
+
+def test_lectures_without_prelabs_are_not_offered(ps, monkeypatch):
+    """A slot with no prelabs can never have a submission; offering it is noise."""
+    catalog = {"chapters": [{"number": 1, "title": "Ch 1", "videos": [
+        {"filename": "has.mp4", "title": "Has prelabs", "prelabs": [{"prompt": "p"}]},
+        {"filename": "none.mp4", "title": "No prelabs", "prelabs": []},
+    ]}]}
+    monkeypatch.setattr("app.core.prelab_ingest.load_prelab_file", lambda: catalog)
+    files = [o["filename"] for o in ps.lecture_options()]
+    assert files == ["has.mp4"]
+
+
+def test_work_filed_under_a_dropped_filename_stays_reachable(ps, monkeypatch):
+    """If prelab.json stops listing a file, its captured work must not vanish."""
+    monkeypatch.setattr("app.core.prelab_ingest.load_prelab_file",
+                        lambda: {"chapters": []})
+    ps.save_solved("s1", "sess-1", _plan(), MESSAGES)
+    opts = ps.lecture_options()
+    assert [o["filename"] for o in opts] == ["C_Control_Structures.mp4"]
+    assert opts[0]["title"] == "C Control Structures"
+
+
+def test_a_filename_is_offered_once(ps, monkeypatch):
+    monkeypatch.setattr("app.core.prelab_ingest.load_prelab_file", lambda: CATALOG)
+    ps.save_solved("s1", "sess-1", _plan(), MESSAGES)
+    ps.save_solved("s2", "sess-2", _plan(), MESSAGES)
+    files = [o["filename"] for o in ps.lecture_options()]
+    assert len(files) == len(set(files))
