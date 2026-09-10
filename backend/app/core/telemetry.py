@@ -348,13 +348,24 @@ def log_cac_access(username: str, session_id: str, concept_asked: str,
         from app.core import config
         sid = get_study_id(username)
         a = decision.audit()
+        # `in_region` is read from beyond_region, NOT inferred from "did CAC say
+        # anything". The inferred form was correct only while the region check was
+        # the sole thing that could speak; from Phase 3 a horizon contraction also
+        # produces reasons, and pooling the two would have silently mixed "reached
+        # past the frontier" with "was overloaded" under a column named for the
+        # first. Region and horizon are stored separately because they are separate
+        # findings, and E14 reads one of them.
+        edge = a.get("revealed_edge")
         db.execute(
             "INSERT INTO cac_access_event "
-            "(study_id, username, session_id, concept_asked, in_region, redirect_to, "
-            " rung_cap, deviation_type, reasons, ablation_config, ts_utc) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(study_id, username, session_id, concept_asked, in_region, in_horizon, "
+            " revealed_edge, redirect_to, rung_cap, deviation_type, reasons, "
+            " ablation_config, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (sid, username, session_id, concept_asked,
-             1 if a["redirect_to"] is None and not a["reasons"] else 0,
+             0 if a.get("beyond_region") else 1,
+             1 if a.get("in_horizon", True) else 0,
+             json.dumps(edge) if edge else None,
              a["redirect_to"], a["rung_cap"], deviation_type,
              json.dumps(a["reasons"]), json.dumps(config.active_ablation_config()),
              _now()),
@@ -370,6 +381,10 @@ def cac_probe_stats(username: str, session_id: str = None) -> dict:
     Returns a rate as well as a count: a student who asks a hundred questions and
     over-reaches twice is not the same as one who over-reaches on both of their
     only two turns, and a bare count cannot tell them apart.
+
+    Counts REGION probes only. A horizon contraction is a statement about the
+    learner's load, not about them reaching past what they have earned, so it must
+    not inflate an adversary signal — an overloaded honest student is not an A1.
     """
     try:
         where = "username=?"

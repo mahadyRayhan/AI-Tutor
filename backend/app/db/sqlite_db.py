@@ -383,6 +383,8 @@ class SQLiteDB:
                     session_id       TEXT,
                     concept_asked    TEXT,
                     in_region        INTEGER,
+                    in_horizon       INTEGER,
+                    revealed_edge    TEXT,
                     redirect_to      TEXT,
                     rung_cap         INTEGER,
                     deviation_type   TEXT,
@@ -661,6 +663,21 @@ class SQLiteDB:
                 self.conn.execute("ALTER TABLE response_log ADD COLUMN weak_tier TEXT")
             except sqlite3.OperationalError:
                 pass
+
+            # CAC Phase 3. Two separate narrowings can now fire on one turn — the
+            # region check (reached past the frontier) and the horizon check
+            # (overloaded, reaching too far ahead) — and they must not be pooled.
+            # `in_region` used to be inferred from "did CAC say anything at all",
+            # which stopped meaning "in region" the moment a second signal could
+            # speak; it is now read from beyond_region directly. `revealed_edge`
+            # is stored structurally rather than left inside the reason prose so
+            # policy leakage (E15) is queryable without parsing text.
+            for _col, _type in (("in_horizon", "INTEGER"), ("revealed_edge", "TEXT")):
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE cac_access_event ADD COLUMN {_col} {_type}")
+                except sqlite3.OperationalError:
+                    pass
 
             # Per-turn multi-turn risk (Eqs. 9-11) on EVERY turn, not only blocks.
             # Required for escalation recall and any tau_judge sweep; without it the

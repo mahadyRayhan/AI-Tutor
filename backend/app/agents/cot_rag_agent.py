@@ -2351,6 +2351,23 @@ class ChainOfThoughtRAGAgent:
                     self.logger.info(
                         f"🎚️ [CAC] disclosure capped at {_cac_dec.rung_cap.label} "
                         f"for {username}: {'; '.join(_cac_dec.reasons)}")
+
+                    # Phase 3 — horizon exceeded: teach the nearest reachable
+                    # prerequisite instead. The request is REDIRECTED, never
+                    # refused, so the turn still teaches something; the swap is
+                    # named in the response rather than performed silently.
+                    if not _cac_dec.in_horizon and _cac_dec.redirect_to:
+                        state.redirect_from = (state.entities[0]
+                                               if state.entities else "")
+                        state.redirect_to = _cac_dec.redirect_to
+                        # Retrieval must follow the substitution, or the response
+                        # would be grounded in chunks about the topic we declined
+                        # to teach.
+                        state.entities = [_cac_dec.redirect_to]
+                        state.query = f"Explain {_cac_dec.redirect_to}"
+                        self.logger.info(
+                            f"↩️ [CAC] horizon redirect for {username}: "
+                            f"'{state.redirect_from}' → '{state.redirect_to}'")
             except Exception as e:
                 # Fail open — this layer only narrows, so a fault here must never
                 # become a block. Matches cac_graph.evaluate()'s own contract.

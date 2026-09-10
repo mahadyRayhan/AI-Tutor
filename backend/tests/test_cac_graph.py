@@ -21,6 +21,7 @@ from app.core.cac_graph import (  # noqa: E402
     CANONICAL_PREREQ_EDGES, CURRICULUM, SKILL_TOPICS,
     Decision, LearnerView, Rung, Topology, decide,
     SECTION_MIN_RUNG, disclosure_directive, section_allowed,
+    LOAD_HORIZON, _horizon_limit, redirect_preamble,
 )
 
 SEEDS = range(200)
@@ -268,8 +269,8 @@ def test_audit_record_is_flat_and_complete():
                region_gate=True)
     a = d.audit()
     assert a["rung_label"] == "orienting answer"
-    assert set(a) == {"rung_cap", "rung_label", "in_horizon",
-                      "edge_ok", "redirect_to", "beyond_region", "reasons"}
+    assert set(a) == {"rung_cap", "rung_label", "in_horizon", "edge_ok",
+                      "redirect_to", "beyond_region", "revealed_edge", "reasons"}
     assert a["reasons"], "an audit record with no reason explains nothing"
 
 
@@ -447,3 +448,208 @@ def test_section_permission_is_monotone_in_the_rung():
         allowed = [r for r in Rung if section_allowed(header, r)]
         assert allowed == sorted(allowed), header
         assert Rung.CODE in allowed, f"{header} unreachable even at full disclosure"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Phase 3 — cognitive load contracts the horizon
+#
+# Plan acceptance: "a depth-2 query under high load returns the depth-1
+# prerequisite, and the audit row names the revealed edge."
+#
+# The curriculum chain used below is Variables → Control Flow → Arrays →
+# Strings → File I/O, so with {Variables, Control Flow} certified the frontier
+# holds Arrays and the distances are Arrays 0 · Strings 1 · File I/O 2.
+# ══════════════════════════════════════════════════════════════════════════
+
+READY = frozenset({"Variables", "Control Flow"})
+
+
+def _loaded(load, certified=READY):
+    return LearnerView("u", certified, cognitive_load=load)
+
+
+def test_horizon_limit_thresholds():
+    assert _horizon_limit(0.85) == 1        # > 0.7
+    assert _horizon_limit(0.60) == 2        # > 0.5
+    assert _horizon_limit(0.50) is None     # boundary is exclusive
+    assert _horizon_limit(0.10) is None
+
+
+def test_high_load_redirects_two_hops_to_one_hop():
+    """The plan's stated acceptance criterion, on the real curriculum."""
+    d = decide(_loaded(0.85), ["File I/O"])
+    assert d.in_horizon is False
+    assert d.redirect_to == "Strings"       # depth-1, not all the way back
+    assert d.revealed_edge == ("Strings", "File I/O")
+
+
+def test_moderate_load_allows_two_hops():
+    """Two hops is within the 0.5–0.7 limit, so the horizon must not contract.
+
+    `redirect_to` is deliberately NOT asserted here: the Phase 0 region advisory
+    already names a suggested prerequisite for any beyond-frontier ask, and that
+    is information offered alongside a full answer, not a restriction. What marks
+    a horizon contraction is `in_horizon` falling and an edge being revealed.
+    """
+    d = decide(_loaded(0.60), ["File I/O"])
+    assert d.in_horizon is True
+    assert d.revealed_edge is None
+
+
+def test_low_load_never_contracts_the_horizon():
+    """Reaching ahead is what curiosity looks like; it must not fire on it."""
+    d = decide(_loaded(0.10), ["File I/O"])
+    assert d.in_horizon is True and d.revealed_edge is None
+
+
+def test_frontier_request_survives_even_at_maximum_load():
+    """Load restricts REACH, not the thing they are actually ready for."""
+    d = decide(_loaded(1.0), ["Arrays"])
+    assert d.in_horizon is True and d.redirect_to is None
+
+
+def test_horizon_cold_start_is_not_suspicion():
+    assert decide(LearnerView("u", READY), ["File I/O"]).in_horizon is True
+
+
+def test_horizon_signal_is_switchable():
+    """Ablating cac_horizon disconnects the contraction, not the region advisory."""
+    d = decide(_loaded(0.95), ["File I/O"], signals=set())
+    assert d.in_horizon is True
+    assert d.revealed_edge is None
+
+
+def test_redirect_never_becomes_a_refusal():
+    """A refusal that does not teach is a pedagogical failure, not a win."""
+    d = decide(_loaded(0.95), ["File I/O"])
+    assert d.rung_cap > Rung.NONE, "horizon must never refuse outright"
+    assert d.redirect_to, "a contracted horizon must still name something to teach"
+
+
+def test_revealed_edge_is_recorded_for_e15():
+    """Policy leakage has to be measurable without re-instrumenting this path."""
+    d = decide(_loaded(0.85), ["File I/O"])
+    assert d.audit()["revealed_edge"] == ["Strings", "File I/O"]
+    assert any("reveals edge" in r for r in d.reasons)
+
+
+def test_no_redirect_means_no_revealed_edge():
+    assert decide(_loaded(0.1), ["File I/O"]).audit()["revealed_edge"] is None
+
+
+def test_redirect_preamble_names_both_topics():
+    text = redirect_preamble("File I/O", "Strings")
+    assert "File I/O" in text and "Strings" in text
+    assert "Do NOT teach File I/O" in text
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_load_only_ever_narrows(seed):
+    """Over random DAGs: adding load never widens the horizon or raises the rung."""
+    rng = random.Random(seed)
+    topo = random_dag(rng)
+    nodes = sorted(topo.nodes)
+    k = frozenset(rng.sample(nodes, rng.randint(0, len(nodes))))
+    ask = [rng.choice(nodes)]
+    base = decide(LearnerView("u", k), ask, topo=topo)
+    loaded = decide(LearnerView("u", k, cognitive_load=rng.choice([0.55, 0.75, 0.99])),
+                    ask, topo=topo)
+    assert loaded.in_horizon <= base.in_horizon, f"widened horizon at seed {seed}"
+    assert loaded.rung_cap <= base.rung_cap, f"raised rung at seed {seed}"
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_redirect_target_is_always_reachable(seed):
+    """Never redirect a learner to something they also cannot reach.
+
+    A redirect that lands outside the horizon would send them in a circle, so the
+    target must sit within d_max and must not be something already certified.
+    """
+    rng = random.Random(seed)
+    topo = random_dag(rng)
+    nodes = sorted(topo.nodes)
+    k = frozenset(rng.sample(nodes, rng.randint(0, len(nodes))))
+    load = rng.choice([0.75, 0.95])
+    d = decide(LearnerView("u", k, cognitive_load=load), [rng.choice(nodes)], topo=topo)
+    if d.redirect_to and not d.beyond_region:
+        frontier = topo.frontier(set(k))
+        hops = topo.hops_from(frontier, d.redirect_to)
+        assert hops is not None and hops <= _horizon_limit(load), \
+            f"redirect out of horizon at seed {seed}"
+        assert d.redirect_to not in k, f"redirected to an earned topic at seed {seed}"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Phase 3 audit — region and horizon are separate findings
+#
+# Before Phase 3, `in_region` was inferred from "did CAC say anything at all",
+# which was correct only while the region check was the sole signal that could
+# speak. These tests pin the two apart so a later signal cannot silently pool
+# them again under a column named for one of them.
+# ══════════════════════════════════════════════════════════════════════════
+
+def _row(username):
+    from app.db.sqlite_db import db
+    return db.fetch_one(
+        "SELECT in_region, in_horizon, revealed_edge, redirect_to, reasons "
+        "FROM cac_access_event WHERE username=? ORDER BY id DESC LIMIT 1",
+        (username,))
+
+
+def test_audit_row_records_the_revealed_edge_structurally(probe_user):
+    """E15 must be queryable without parsing prose out of the reason text."""
+    from app.core import telemetry
+    import json as _json
+    view = LearnerView(probe_user, READY, cognitive_load=0.85)
+    telemetry.log_cac_access(probe_user, "s1", "File I/O", decide(view, ["File I/O"]))
+    row = _row(probe_user)
+    assert _json.loads(row["revealed_edge"]) == ["Strings", "File I/O"]
+    assert row["in_horizon"] == 0
+
+
+def test_horizon_contraction_is_not_recorded_as_a_region_probe(probe_user):
+    """An overloaded learner INSIDE their region must not read as an over-reach.
+
+    This is the regression the column split exists to prevent: pooled, an
+    overloaded honest student would inflate the A1 adversary signal.
+    """
+    from app.core import telemetry
+    # Certified through Strings, so File I/O is ON the frontier — in region —
+    # but two hops of load-limited reach away is not the issue here: the point
+    # is that a horizon finding must leave in_region alone.
+    view = LearnerView(probe_user, frozenset({"Variables", "Control Flow",
+                                              "Arrays", "Strings"}),
+                       cognitive_load=0.85)
+    d = decide(view, ["File I/O"])
+    telemetry.log_cac_access(probe_user, "s2", "File I/O", d)
+    row = _row(probe_user)
+    assert row["in_region"] == 1, "an in-region turn was logged as a probe"
+
+
+def test_region_probe_still_records_as_a_probe(probe_user):
+    from app.core import telemetry
+    view = LearnerView(probe_user, frozenset({"Variables"}))
+    telemetry.log_cac_access(probe_user, "s3", "Strings", decide(view, ["Strings"]))
+    assert _row(probe_user)["in_region"] == 0
+
+
+def test_clean_turn_records_as_in_region_and_in_horizon(probe_user):
+    from app.core import telemetry
+    view = LearnerView(probe_user, READY)
+    telemetry.log_cac_access(probe_user, "s4", "Arrays", decide(view, ["Arrays"]))
+    row = _row(probe_user)
+    assert row["in_region"] == 1 and row["in_horizon"] == 1
+    assert row["revealed_edge"] is None
+
+
+def test_probe_rate_counts_region_only(probe_user):
+    """An overloaded but in-region learner must not raise the A1 probe rate."""
+    from app.core import telemetry
+    k = frozenset({"Variables", "Control Flow", "Arrays", "Strings"})
+    for _ in range(3):
+        telemetry.log_cac_access(
+            probe_user, "s5", "File I/O",
+            decide(LearnerView(probe_user, k, cognitive_load=0.85), ["File I/O"]))
+    stats = telemetry.cac_probe_stats(probe_user, "s5")
+    assert stats["turns"] == 3
+    assert stats["probes"] == 0, "load contractions leaked into the probe count"

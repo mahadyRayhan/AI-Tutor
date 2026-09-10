@@ -235,6 +235,28 @@ SECTION_MIN_RUNG: dict[str, Rung] = {
 }
 
 
+def redirect_preamble(asked: str, nearer: str) -> str:
+    """Instruction for a turn that was redirected to a nearer prerequisite.
+
+    The substitution is stated out loud on purpose. Quietly answering a different
+    question than the one asked reads as the tutor having misunderstood, and the
+    learner repeats themselves; naming the swap and its reason is what turns a
+    restriction into teaching. This is also the text that discloses the edge —
+    see `Decision.revealed_edge` and the E15 track.
+    """
+    return (
+        "\n\n**REDIRECTED REQUEST (HARD CONSTRAINT):**\n"
+        f"- The student asked about **{asked}**, but is not ready for it yet and "
+        f"is showing signs of cognitive overload.\n"
+        f"- Open by saying — warmly, in one sentence — that you are starting with "
+        f"**{nearer}** because **{asked}** builds directly on it.\n"
+        f"- Then teach **{nearer}**, and ONLY {nearer}.\n"
+        f"- Do NOT teach {asked} in this response. Do not apologise, and do not "
+        f"suggest they are incapable — this is sequencing, not judgement.\n"
+        f"- Close by telling them {asked} is next once {nearer} is solid."
+    )
+
+
 def section_allowed(header: str, cap: Rung) -> bool:
     """May a section with this `## header` appear under `cap`?
 
@@ -335,6 +357,11 @@ class Decision:
     edge_ok: bool = True
     redirect_to: str | None = None
     beyond_region: bool = False
+    # (prerequisite, asked_for) — the curriculum edge a redirect message discloses.
+    # Explaining WHY a request was narrowed teaches the learner the shape of the
+    # policy, so E15 measures it. Recorded at the moment of the reveal because
+    # reconstructing it afterwards from prose is not reliable.
+    revealed_edge: tuple[str, str] | None = None
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -356,6 +383,7 @@ class Decision:
             "edge_ok": self.edge_ok,
             "redirect_to": self.redirect_to,
             "beyond_region": self.beyond_region,
+            "revealed_edge": list(self.revealed_edge) if self.revealed_edge else None,
             "reasons": list(self.reasons),
         }
 
@@ -416,10 +444,93 @@ def _signal_help_seeking(view: LearnerView, decision: Decision) -> None:
     )
 
 
+# Phase 3 · how far past the frontier a learner may reach, by cognitive load.
+# Ordered high→low; the first threshold exceeded wins. Below the lowest, the
+# horizon is unbounded — reaching ahead is what curiosity looks like, and the
+# replay data says it is the common case, so this must not fire on ordinary use.
+LOAD_HORIZON: tuple[tuple[float, int], ...] = ((0.7, 1), (0.5, 2))
+
+
+def _horizon_limit(load: float) -> int | None:
+    """Max hops past the frontier at this load. None = unbounded."""
+    for threshold, d_max in LOAD_HORIZON:
+        if load > threshold:
+            return d_max
+    return None
+
+
+def _nearest_within(topo: Topology, frontier: set[str], target: str,
+                    d_max: int, certified: set[str]) -> str | None:
+    """The furthest ancestor of `target` the learner may still reach.
+
+    Walks BACKWARD from the target, so the first hit is the closest step to what
+    they actually asked for rather than the safest possible retreat. A learner
+    asking about File I/O under a 1-hop limit should land on Strings — the next
+    thing that gets them there — not be sent back to the frontier.
+    """
+    seen, layer = {target}, {target}
+    while layer:
+        nxt: set[str] = set()
+        for n in layer:
+            for p in topo.predecessors(n):
+                if p in seen:
+                    continue
+                seen.add(p)
+                d = topo.hops_from(frontier, p)
+                if d is not None and d <= d_max and p not in certified:
+                    return p
+                nxt.add(p)
+        layer = nxt
+    return None
+
+
 def _signal_cognitive_load(view: LearnerView, topo: Topology,
                            concepts: set[str], decision: Decision) -> None:
-    """Phase 3 · switch `cac_horizon` — load contracts the traversal horizon."""
-    return
+    """Phase 3 · switch `cac_horizon` — load contracts the traversal horizon.
+
+    A loaded learner reaching several topics ahead is not curious, they are
+    drowning. So load shortens the reach — and the outcome is a REDIRECT to the
+    nearest thing they can actually absorb, never a refusal. A refusal that does
+    not teach is a pedagogical failure, not a security success, and this signal
+    has no vocabulary for one: it can clear `in_horizon` and name a nearer node,
+    and that is all.
+
+    E15 note — the redirect LEAKS. Saying "Strings first" reveals that File I/O
+    depends on Strings, which is a fact about the policy the learner did not have
+    a moment ago. The revealed edge is therefore named in the reason and carried
+    on the decision, so policy leakage is measurable later without going back and
+    re-instrumenting this path.
+    """
+    if view.cognitive_load is None:
+        return                                  # cold start is not suspicion
+    d_max = _horizon_limit(view.cognitive_load)
+    if d_max is None:
+        return
+
+    certified = set(view.certified)
+    frontier = topo.frontier(certified)
+    if not frontier:
+        return
+
+    # The furthest concept asked about is the one that decides.
+    worst, worst_d = None, -1
+    for c in concepts:
+        d = topo.hops_from(frontier, c)
+        if d is not None and d > worst_d:
+            worst, worst_d = c, d
+    if worst is None or worst_d <= d_max:
+        return
+
+    nearer = _nearest_within(topo, frontier, worst, d_max, certified)
+    if nearer is not None:
+        decision.revealed_edge = (nearer, worst)
+    _tighten(
+        decision, horizon=False, redirect=nearer,
+        reason=f"C/load {view.cognitive_load:.2f}: '{worst}' is {worst_d} hops "
+               f"past the frontier, limit {d_max}"
+               + (f"; redirect to '{nearer}' (reveals edge {nearer}->{worst})"
+                  if nearer else "; no nearer node to offer"),
+    )
 
 
 def _signal_calibration(view: LearnerView, topo: Topology,

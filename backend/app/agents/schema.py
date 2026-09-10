@@ -33,6 +33,13 @@ class AgentState(BaseModel):
     rung_cap: int = 5
     cac_reasons: List[str] = []      # audit trail for why it was lowered
 
+    # CAC horizon redirect (Phase 3). Both "" when the turn was not redirected.
+    # redirect_from is what the learner ASKED for; redirect_to is the nearer
+    # prerequisite actually taught. Kept as a pair so the response can name the
+    # substitution — a silent swap would read as the tutor misunderstanding.
+    redirect_to: str = ""
+    redirect_from: str = ""
+
     # Multi-turn (crescendo) trajectory risk — snapshot on EVERY turn, not only blocks,
     # so the layer's contribution is measurable rather than inferable.
     traj_risk: float = 0.0     # Eq. (11)  R_t = ½·peak + ½·acc

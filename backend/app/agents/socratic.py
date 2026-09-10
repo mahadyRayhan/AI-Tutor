@@ -10,7 +10,8 @@ from app.agents.schema import AgentState
 from app.db.vector_store import VectorStore
 from app.db.graph_db import Neo4jGraphDB
 from app.core.user_knowledge_manager import knowledge_manager
-from app.core.cac_graph import Rung, section_allowed, disclosure_directive
+from app.core.cac_graph import (
+    Rung, section_allowed, disclosure_directive, redirect_preamble)
 
 class SocraticTutorAgent(BaseAgent):
     """
@@ -102,6 +103,7 @@ class SocraticTutorAgent(BaseAgent):
                 calibration_state=state.calibration_state,
                 calibration_detail=state.calibration_detail,
                 rung_cap=state.rung_cap,
+                redirect_to=state.redirect_to, redirect_from=state.redirect_from,
             )
 
         # 5. Stream Answer
@@ -225,7 +227,7 @@ class SocraticTutorAgent(BaseAgent):
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())
         except: return ["Tell me more", "Example code", "Challenge: Write it"]
  
-    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "", mastery_weak_tier: str = "", calibration_state: str = "", calibration_detail: str = "", rung_cap: int = 5) -> str:
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "", mastery_weak_tier: str = "", calibration_state: str = "", calibration_detail: str = "", rung_cap: int = 5, redirect_to: str = "", redirect_from: str = "") -> str:
         
         # =========================================================
         # C_style: Few-Shot Personalization Vector
@@ -576,6 +578,12 @@ class SocraticTutorAgent(BaseAgent):
         # reaching for an answer they have not attempted.
         if rung_cap < int(Rung.CODE):
             format_rules += disclosure_directive(Rung(rung_cap))
+
+        # CAC horizon redirect (Phase 3). Appended after the disclosure limit so
+        # both constraints survive: a redirected turn may ALSO be rung-capped, and
+        # the two narrow different things — what is taught, and how much of it.
+        if redirect_to and redirect_from:
+            format_rules += redirect_preamble(redirect_from, redirect_to)
 
         if custom_inst:
             style_instruction += f"\n\n**STUDENT'S CUSTOM INSTRUCTIONS:**\n{custom_inst}"
