@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.cac_graph import (  # noqa: E402
     CANONICAL_PREREQ_EDGES, CURRICULUM, SKILL_TOPICS,
     Decision, LearnerView, Rung, Topology, decide,
+    SECTION_MIN_RUNG, disclosure_directive, section_allowed,
 )
 
 SEEDS = range(200)
@@ -339,3 +340,110 @@ def test_logging_never_raises_on_a_bad_write(probe_user):
 def test_probe_stats_on_unknown_user_is_zero():
     from app.core import telemetry
     assert telemetry.cac_probe_stats("nobody_at_all")["turns"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Phase 2 — help-seeking caps the rung
+#
+# The plan states the acceptance criterion as a property, not a judgement:
+# "for any query, the response under cap=HINT contains no fenced code block."
+# Two halves are testable without a model in the loop — that the signal fires
+# and only ever narrows, and that the prompt carries an instruction which makes
+# code impossible. The third half (the model obeys) belongs to the E4 corpus run.
+# ══════════════════════════════════════════════════════════════════════════
+
+def _impulsive(certified=frozenset(SKILL_TOPICS)):
+    """A fully-certified learner, so nothing BUT help-seeking can narrow."""
+    return LearnerView("u", certified, help_seeking_quality="impulsive")
+
+
+def _measured(certified=frozenset(SKILL_TOPICS)):
+    return LearnerView("u", certified, help_seeking_quality="measured")
+
+
+def test_impulsive_help_seeking_caps_at_hint():
+    d = decide(_impulsive(), ["Arrays"])
+    assert d.rung_cap is Rung.HINT
+    assert not d.is_permissive
+    assert any("help-seeking" in r for r in d.reasons), "a cap with no reason is unauditable"
+
+
+def test_measured_help_seeking_does_not_cap():
+    assert decide(_measured(), ["Arrays"]).rung_cap is Rung.CODE
+
+
+def test_cold_start_is_not_suspicion():
+    """quality is None until there is history; None must never narrow."""
+    d = decide(LearnerView("u", frozenset(SKILL_TOPICS)), ["Arrays"])
+    assert d.rung_cap is Rung.CODE and d.is_permissive
+
+
+def test_help_seeking_signal_is_switchable():
+    """Ablating cac_rung disconnects this signal and nothing else."""
+    d = decide(_impulsive(), ["Arrays"], signals=set())
+    assert d.rung_cap is Rung.CODE
+
+
+def test_help_seeking_only_ever_narrows():
+    """Over random graphs and K: adding the signal never raises the rung."""
+    for seed in SEEDS:
+        rng = random.Random(seed)
+        topo = random_dag(rng)
+        nodes = sorted(topo.nodes)
+        k = frozenset(rng.sample(nodes, rng.randint(0, len(nodes))))
+        ask = [rng.choice(nodes)]
+        base = decide(LearnerView("u", k), ask, topo=topo)
+        with_signal = decide(
+            LearnerView("u", k, help_seeking_quality="impulsive"), ask, topo=topo)
+        assert with_signal.rung_cap <= base.rung_cap, f"widened at seed {seed}"
+
+
+# ── The consumer side: the cap must be expressible in a prompt ──────────────
+
+def test_hint_directive_forbids_c_code():
+    text = disclosure_directive(Rung.HINT)
+    assert "Do NOT output C code" in text
+    assert "fenced code blocks" in text
+
+
+def test_code_rung_adds_no_directive():
+    """At CODE the layer is inert — no instruction, so no behaviour change."""
+    assert disclosure_directive(Rung.CODE) == ""
+
+
+def test_directive_exists_for_every_rung_below_code():
+    for rung in Rung:
+        text = disclosure_directive(rung)
+        if rung is Rung.CODE:
+            assert text == ""
+        else:
+            assert text.strip(), f"{rung.name} has no directive"
+
+
+def test_code_bearing_sections_are_withheld_at_hint():
+    """The sections that emit code the learner did not write are EXAMPLE-rung."""
+    for header in ("Example", "Worked Example", "Example from Class"):
+        assert not section_allowed(header, Rung.HINT)
+        assert section_allowed(header, Rung.CODE)
+
+
+def test_diagram_survives_hint():
+    """DIAGRAM sits BELOW HINT, so a diagram is permitted at HINT by construction.
+
+    This is why the property is 'no C code', not 'no fenced block' — a Mermaid
+    block is fenced and is deliberately still allowed here.
+    """
+    assert section_allowed("Visual Model", Rung.HINT)
+
+
+def test_unknown_section_is_allowed():
+    """Fail OPEN on an unclassified header: this layer only narrows."""
+    assert section_allowed("Some New Heading", Rung.ORIENT)
+
+
+def test_section_permission_is_monotone_in_the_rung():
+    """A section allowed at a low rung is allowed at every higher one."""
+    for header in SECTION_MIN_RUNG:
+        allowed = [r for r in Rung if section_allowed(header, r)]
+        assert allowed == sorted(allowed), header
+        assert Rung.CODE in allowed, f"{header} unreachable even at full disclosure"

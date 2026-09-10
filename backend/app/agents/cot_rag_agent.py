@@ -2332,6 +2332,30 @@ class ChainOfThoughtRAGAgent:
             except Exception as e:
                 self.logger.warning(f"[MCRA] response telemetry failed: {e}")
 
+        # --- CAC: disclosure cap for this turn (Phase 2) ---
+        # Evaluated HERE, not in the post-response telemetry block, because a cap
+        # has to exist before the response is generated to be able to shape it.
+        # main.py still logs the decision after the turn; this call is the
+        # consumer-side read. Both go through cac_graph.evaluate(), so shadow mode
+        # and the ablation switches govern them identically.
+        #
+        # state.rung_cap stays at CODE (5) unless cac_enforce is on, so landing
+        # this consumer does not by itself change a single response.
+        if state.entities:
+            try:
+                from app.core import cac_graph
+                _cac_dec = cac_graph.evaluate(username, state.entities)
+                if cac_graph.enforcing() and not _cac_dec.is_permissive:
+                    state.rung_cap = int(_cac_dec.rung_cap)
+                    state.cac_reasons = list(_cac_dec.reasons)
+                    self.logger.info(
+                        f"🎚️ [CAC] disclosure capped at {_cac_dec.rung_cap.label} "
+                        f"for {username}: {'; '.join(_cac_dec.reasons)}")
+            except Exception as e:
+                # Fail open — this layer only narrows, so a fault here must never
+                # become a block. Matches cac_graph.evaluate()'s own contract.
+                self.logger.warning(f"[CAC] cap evaluation failed: {e}")
+
         # 7. GATEKEEPER CHECK (reviewing students bypass — they proved mastery)
         if state.mastery_level != "reviewing":
             gatekeeper_result = self._check_gatekeeping(

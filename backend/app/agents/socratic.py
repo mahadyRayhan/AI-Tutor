@@ -10,6 +10,7 @@ from app.agents.schema import AgentState
 from app.db.vector_store import VectorStore
 from app.db.graph_db import Neo4jGraphDB
 from app.core.user_knowledge_manager import knowledge_manager
+from app.core.cac_graph import Rung, section_allowed, disclosure_directive
 
 class SocraticTutorAgent(BaseAgent):
     """
@@ -100,6 +101,7 @@ class SocraticTutorAgent(BaseAgent):
                 mastery_weak_tier=state.mastery_weak_tier,
                 calibration_state=state.calibration_state,
                 calibration_detail=state.calibration_detail,
+                rung_cap=state.rung_cap,
             )
 
         # 5. Stream Answer
@@ -223,7 +225,7 @@ class SocraticTutorAgent(BaseAgent):
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())
         except: return ["Tell me more", "Example code", "Challenge: Write it"]
  
-    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "", mastery_weak_tier: str = "", calibration_state: str = "", calibration_detail: str = "") -> str:
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "", mastery_weak_tier: str = "", calibration_state: str = "", calibration_detail: str = "", rung_cap: int = 5) -> str:
         
         # =========================================================
         # C_style: Few-Shot Personalization Vector
@@ -550,8 +552,30 @@ class SocraticTutorAgent(BaseAgent):
                 ),
             }
             format_builder.append(_MASTERY_CHALLENGES.get(mastery_level, _MASTERY_CHALLENGES["novice"]))
-            
+
+            # CAC: drop the sections this turn's disclosure cap does not permit.
+            # Removal only — the cap can never ADD a section, which is the same
+            # one-way property _tighten() enforces on the decision itself. The
+            # leading preamble carries no "## " header and is always kept, as is
+            # any header cac_graph has not classified.
+            if rung_cap < int(Rung.CODE):
+                _cap = Rung(rung_cap)
+                format_builder = [
+                    s for s in format_builder
+                    if not s.lstrip().startswith("## ")
+                    or section_allowed(s.lstrip()[3:].split("\n", 1)[0], _cap)
+                ]
+
             format_rules = "\n\n".join(format_builder)
+
+        # CAC disclosure cap, appended LAST so it outranks every formatting
+        # instruction above it. This placement is deliberate: the frustration and
+        # impatient branches replace `format_rules` wholesale rather than building
+        # it up, so a cap applied inside the mastery branch alone would be silently
+        # discarded on exactly the turns where a learner is most likely to be
+        # reaching for an answer they have not attempted.
+        if rung_cap < int(Rung.CODE):
+            format_rules += disclosure_directive(Rung(rung_cap))
 
         if custom_inst:
             style_instruction += f"\n\n**STUDENT'S CUSTOM INSTRUCTIONS:**\n{custom_inst}"

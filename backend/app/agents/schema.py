@@ -27,6 +27,12 @@ class AgentState(BaseModel):
     calibration_state: str = ""      # "" | over | cal | under
     calibration_detail: str = ""     # short account injected into the LLM prompt
 
+    # CAC disclosure cap (cac_graph.Rung as int). 5 = CODE = no restriction, which
+    # is both the default and what a disconnected/shadow-mode layer leaves in place,
+    # so an agent that never reads it behaves exactly as before. Only ever lowered.
+    rung_cap: int = 5
+    cac_reasons: List[str] = []      # audit trail for why it was lowered
+
     # Multi-turn (crescendo) trajectory risk — snapshot on EVERY turn, not only blocks,
     # so the layer's contribution is measurable rather than inferable.
     traj_risk: float = 0.0     # Eq. (11)  R_t = ½·peak + ½·acc

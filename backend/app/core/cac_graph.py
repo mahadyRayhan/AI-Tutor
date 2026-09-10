@@ -207,6 +207,80 @@ class Rung(IntEnum):
                 3: "hints", 4: "worked example", 5: "full code"}[int(self)]
 
 
+# ── Applying a rung to a response ─────────────────────────────────────────
+# The ladder is policy, so what each rung MEANS for a response lives here rather
+# than in whichever agent happens to render it. An agent asks two questions —
+# "may this section appear?" and "what must I tell the model?" — and both answers
+# come from this module. A second agent (Scaffolding, the reviewer) wires up by
+# calling the same two functions, not by reimplementing the ladder.
+
+SECTION_MIN_RUNG: dict[str, Rung] = {
+    # Prose that orients. Available at every rung above refusal.
+    "Explanation":                 Rung.ORIENT,
+    "Refresher":                   Rung.ORIENT,
+    "Connection to Your Goal":     Rung.ORIENT,
+    # Visual / structural models. Cheaper than prose for a loaded learner.
+    "Visual Model":                Rung.DIAGRAM,
+    "Use Cases":                   Rung.DIAGRAM,
+    # Nudges toward the next step, and questions the learner answers themselves.
+    "Common Mistakes":             Rung.HINT,
+    "Your Turn! (Micro-Challenge)": Rung.HINT,
+    "Your Turn: Apply the Fix":    Rung.HINT,
+    "Challenge":                   Rung.HINT,
+    "Quick Check":                 Rung.HINT,
+    # Code the learner did not write.
+    "Example":                     Rung.EXAMPLE,
+    "Worked Example":              Rung.EXAMPLE,
+    "Example from Class":          Rung.EXAMPLE,
+}
+
+
+def section_allowed(header: str, cap: Rung) -> bool:
+    """May a section with this `## header` appear under `cap`?
+
+    Unknown headers are ALLOWED. This layer only narrows, and a section nobody
+    has classified is not thereby suspicious — failing closed here would mean a
+    new heading silently disappears from responses, which is a far worse failure
+    than a heading that escapes the cap until someone maps it.
+    """
+    required = SECTION_MIN_RUNG.get(header.strip())
+    return True if required is None else cap >= required
+
+
+def disclosure_directive(cap: Rung) -> str:
+    """The instruction a prompt must carry to honour `cap`. Empty at CODE.
+
+    Note DIAGRAM sits BELOW HINT on the ladder, so a mermaid diagram is permitted
+    at HINT by construction. The thing withheld at HINT is C code, and the
+    property test greps for exactly that — not for fenced blocks in general.
+    """
+    if cap >= Rung.CODE:
+        return ""
+    common = ("\n\n**DISCLOSURE LIMIT (HARD CONSTRAINT — overrides every other "
+              "formatting instruction above):**\n")
+    if cap == Rung.EXAMPLE:
+        return common + (
+            "- Do NOT write code that solves the student's actual problem.\n"
+            "- An analogous example on a DIFFERENT problem is allowed.")
+    if cap == Rung.HINT:
+        return common + (
+            "- Do NOT output C code in any form: no fenced code blocks, no "
+            "snippets, no full statements, no function bodies.\n"
+            "- Naming a function or keyword inline (e.g. `malloc`, `for`) is fine.\n"
+            "- A Mermaid diagram is allowed; C code is not.\n"
+            "- Guide with words and one concrete next step the student performs.")
+    if cap == Rung.DIAGRAM:
+        return common + (
+            "- Do NOT output C code, and do NOT give step-by-step instructions.\n"
+            "- Explain with a diagram and a description of the memory/control model.")
+    if cap == Rung.ORIENT:
+        return common + (
+            "- Answer in AT MOST two sentences.\n"
+            "- Spend the rest of the response on why the missing prerequisite is "
+            "worth having first. No code, no diagram, no step-by-step.")
+    return common + "- Do not answer this request."
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 3. Learner view — the only thing decide() is allowed to read
 # ══════════════════════════════════════════════════════════════════════════
@@ -316,8 +390,30 @@ def _tighten(decision: Decision, *, rung: Rung | None = None,
 # ── Signal hooks. Phase 0 lands them neutral; one phase fills in each. ──────
 
 def _signal_help_seeking(view: LearnerView, decision: Decision) -> None:
-    """Phase 2 · switch `cac_rung` — executive help-seeking caps the rung."""
-    return
+    """Phase 2 · switch `cac_rung` — executive help-seeking caps the rung.
+
+    `quality == "impulsive"` is computed in `learner_model._help_seeking` as
+    "has given up immediately at least once AND skips more than 30% of the time".
+    That is a statement about *executive control*, not about ability: the learner
+    is reaching for the answer before attempting the problem.
+
+    Capping at HINT is the pedagogically correct response and the security one at
+    the same time. Code produced now answers the give-up rather than the question,
+    and it is exactly the evidence a later certification cannot stand on — a
+    correct submission copied from a worked example the learner requested instead
+    of attempting. Withholding it is what stops hollow evidence being manufactured.
+
+    Cold start is explicitly not suspicion: `quality` is None until there is
+    enough history, and None takes this branch's early return.
+    """
+    if view.help_seeking_quality != "impulsive":
+        return
+    _tighten(
+        decision, rung=Rung.HINT,
+        reason="C/help-seeking: impulsive (immediate give-ups and a high skip "
+               "rate) — capped at hints; code now would answer the give-up "
+               "rather than the question",
+    )
 
 
 def _signal_cognitive_load(view: LearnerView, topo: Topology,
