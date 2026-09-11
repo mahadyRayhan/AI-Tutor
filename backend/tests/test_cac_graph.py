@@ -270,7 +270,8 @@ def test_audit_record_is_flat_and_complete():
     a = d.audit()
     assert a["rung_label"] == "orienting answer"
     assert set(a) == {"rung_cap", "rung_label", "in_horizon", "edge_ok",
-                      "redirect_to", "beyond_region", "revealed_edge", "reasons"}
+                      "redirect_to", "beyond_region", "revealed_edge",
+                      "policy_version", "reasons"}
     assert a["reasons"], "an audit record with no reason explains nothing"
 
 

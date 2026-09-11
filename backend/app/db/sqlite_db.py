@@ -393,6 +393,31 @@ class SQLiteDB:
                     ts_utc           TIMESTAMP
                 )
             """)
+            # CAC policy versions. Thresholds are appended, never mutated: a
+            # threshold that moves in place makes the audit log stop being
+            # evidence, because replaying an old event against today's numbers
+            # reports a decision the system never made. Every cac_access_event
+            # carries the version that produced it, so replay reads the policy
+            # off the row. Rejected calibration runs are recorded too and
+            # consume a version number — "we looked and declined to move" is a
+            # finding, and omitting it would make the history look inactive.
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS cac_policy_version (
+                    version      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at   TIMESTAMP,
+                    load_t1      REAL,      -- above this -> horizon 1 hop
+                    load_t2      REAL,      -- above this -> horizon 2 hops
+                    n_students   INTEGER,   -- basis: eligible students
+                    n_turns      INTEGER,   -- basis: turns behind them
+                    calibrated   INTEGER,   -- 0 = declared default, 1 = measured
+                    status       TEXT,      -- active | superseded | rejected
+                    reason       TEXT
+                )
+            """)
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cac_policy_status "
+                "ON cac_policy_version(status, version)")
+
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_cac_user_session "
                 "ON cac_access_event(username, session_id)")
@@ -678,6 +703,17 @@ class SQLiteDB:
                         f"ALTER TABLE cac_access_event ADD COLUMN {_col} {_type}")
                 except sqlite3.OperationalError:
                     pass
+
+            # Which threshold set produced this decision. Rows written before
+            # calibration existed have NULL, which reads correctly as "the
+            # declared default was in force" — that is true of them, and
+            # backfilling a version number they never saw would be a lie in the
+            # one table whose whole purpose is to be believed.
+            try:
+                self.conn.execute(
+                    "ALTER TABLE cac_access_event ADD COLUMN policy_version INTEGER")
+            except sqlite3.OperationalError:
+                pass
 
             # Per-turn multi-turn risk (Eqs. 9-11) on EVERY turn, not only blocks.
             # Required for escalation recall and any tau_judge sweep; without it the

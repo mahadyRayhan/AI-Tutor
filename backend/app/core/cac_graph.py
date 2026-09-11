@@ -362,6 +362,12 @@ class Decision:
     # policy, so E15 measures it. Recorded at the moment of the reveal because
     # reconstructing it afterwards from prose is not reliable.
     revealed_edge: tuple[str, str] | None = None
+
+    # Which threshold set decided this turn. Carried on the decision so the
+    # audit row can name it: without the stamp, replaying an event after a
+    # recalibration silently re-interprets it under thresholds that were not in
+    # force when the learner was actually there.
+    policy_version: int = 1
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -384,6 +390,7 @@ class Decision:
             "redirect_to": self.redirect_to,
             "beyond_region": self.beyond_region,
             "revealed_edge": list(self.revealed_edge) if self.revealed_edge else None,
+            "policy_version": self.policy_version,
             "reasons": list(self.reasons),
         }
 
@@ -451,9 +458,37 @@ def _signal_help_seeking(view: LearnerView, decision: Decision) -> None:
 LOAD_HORIZON: tuple[tuple[float, int], ...] = ((0.7, 1), (0.5, 2))
 
 
+def _active_horizon() -> tuple[tuple[float, int], ...]:
+    """The thresholds currently in force, falling back to the declared default.
+
+    Reads `cac_calibration.ACTIVE` — a module global refreshed at startup and
+    after each promotion — rather than the database, so `decide()` keeps its
+    documented purity and no learner ever waits on a policy lookup. An
+    unconfigured process (tests, scripts, anything that never ran startup) sees
+    None and behaves exactly as it did before calibration existed.
+    """
+    try:
+        from app.core import cac_calibration
+        a = cac_calibration.ACTIVE
+        if a:
+            return ((a["load_t1"], 1), (a["load_t2"], 2))
+    except Exception:
+        pass
+    return LOAD_HORIZON
+
+
+def _active_policy_version() -> int:
+    """Version stamp for this decision. Same cached read as `_active_horizon`."""
+    try:
+        from app.core import cac_calibration
+        return int((cac_calibration.ACTIVE or {}).get("version", 1))
+    except Exception:
+        return 1
+
+
 def _horizon_limit(load: float) -> int | None:
     """Max hops past the frontier at this load. None = unbounded."""
-    for threshold, d_max in LOAD_HORIZON:
+    for threshold, d_max in _active_horizon():
         if load > threshold:
             return d_max
     return None
@@ -567,7 +602,7 @@ def decide(view: LearnerView, query_concepts: Iterable[str],
     """
     topo = topo or CURRICULUM
     active = SIGNAL_SWITCHES.keys() if signals is None else signals
-    decision = Decision()
+    decision = Decision(policy_version=_active_policy_version())
 
     concepts = {canonical_concept(c) for c in query_concepts if c}
     concepts = {c for c in concepts if c in topo.nodes}

@@ -2343,8 +2343,12 @@ class ChainOfThoughtRAGAgent:
         # this consumer does not by itself change a single response.
         if state.entities:
             try:
-                from app.core import cac_graph
+                from app.core import cac_graph, cac_calibration
                 _cac_dec = cac_graph.evaluate(username, state.entities)
+                # Count this turn toward the next threshold calibration. Runs
+                # off-thread when due, so the percentile sweep never sits in
+                # front of a learner waiting for an answer.
+                cac_calibration.note_turn()
                 if cac_graph.enforcing() and not _cac_dec.is_permissive:
                     state.rung_cap = int(_cac_dec.rung_cap)
                     state.cac_reasons = list(_cac_dec.reasons)

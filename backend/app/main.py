@@ -307,7 +307,19 @@ async def startup_event():
     
     try:
         logger.info("Initializing C Tutor components...")
-        
+
+        # CAC load thresholds: seed v1 if absent and load the active version
+        # into the in-process cache that cac_graph.decide() reads. Doing it here
+        # keeps the decision path free of database access.
+        try:
+            from app.core import cac_calibration
+            _pol = cac_calibration.refresh()
+            logger.info(f"🎚️ [CAC] policy v{_pol['version']}: "
+                        f"load thresholds {_pol['load_t1']}/{_pol['load_t2']} "
+                        f"({'calibrated' if _pol['calibrated'] else 'declared default'})")
+        except Exception as e:
+            logger.warning(f"[CAC] policy version unavailable, using defaults: {e}")
+
         from app.core import config 
         
         # 2. Initialize LLMs

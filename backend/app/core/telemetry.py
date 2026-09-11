@@ -360,14 +360,19 @@ def log_cac_access(username: str, session_id: str, concept_asked: str,
             "INSERT INTO cac_access_event "
             "(study_id, username, session_id, concept_asked, in_region, in_horizon, "
             " revealed_edge, redirect_to, rung_cap, deviation_type, reasons, "
-            " ablation_config, ts_utc) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " ablation_config, policy_version, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (sid, username, session_id, concept_asked,
              0 if a.get("beyond_region") else 1,
              1 if a.get("in_horizon", True) else 0,
              json.dumps(edge) if edge else None,
              a["redirect_to"], a["rung_cap"], deviation_type,
              json.dumps(a["reasons"]), json.dumps(config.active_ablation_config()),
+             # The load thresholds are calibrated from the population and move
+             # between versions, so the decision is only reconstructable if the
+             # row names the version that produced it. Replay reads this, not
+             # the live constants.
+             a.get("policy_version"),
              _now()),
         )
     except Exception as e:

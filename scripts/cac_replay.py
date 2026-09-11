@@ -129,8 +129,43 @@ def earned_sets(basis: str) -> dict[str, frozenset[str]]:
     return {u: frozenset(v) for u, v in out.items()}
 
 
+def c_signals_current(user: str) -> tuple[float | None, str | None]:
+    """Today's metacognitive signals for one learner: (cognitive_load, help quality).
+
+    There is no `asof` mode for these, and pretending otherwise would be the worst
+    option. `get_learner_profile()` is a live aggregate over a sliding window of
+    the most recent rows, so it cannot be rewound to a July turn the way
+    `bkt_history` rewinds certification — the window that produced a value in July
+    no longer exists. Rather than invent a reconstruction, the harness reports
+    BOUNDS: `--c-state none` is the floor (signals off, today's behaviour) and
+    `--c-state current` is the ceiling (every turn judged against the learner's
+    end-of-term state, which over-attributes load and impulsivity to turns taken
+    before either had developed).
+
+    A rate quoted from the ceiling is an upper bound on how often the signal would
+    fire, not an estimate of it.
+    """
+    try:
+        from app.core.learner_model import get_learner_profile
+        p = get_learner_profile(user)
+        cog, meta = p.get("cognitive", {}), p.get("metacognitive", {})
+        return ((cog.get("cognitive_load") or {}).get("index"),
+                (meta.get("help_seeking") or {}).get("quality"))
+    except Exception:
+        return None, None
+
+
+def _attribute(reason: str) -> str:
+    """Which signal produced this reason. Reasons are prefixed at the source."""
+    for prefix in ("K/region", "C/help-seeking", "C/load"):
+        if reason.startswith(prefix):
+            return prefix
+    return "other"
+
+
 def replay(signals: set[str], state_mode: str, limit: int | None,
-           region_gate: bool = True, frontier_basis: str = "certified"):
+           region_gate: bool = True, frontier_basis: str = "certified",
+           c_mode: str = "none"):
     turns = db.fetch_all(
         "SELECT username, session_id, topic, ts_utc, intent, was_blocked "
         "FROM turn_log WHERE topic IS NOT NULL AND topic != 'General' "
@@ -145,6 +180,9 @@ def replay(signals: set[str], state_mode: str, limit: int | None,
     rungs = Counter()
     per_user = defaultdict(lambda: Counter())
     off_graph = Counter()
+    fired = Counter()          # per-signal attribution
+    edges = Counter()          # E15: which curriculum edges a redirect discloses
+    c_cache: dict[str, tuple[float | None, str | None]] = {}
 
     for t in turns:
         user, topic = t["username"], canonical_concept(t["topic"])
@@ -170,11 +208,35 @@ def replay(signals: set[str], state_mode: str, limit: int | None,
         if certified:
             stats["turns_with_certification"] += 1
 
-        d = decide(LearnerView(user, certified), [topic], signals=signals,
-                   region_gate=region_gate)
+        # Metacognitive signals. Without these the C hooks all return early on
+        # None and the replay silently measures the K baseline alone — reporting
+        # that every C signal is inert, which is a fact about the harness rather
+        # than about the policy.
+        if c_mode == "current":
+            if user not in c_cache:
+                c_cache[user] = c_signals_current(user)
+            load, quality = c_cache[user]
+        else:
+            load, quality = None, None
+        if load is not None:
+            stats["turns_with_load"] += 1
+        if quality is not None:
+            stats["turns_with_help_quality"] += 1
+            if quality == "impulsive":
+                stats["turns_impulsive"] += 1
+
+        d = decide(LearnerView(user, certified, cognitive_load=load,
+                               help_seeking_quality=quality),
+                   [topic], signals=signals, region_gate=region_gate)
         if d.beyond_region:
             stats["beyond_region"] += 1
+        if not d.in_horizon:
+            stats["horizon_contracted"] += 1
         rungs[d.rung_cap.label] += 1
+        for r in d.reasons:
+            fired[_attribute(r)] += 1
+        if d.revealed_edge:
+            edges[f"{d.revealed_edge[0]} -> {d.revealed_edge[1]}"] += 1
         if d.is_permissive:
             stats["in_region"] += 1
             per_user[user]["ok"] += 1
@@ -184,7 +246,7 @@ def replay(signals: set[str], state_mode: str, limit: int | None,
             if d.redirect_to:
                 redirects[f"{topic} -> {d.redirect_to}"] += 1
 
-    return stats, redirects, rungs, per_user, off_graph
+    return stats, redirects, rungs, per_user, off_graph, fired, edges
 
 
 def main() -> int:
@@ -201,6 +263,18 @@ def main() -> int:
                     default="certified",
                     help="what counts as earned when computing the frontier. "
                          "This is what decides how OFTEN CAC fires.")
+    ap.add_argument("--c-state", choices=("none", "current"), default="none",
+                    dest="c_state",
+                    help="metacognitive signals. 'none' (default) is the floor — "
+                         "C hooks see nothing, so this measures the K baseline. "
+                         "'current' uses today's learner profile for every turn: "
+                         "an UPPER bound on how often C fires, not an estimate. "
+                         "There is no 'asof' — the profile is a sliding window and "
+                         "cannot be rewound.")
+    ap.add_argument("--policy", default="default",
+                    help="threshold set to replay under: 'default' (the declared "
+                         "v1 constants), 'active' (whatever is live now), or a "
+                         "version number from cac_policy_version")
     ap.add_argument("--limit", type=int, help="replay only the first N turns")
     ap.add_argument("--detail", type=int, default=0,
                     help="show the N learners CAC would have acted on most")
@@ -216,19 +290,50 @@ def main() -> int:
         print(f"known: {', '.join(sorted(all_signals))}")
         return 2
 
+    # Which thresholds to decide under. The load cut points are calibrated from
+    # the population and move between versions, so a replay is only meaningful
+    # once it says which version it used: sweeping old turns against today's
+    # numbers reports decisions the system never made.
+    pol_label = "v1 declared default (0.7/0.5)"
+    if a.policy != "default":
+        try:
+            from app.core import cac_calibration as _cal
+            if a.policy == "active":
+                _p = _cal.refresh() or {}
+                _cal.ACTIVE = _p
+                pol_label = (f"v{_p.get('version')} active "
+                             f"({_p.get('load_t1')}/{_p.get('load_t2')})")
+            else:
+                _v = int(a.policy)
+                _t = _cal.thresholds_for(_v)
+                if _t is None:
+                    print(f"no such policy version: {_v}")
+                    return 2
+                _cal.ACTIVE = {"version": _v, "load_t1": _t[0],
+                               "load_t2": _t[1], "calibrated": True}
+                pol_label = f"v{_v} ({_t[0]}/{_t[1]})"
+        except Exception as e:
+            print(f"policy version unavailable ({e}); using declared default")
+
     implemented = [n for n in sorted(all_signals)]
     print("CAC replay")
+    print(f"  load policy       : {pol_label}")
     print(f"  signals connected : {', '.join(sorted(signals)) or '(none)'}")
     print(f"  state             : {a.state}")
     print(f"  region gate       : {'advisory (annotate only)' if a.advisory else 'CAPS at ORIENT (default)'}")
     print(f"  frontier basis    : {a.frontier}")
-    print(f"  note              : all signal hooks are still stubs, so a connected "
-          f"signal\n                      contributes nothing yet — the K-region "
-          f"baseline is what\n                      this measures until Phase 2 lands.")
+    print(f"  C signals         : {a.c_state}"
+          + ("   <- FLOOR: C hooks see nothing, K baseline only"
+             if a.c_state == "none"
+             else "   <- CEILING: today's profile on every turn, over-states firing"))
+    print(f"  note              : cac_edge / cac_evidence_weight / cac_breakglass are "
+          f"still\n                      stubs (Phases 4-6). cac_rung and cac_horizon "
+          f"are live and\n                      require --c-state current to "
+          f"contribute anything.")
     print()
 
-    stats, redirects, rungs, per_user, off_graph = replay(
-        signals, a.state, a.limit, not a.advisory, a.frontier)
+    stats, redirects, rungs, per_user, off_graph, fired, edges = replay(
+        signals, a.state, a.limit, not a.advisory, a.frontier, a.c_state)
 
     n = stats["turns"]
     if not n:
@@ -243,15 +348,41 @@ def main() -> int:
     twc = stats["turns_with_certification"]
     print(f"  turns with certification  {twc}  ({100*twc/n:.1f}%)")
     print()
+    if a.c_state == "current":
+        twl, twq = stats["turns_with_load"], stats["turns_with_help_quality"]
+        imp = stats["turns_impulsive"]
+        print(f"  turns with load signal    {twl}  ({100*twl/n:.1f}%)"
+              f"   <- coverage of the C signals")
+        print(f"  turns with help quality   {twq}  ({100*twq/n:.1f}%)")
+        print(f"    of those, impulsive     {imp}"
+              + (f"  ({100*imp/twq:.1f}% of covered)" if twq else ""))
+        print()
+
     br = stats["beyond_region"]
+    hz = stats["horizon_contracted"]
     print(f"  beyond the frontier       {br}  ({100*br/n:.1f}%)   <- observed either way")
+    print(f"  horizon contracted        {hz}  ({100*hz/n:.1f}%)   <- load, Phase 3")
     print(f"  unchanged for the learner {stats['in_region']}  ({100*stats['in_region']/n:.1f}%)")
     print(f"  CAC would have acted      {stats['would_act']}  ({100*stats['would_act']/n:.1f}%)")
+    print()
+
+    # Attribution. A phase that fires on everything is measuring the corpus, and
+    # this is the table that says so before it reaches a paper.
+    print("  which signal fired (a turn may appear under more than one):")
+    for tag in ("K/region", "C/help-seeking", "C/load", "other"):
+        c = fired.get(tag, 0)
+        if c or tag != "other":
+            print(f"    {tag:16} {c:6}  ({100*c/n:.1f}%)")
     print()
 
     print("  disclosure rung:")
     for label, c in rungs.most_common():
         print(f"    {label:16} {c:6}  ({100*c/n:.1f}%)")
+
+    if edges:
+        print("\n  curriculum edges disclosed by a redirect (E15 policy leakage):")
+        for k, c in edges.most_common(8):
+            print(f"    {k:34} {c}")
 
     if redirects:
         print("\n  most common redirects (asked -> missing prerequisite):")
