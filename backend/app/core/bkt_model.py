@@ -489,6 +489,33 @@ def is_mastered(username: str, concept: str) -> bool:
     return newly_mastered
 
 
+def meets_theta(username: str, concept: str, theta: float) -> bool:
+    """Whether every tier's DECAYED posterior clears `theta`.
+
+    The continuous read behind the Phase 4 edge threshold. `is_mastered` answers
+    one fixed question ("is this certified under THETA_DECERTIFY"); this answers
+    it at whatever bar CAC has set for this learner on this edge.
+
+    Read-only on purpose. `is_mastered` self-heals the is_certified flag as a
+    side effect, which is correct for the certification question and wrong here:
+    a raised bar is a per-learner access decision, and letting it clear a
+    shared certification column would turn one learner's overconfidence into a
+    global de-certification.
+
+    Returns True when there is no row: absence of evidence is handled by the
+    certification gate itself, and failing closed here would make an unknown
+    concept stricter than a known-weak one.
+    """
+    row = _read_row(username, concept)
+    if not row:
+        return True
+
+    q = _apply_decay(row["p_mastery_quiz"]  or 0.0, "quiz",  _parse_ts(row["last_quiz_at"]),  lam=row["decay_quiz_lam"])
+    m = _apply_decay(row["p_mastery_micro"] or 0.0, "micro", _parse_ts(row["last_micro_at"]), lam=row["decay_micro_lam"])
+    c = _apply_decay(row["p_mastery_code"]  or 0.0, "code",  _parse_ts(row["last_code_at"]),  lam=row["decay_code_lam"])
+    return q >= theta and m >= theta and c >= theta
+
+
 def is_current_certified(username: str, concept: str) -> bool:
     """Single source of truth for whether `concept` is certified RIGHT NOW.
 

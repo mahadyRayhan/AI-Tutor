@@ -91,6 +91,47 @@ def _slip_vs_gap(username):
             "gap_ratio": round(gaps / wrong, 3) if wrong else 0.0}
 
 
+# A prediction this confident that still came back wrong is a calibration
+# failure, not noise. 0.7 rather than 0.9: the interesting case is "the model
+# thought this learner had it", and requiring near-certainty would discard most
+# of the signal on a live BKT that rarely saturates.
+P_CONFIDENT = 0.7
+
+
+def _calibration(username):
+    """Model-side overconfidence: wrong while the model expected right (Tier 1).
+
+    The companion to `_slip_vs_gap`, and the one CAC should prefer. Both answer
+    "was this learner wrong AND sure of themselves", but they source the
+    confidence differently, and the difference matters twice over:
+
+    1. COVERAGE. `_slip_vs_gap` reads `jol_log.confidence_1_5`, written only
+       inside the pop-quiz path — 6 rows across 3 learners in the current
+       corpus, against 152 predictions across 26. The self-report is not merely
+       sparse, it is STRUCTURALLY sparse: the quiz trigger requires a <=4-word
+       acknowledgement turn, which is 0.34% of student messages, so jol_log
+       stays empty however much traffic arrives.
+
+    2. MANIPULABILITY. `confidence_1_5` is declared by the subject of the
+       policy. A learner who works out that reporting high confidence tightens
+       their prerequisite gate simply stops reporting it, and the signal decays
+       to noise exactly for the learners it was meant to catch. `p_bkt_pred` is
+       computed from their behaviour and is never shown to them. An inferred
+       attribute the subject controls is a weak basis for access control.
+    """
+    rows = _rows("SELECT p_bkt_pred, is_correct FROM prediction_log "
+                 "WHERE username=? ORDER BY id DESC LIMIT ?", (username, _N))
+    wrong = conf_wrong = 0
+    for r in rows:
+        if r["is_correct"] == 0:
+            wrong += 1
+            if (r["p_bkt_pred"] or 0.0) >= P_CONFIDENT:
+                conf_wrong += 1
+    return {"n": len(rows), "n_wrong": wrong, "n_confident_wrong": conf_wrong,
+            "gap_ratio": round(conf_wrong / wrong, 3) if wrong else 0.0,
+            "source": "model"}
+
+
 def _automatization(username):
     """Negative latency trend on repeated quiz items = skill becoming automatic."""
     rows = _rows("SELECT time_to_answer_sec FROM quiz_log WHERE username=? AND is_correct=1 "
@@ -258,7 +299,8 @@ def get_learner_profile(username: str) -> dict:
             "concept_mastery": _concept_mastery(username),
             "active_misconceptions": [m.get("concept") for m in active_miscon],
             "cognitive_load": _cognitive_load(username),
-            "error_slip_vs_gap": _slip_vs_gap(username),
+            "error_slip_vs_gap": _slip_vs_gap(username),   # self-reported
+            "calibration": _calibration(username),          # model-side; CAC prefers this
             "automatization": _automatization(username),
             "comprehension_tracing": _comprehension_tracing(username),
             "debugging_skill": _debugging_skill(username),

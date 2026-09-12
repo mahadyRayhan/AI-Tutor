@@ -11,6 +11,7 @@ from app.core.history_manager import history_manager
 from app.core.user_knowledge_manager import knowledge_manager
 from app.db.vector_store import VectorStore
 from app.db.graph_db import Neo4jGraphDB
+from app.core.cac_graph import Rung, disclosure_directive
 
 class ScaffoldingAgent(BaseAgent):
     """
@@ -59,6 +60,19 @@ class ScaffoldingAgent(BaseAgent):
         
         # NOTE: We ONLY trigger for normal PROBLEM. COMPLEX_PROBLEM goes to the Socratic agent for an unguided plan.
         should_trigger = (state.intent == "PROBLEM" and is_complex) or (state.intent == "PROBLEM" and is_explicit_problem)
+
+        # CAC: a guided plan walks the learner to working code, so starting one
+        # discloses at EXAMPLE/CODE by construction. Below that cap we decline
+        # the plan and fall through — the Socratic path then answers under the
+        # same cap, and on a horizon contraction redirects to the prerequisite.
+        # Declining here rather than generating a degraded plan is deliberate:
+        # a "plan" that may not show code is not a scaffold, and the honest
+        # outcome is to teach the thing that unlocks it.
+        if should_trigger and state.rung_cap < int(Rung.EXAMPLE):
+            self.logger.info(
+                f"🎚️ [CAC] guided plan declined at cap "
+                f"{Rung(state.rung_cap).label}; deferring to Socratic")
+            return
 
         if should_trigger:
             # Force intent to PROBLEM for consistency
@@ -223,6 +237,7 @@ class ScaffoldingAgent(BaseAgent):
                 Use `___` or `// TODO:` for the parts the student still needs to figure out.
                 Do not give the complete working answer. Add 1 sentence of encouragement.
                 Format the code in standard markdown ```c ... ```. {self._preference_directive(state.profile)}
+                {disclosure_directive(Rung(state.rung_cap))}
                 """
                 partial_code_response = await asyncio.to_thread(self.llm.generate_response, prompt)
                 
@@ -252,7 +267,7 @@ class ScaffoldingAgent(BaseAgent):
 
         current_fails = active_plan.get('failed_attempts', 0)
 
-        evaluation = await asyncio.to_thread(self._evaluate_step_progress, state.query, current_step, context_text, current_fails)
+        evaluation = await asyncio.to_thread(self._evaluate_step_progress, state.query, current_step, context_text, current_fails, state.rung_cap)
         answer_text = evaluation.get('feedback', "I couldn't verify that automatically.")
         
         sugg_list = ["I'm stuck", "Stop guided mode"]
@@ -419,7 +434,7 @@ class ScaffoldingAgent(BaseAgent):
             self.logger.error(f"Plan generation failed: {e}")
             return [{"goal": "Solve the problem", "description": "Let's write the code together.", "verification_criteria": "Code validity"}]
 
-    def _evaluate_step_progress(self, user_input: str, current_step: Dict, context: str, failed_attempts: int) -> Dict[str, Any]:
+    def _evaluate_step_progress(self, user_input: str, current_step: Dict, context: str, failed_attempts: int, rung_cap: int = 5) -> Dict[str, Any]:
         """Evaluates student progress on the current step."""
 
         # =========================================================
@@ -485,6 +500,7 @@ class ScaffoldingAgent(BaseAgent):
             "visual_aid": "graph TD...", 
             "pseudocode_hint": "..."
         }}
+        {disclosure_directive(Rung(rung_cap))}
         """
         response = self.llm.generate_response(prompt)
         try:

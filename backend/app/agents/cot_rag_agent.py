@@ -940,7 +940,68 @@ class ChainOfThoughtRAGAgent:
 
         return intent, entities
 
-    def _check_gatekeeping(self, query, intent, entities, username, session_id, force_bypass=False):
+
+    def _apply_cac(self, state, username: str) -> None:
+        """Evaluate CAC once per turn and apply the result to `state`.
+
+        Idempotent, and called from EVERY path that can answer a turn. It used
+        to live inline just above the Socratic hand-off, which meant the two
+        ScaffoldingAgent doors returned before CAC had run at all — no cap, no
+        horizon check, and no cac_access_event row. A learner asking "explain
+        pointers" was governed; the same learner asking "write a program using
+        pointers" was not, because that phrasing routes to a different agent.
+        That is a rephrasing bypass of the control, so the evaluation has to sit
+        in front of all of them rather than in front of the one that happened to
+        be built first.
+
+        `state.rung_cap` stays at CODE (5) unless cac_enforce is on, so this
+        changes no response by itself.
+        """
+        if getattr(state, "cac_evaluated", False) or not state.entities:
+            return
+        try:
+            from app.core import cac_graph, cac_calibration
+            _cac_dec = cac_graph.evaluate(username, state.entities)
+            state.cac_evaluated = True
+            # Count this turn toward the next threshold calibration. Runs
+            # off-thread when due, so the percentile sweep never sits in front
+            # of a learner waiting for an answer.
+            cac_calibration.note_turn()
+            # Phase 4 · the edge bar is carried on state ALWAYS, not only under
+            # enforcement, so the gatekeeper can measure what it would refuse
+            # before it is trusted to refuse anything. `_check_gatekeeping`
+            # consults cac_graph.enforcing() itself to decide which of the two
+            # answers is the one the learner actually gets.
+            state.theta_edge = float(_cac_dec.theta_edge)
+            if cac_graph.enforcing() and not _cac_dec.is_permissive:
+                state.rung_cap = int(_cac_dec.rung_cap)
+                state.cac_reasons = list(_cac_dec.reasons)
+                self.logger.info(
+                    f"\U0001f39a\ufe0f [CAC] disclosure capped at {_cac_dec.rung_cap.label} "
+                    f"for {username}: {'; '.join(_cac_dec.reasons)}")
+
+                # Phase 3 — horizon exceeded: teach the nearest reachable
+                # prerequisite instead. The request is REDIRECTED, never
+                # refused, so the turn still teaches something; the swap is
+                # named in the response rather than performed silently.
+                if not _cac_dec.in_horizon and _cac_dec.redirect_to:
+                    state.redirect_from = (state.entities[0]
+                                           if state.entities else "")
+                    state.redirect_to = _cac_dec.redirect_to
+                    # Retrieval must follow the substitution, or the response
+                    # would be grounded in chunks about the topic we declined
+                    # to teach.
+                    state.entities = [_cac_dec.redirect_to]
+                    state.query = f"Explain {_cac_dec.redirect_to}"
+                    self.logger.info(
+                        f"\u21a9\ufe0f [CAC] horizon redirect for {username}: "
+                        f"'{state.redirect_from}' \u2192 '{state.redirect_to}'")
+        except Exception as e:
+            # Fail open — this layer only narrows, so a fault here must never
+            # become a block. Matches cac_graph.evaluate()'s own contract.
+            self.logger.warning(f"[CAC] cap evaluation failed: {e}")
+
+    def _check_gatekeeping(self, query, intent, entities, username, session_id, force_bypass=False, theta_edge: float = 0.75):
         # 1. Prerequisite Check
         if force_bypass or "anyway" in query.lower() or "i know" in query.lower(): return None # User Override
         
@@ -1009,11 +1070,25 @@ class ChainOfThoughtRAGAgent:
         topic_lower = (topic_name or "").strip().lower()
 
         unknown = []
+        # Phase 4 · the edge threshold. BOTH answers are computed on every turn —
+        # the curriculum's bar and CAC's raised one — and only one is acted on.
+        # cac_graph.enforcing() picks which, so the tightened gate is MEASURED
+        # against real traffic before it is trusted to refuse anyone. A control
+        # never observed refusing the right learners is not ready to refuse any.
+        _raised = theta_edge > 0.75
+        _marginal = []
         for p in all_prereqs:
             p_norm = p.lower()
             
             # A. Check Mastery
-            if knowledge_manager.has_mastered(username, p): 
+            if knowledge_manager.has_mastered(username, p):
+                # Certified under the curriculum — but for an overconfident
+                # learner, ask whether it was cleared comfortably or barely.
+                # They are the case Phase 4 exists for: they passed, and do not
+                # know how narrowly.
+                if _raised and not knowledge_manager.has_mastered(
+                        username, p, theta=theta_edge):
+                    _marginal.append(p)
                 continue
             
             # B. Check Self-Reference (plural handling)
@@ -1048,7 +1123,29 @@ class ChainOfThoughtRAGAgent:
                 continue
                 
             unknown.append(p)
-        
+
+        # Phase 4 · act on the marginal prerequisites gathered above. Logged
+        # whether or not it enforces: shadow mode is how this gate earns the
+        # right to refuse anyone, and a tightening nobody measured is a
+        # tightening nobody can defend.
+        if _marginal:
+            try:
+                from app.core import cac_graph, telemetry
+                _enforced = cac_graph.enforcing()
+                telemetry.log_event(username, "cac_edge_threshold", {
+                    "asked": topic_name, "prereqs_marginal": _marginal,
+                    "theta_edge": theta_edge, "enforced": _enforced,
+                }, session_id=session_id)
+                self.logger.info(
+                    f"\U0001f4d0 [CAC] edge threshold {theta_edge:.2f} "
+                    f"{'REFUSED' if _enforced else 'would refuse'} "
+                    f"{_marginal} for {username}")
+                if _enforced:
+                    unknown.extend(p for p in _marginal if p not in unknown)
+            except Exception as e:
+                # Fail open — a fault in a narrowing layer must never become a block.
+                self.logger.warning(f"[CAC] edge threshold skipped: {e}")
+
         if unknown:
             # Save the user's goal as a STACK (push, don't overwrite)
             existing_goals = current_state.get("pending_goals", [])
@@ -2076,6 +2173,10 @@ class ChainOfThoughtRAGAgent:
         # If the user is in a guided plan, the Scaffolding agent handles the turn —
         # but only after the Sentinel has cleared it.
         if is_in_plan:
+            # CAC before the hand-off, not after: this path returns without ever
+            # reaching the evaluation further down, so without this the guided
+            # track answers with no cap and writes no access event.
+            self._apply_cac(state, username)
             async for event in self.scaffolding.process(state):
                 yield event
             if state.stop_processing: return
@@ -2270,6 +2371,11 @@ class ChainOfThoughtRAGAgent:
 
         # 4. NEW SCAFFOLDING TRIGGERS 
         if not is_in_plan:
+            # Same reason as the active-plan door above. This is the one a
+            # learner reaches by phrasing a question as "write a program that
+            # ..." instead of "explain ...", so it is the cheaper bypass of the
+            # two and the one that hands out code.
+            self._apply_cac(state, username)
             async for event in self.scaffolding.process(state):
                 yield event
             if state.stop_processing: return
@@ -2332,55 +2438,13 @@ class ChainOfThoughtRAGAgent:
             except Exception as e:
                 self.logger.warning(f"[MCRA] response telemetry failed: {e}")
 
-        # --- CAC: disclosure cap for this turn (Phase 2) ---
-        # Evaluated HERE, not in the post-response telemetry block, because a cap
-        # has to exist before the response is generated to be able to shape it.
-        # main.py still logs the decision after the turn; this call is the
-        # consumer-side read. Both go through cac_graph.evaluate(), so shadow mode
-        # and the ablation switches govern them identically.
-        #
-        # state.rung_cap stays at CODE (5) unless cac_enforce is on, so landing
-        # this consumer does not by itself change a single response.
-        if state.entities:
-            try:
-                from app.core import cac_graph, cac_calibration
-                _cac_dec = cac_graph.evaluate(username, state.entities)
-                # Count this turn toward the next threshold calibration. Runs
-                # off-thread when due, so the percentile sweep never sits in
-                # front of a learner waiting for an answer.
-                cac_calibration.note_turn()
-                if cac_graph.enforcing() and not _cac_dec.is_permissive:
-                    state.rung_cap = int(_cac_dec.rung_cap)
-                    state.cac_reasons = list(_cac_dec.reasons)
-                    self.logger.info(
-                        f"🎚️ [CAC] disclosure capped at {_cac_dec.rung_cap.label} "
-                        f"for {username}: {'; '.join(_cac_dec.reasons)}")
-
-                    # Phase 3 — horizon exceeded: teach the nearest reachable
-                    # prerequisite instead. The request is REDIRECTED, never
-                    # refused, so the turn still teaches something; the swap is
-                    # named in the response rather than performed silently.
-                    if not _cac_dec.in_horizon and _cac_dec.redirect_to:
-                        state.redirect_from = (state.entities[0]
-                                               if state.entities else "")
-                        state.redirect_to = _cac_dec.redirect_to
-                        # Retrieval must follow the substitution, or the response
-                        # would be grounded in chunks about the topic we declined
-                        # to teach.
-                        state.entities = [_cac_dec.redirect_to]
-                        state.query = f"Explain {_cac_dec.redirect_to}"
-                        self.logger.info(
-                            f"↩️ [CAC] horizon redirect for {username}: "
-                            f"'{state.redirect_from}' → '{state.redirect_to}'")
-            except Exception as e:
-                # Fail open — this layer only narrows, so a fault here must never
-                # become a block. Matches cac_graph.evaluate()'s own contract.
-                self.logger.warning(f"[CAC] cap evaluation failed: {e}")
+        self._apply_cac(state, username)
 
         # 7. GATEKEEPER CHECK (reviewing students bypass — they proved mastery)
         if state.mastery_level != "reviewing":
             gatekeeper_result = self._check_gatekeeping(
-                state.query, state.intent, state.entities, state.user_id, state.session_id, force_gatekeeper_bypass
+                state.query, state.intent, state.entities, state.user_id, state.session_id, force_gatekeeper_bypass,
+                theta_edge=state.theta_edge
             )
             if gatekeeper_result:
                 try:

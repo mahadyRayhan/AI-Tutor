@@ -172,7 +172,8 @@ class UserKnowledgeManager:
             logger.error(f"Graph validation error for '{concept}': {e}")
             return True  # Permissive on error — don't block valid concepts
 
-    def has_mastered(self, username: str, concept: str) -> bool:
+    def has_mastered(self, username: str, concept: str,
+                     theta: float | None = None) -> bool:
         """
         Checks if a concept has ever been certified (fuzzy match, garbage-aware).
 
@@ -196,10 +197,16 @@ class UserKnowledgeManager:
         )
         # Token-set match (not loose substring): 'char' no longer matches 'character',
         # but a stored 'Variables' still satisfies a prereq named 'Variables and Types'.
-        from app.core.bkt_model import is_current_certified
+        from app.core.bkt_model import is_current_certified, meets_theta
         return any(
             self._concepts_match(concept, r['concept'])
             and is_current_certified(username, r['concept'])
+            # Phase 4 edge threshold. `theta` is None for every caller that has
+            # no CAC decision in hand, which is the ordinary path and behaves
+            # exactly as before. When supplied it is an ADDITIONAL conjunct, so
+            # the raised bar can only ever refuse a prerequisite the curriculum
+            # would have passed — never admit one it would have refused.
+            and (theta is None or meets_theta(username, r['concept'], theta))
             for r in rows
         )
     

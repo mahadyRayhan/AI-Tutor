@@ -33,6 +33,16 @@ class AgentState(BaseModel):
     rung_cap: int = 5
     cac_reasons: List[str] = []      # audit trail for why it was lowered
 
+    # CAC runs on several entry paths (guided/scaffolding as well as Socratic)
+    # and must produce ONE decision per turn: re-evaluating mid-turn could hand
+    # two agents different caps, and the horizon redirect rewrites entities, so
+    # a second pass would read the substituted topic rather than what was asked.
+    cac_evaluated: bool = False
+
+    # Phase 4 · the prerequisite bar CAC set for this turn. THETA_BASE (0.75) is
+    # the curriculum's own floor and means "unchanged"; only ever raised.
+    theta_edge: float = 0.75
+
     # CAC horizon redirect (Phase 3). Both "" when the turn was not redirected.
     # redirect_from is what the learner ASKED for; redirect_to is the nearer
     # prerequisite actually taught. Kept as a pair so the response can name the

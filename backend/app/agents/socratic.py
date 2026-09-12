@@ -87,11 +87,18 @@ class SocraticTutorAgent(BaseAgent):
             # (targeted) -> how to fix (a hint, not the solution) -> optional apply-the-fix.
             # Deliberately NOT the concept scaffold: use-cases and diagrams serve acquisition,
             # not debugging, and only dilute the fix.
-            prompt = self._build_diagnostic_prompt(state.query, context_text, state.user_goal, state.profile)
+            # The debug path emits repair guidance, so it is governed by the same
+            # cap as exposition. Without this a learner capped at HINT could
+            # reach full disclosure simply by pasting code and asking why it
+            # breaks — the same rephrasing bypass the scaffolding door had.
+            prompt = self._build_diagnostic_prompt(state.query, context_text, state.user_goal,
+                                                   state.profile, rung_cap=state.rung_cap)
             style_used = None
         elif state.intent == "COMPLEX_PROBLEM":
             # Provide a high-level architectural plan without scaffolding
-            prompt = self._build_complex_plan_prompt(state.query, context_text, state.user_goal)
+            # Emits a "Starter Skeleton" of real C, so it is capped too.
+            prompt = self._build_complex_plan_prompt(state.query, context_text,
+                                                     state.user_goal, rung_cap=state.rung_cap)
             style_used = None
         else:
             # Default to Concept Explanation
@@ -610,7 +617,8 @@ class SocraticTutorAgent(BaseAgent):
         """, best_style
 
     def _build_diagnostic_prompt(self, query: str, context: str, user_goal: str = None,
-                                 profile: Dict[str, Any] = {}) -> str:
+                                 profile: Dict[str, Any] = {},
+                                 rung_cap: int = 5) -> str:
         """DEBUG / REVIEW mode. The learner has a concrete artifact and a concrete problem;
         the job is to diagnose and guide repair, not to teach the topic from scratch.
 
@@ -638,7 +646,17 @@ class SocraticTutorAgent(BaseAgent):
         fmt.append("## How to Fix\n[Guide the student to the correction: state what must change and why it resolves the error. Do NOT rewrite their whole program or hand over a complete corrected solution — give the rule and a targeted hint so they make the edit themselves.]")
         if prefs.get("show_apply_fix", True):
             fmt.append("## Your Turn: Apply the Fix\n[Ask the student to write the single corrected line or construct themselves. One specific instruction. End the response here — do not add the corrected answer after it.]")
+        # CAC: same two-step as the concept branch — drop the sections this cap
+        # forbids, then state the limit explicitly. Removal only; a cap can
+        # never add a section.
+        if rung_cap < int(Rung.CODE):
+            _cap = Rung(rung_cap)
+            fmt = [x for x in fmt
+                   if not x.lstrip().startswith("## ")
+                   or section_allowed(x.lstrip()[3:].split("\n", 1)[0], _cap)]
         format_rules = "\n\n".join(fmt)
+        if rung_cap < int(Rung.CODE):
+            format_rules += disclosure_directive(Rung(rung_cap))
 
         return f"""
         You are an expert C debugging tutor reviewing a student's own code.
@@ -705,12 +723,19 @@ class SocraticTutorAgent(BaseAgent):
         [A thoughtful question to check their understanding]
         """
 
-    def _build_complex_plan_prompt(self, query: str, context: str, user_goal: str = None) -> str:
+    def _build_complex_plan_prompt(self, query: str, context: str, user_goal: str = None,
+                                   rung_cap: int = 5) -> str:
         goal_instruction = ""
         if user_goal:
             goal_instruction = f"""
             5. **Goal Alignment:** Briefly mention how building this connects to their goal: "{user_goal}".
             """
+
+        # CAC: this prompt is one literal rather than a section list, so the cap
+        # is applied as an explicit limit appended last — it emits a "Starter
+        # Skeleton" of real C, which a capped learner must not receive.
+        _cac_limit = (disclosure_directive(Rung(rung_cap))
+                      if rung_cap < int(Rung.CODE) else "")
 
         return f"""
         You are an expert Software Architect and C Programming Tutor.
@@ -758,4 +783,5 @@ class SocraticTutorAgent(BaseAgent):
         
         ## Why this approach works
         [1-2 sentences explaining why this specific architecture or plan is robust for C programming.]
+        {_cac_limit}
         """

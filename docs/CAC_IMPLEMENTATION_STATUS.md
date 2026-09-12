@@ -278,3 +278,247 @@ The single integration point already exists — the `enforcing()` branch in
   (`UserManager` has no `_save_db`), confirmed by stashing the CAC changes — it
   is not from this work
 - `PRAGMA integrity_check: ok`; replay writes nothing; no test rows left behind
+
+---
+
+# Addendum — scaffolding gate + Phase 4
+
+## The scaffolding bypass (fixed)
+
+CAC was evaluated inline just above the Socratic hand-off. **Both
+`ScaffoldingAgent` entry points return before reaching it** (`cot_rag_agent.py`
+lines 2079 and 2273; the evaluation sat at 2344), so the guided track answered
+with no rung cap, no horizon check, and **no `cac_access_event` row at all**.
+
+```
+"explain pointers"              -> Socratic     -> governed      ✓
+"write a program with pointers" -> Scaffolding  -> not evaluated ✗
+```
+
+Same learner, same topic, one word apart — and the ungoverned path is the one
+that generates code. No sophistication required to reach it; plenty of students
+phrase requests the second way by default.
+
+**Fix.** The evaluation moved into `ChainOfThoughtRAGAgent._apply_cac()`, called
+in front of every answering path, idempotent via `AgentState.cac_evaluated`.
+Idempotence is load-bearing: the horizon redirect rewrites `state.entities`, so
+a second pass would read the substituted topic instead of what was asked, and
+two agents could otherwise hold different caps in one turn.
+
+`ScaffoldingAgent` now also consumes the cap:
+
+| Site | Behaviour under a cap |
+|---|---|
+| new plan (`process`) | declined below `EXAMPLE`; falls through to Socratic |
+| partial-code escalation | carries `disclosure_directive(cap)` |
+| step evaluation | takes `rung_cap`, carries the directive |
+
+A guided plan walks to working code, so starting one discloses at EXAMPLE/CODE
+by construction. Declining rather than degrading is deliberate: a "plan" that
+may not show code is not a scaffold, and the honest outcome is to teach the
+thing that unlocks it.
+
+## Phase 4 — calibration → edge threshold
+
+Implemented, but **not on the input the plan specified**.
+
+The plan sourced "wrong and confident" from `jol_log.confidence_1_5`, a learner
+self-report. Two problems:
+
+1. **Structurally starved.** Written only inside the pop-quiz path, which
+   requires a ≤4-word acknowledgement turn — 0.34% of student messages. 6 rows
+   across 3 learners, and no amount of additional traffic changes that.
+2. **Declared by the subject of the policy.** A learner who notices that
+   admitting confidence tightens their gate stops admitting it. An inferred
+   attribute the subject controls is a weak basis for access control.
+
+`prediction_log.p_bkt_pred` answers the same question from the model's side —
+what the system expected *before* the learner answered — and is written on every
+evidence event: **152 rows across 26 learners**. The learner never sees it and
+cannot declare it.
+
+`learner_model._calibration()` computes it; `build_view` prefers it and falls
+back to self-report. `_signal_calibration` fires when `gap_ratio > 0.5` over at
+least `GAP_MIN_WRONG = 3` misses, and only on concepts 0–1 hops past the
+frontier — tightening everything would be the region gate again, not an edge bar.
+
+### The invariant
+
+`theta_edge` starts at `THETA_BASE = 0.75` (mirroring `bkt_model.THETA_DECERTIFY`)
+and may only rise, toward `THETA_OVERCONFIDENT = 0.90`. `_tighten()` takes the
+**maximum** and clamps at the floor, so the sign constraint is a property of the
+mutator rather than a promise from its callers — a future signal passing a low
+theta cannot open a gate. Asserted as a property over 2000 random inputs.
+
+0.90 is short of `THETA_CERTIFY = 0.95` on purpose: "show me more before you
+build on this", not a re-certification.
+
+### It fires on real data
+
+The first cognitive signal that does:
+
+```
+PathfindersChallenge   48 predictions  12 wrong   7 confident-wrong  gap 0.583  -> theta 0.90
+rayhan_bug_test        11 predictions   3 wrong   2 confident-wrong  gap 0.667  -> theta 0.90
+TEST001                 6 predictions   2 wrong   2 confident-wrong  gap 1.00   -> held (below evidence floor)
+hs_test_user           39 predictions   2 wrong   0 confident-wrong  gap 0.00   -> untouched
+```
+
+2 of 26 learners. `TEST001` at gap 1.00 being held back is the evidence floor
+working, not a miss.
+
+Contrast: Phase 2 fires on 0 learners (quiz-starved), Phase 3 on 0 (thresholds
+above the population maximum — see `CAC_THRESHOLD_CALIBRATION.md`).
+
+## Verification
+
+- `1500` tests pass — `1450` cac_graph, `20` Phase 4, `18` threshold
+  calibration, `12` scaffolding gate
+- Enforcement still gated on `cac_enforce`, off by default; `rung_cap` defaults
+  to CODE, so none of this changes a response until the switch is thrown
+- Real-data runs used a scratchpad COPY of the database, guarded by an assert
+
+## Open
+
+- `_signal_calibration` narrows the decision and records `theta_edge`; **no
+  consumer enforces it yet.** The plan names
+  `user_knowledge_manager.has_certified_prerequisite` as the site. Measurable in
+  shadow mode now; wiring the consumer is a separate, riskier change because it
+  touches the K gate rather than prompt shaping.
+- Phase 2 (`help_seeking`) remains unreachable and has no live substitute.
+  Recommend marking it deferred rather than keeping it on the critical path.
+
+## Phase 4 consumer — the gate now reads `theta_edge`
+
+`_signal_calibration` recorded the raised bar; nothing enforced it. It does now,
+**behind the enforcement switch**, and it measures on every turn regardless.
+
+| Piece | Role |
+|---|---|
+| `bkt_model.meets_theta(u, c, θ)` | do all three DECAYED tiers clear θ? read-only |
+| `knowledge_manager.has_mastered(u, c, theta=None)` | extra conjunct when θ given |
+| `AgentState.theta_edge` | carried on every turn, enforced or not |
+| `_check_gatekeeping(..., theta_edge=)` | computes both answers, acts on one |
+
+`meets_theta` is deliberately **read-only**. `is_mastered` self-heals the
+`is_certified` column as a side effect, which is right for the certification
+question and wrong here: a raised bar is a per-learner access decision, and
+letting it clear a shared column would turn one learner's overconfidence into a
+global de-certification.
+
+The θ conjunct is `AND`, so a raised bar can only ever **refuse** a prerequisite
+the curriculum would have passed — never admit one it would have refused.
+`theta=None` (every pre-existing caller) takes the old path exactly.
+
+### Measure first, enforce second
+
+Both answers are computed every turn. `cac_graph.enforcing()` picks which one
+the learner gets; the other is written to `event_log` as `cac_edge_threshold`
+with `enforced: false`. So the tightened gate accumulates a record of who it
+*would* have refused before it is trusted to refuse anyone — a control never
+observed refusing the right learners is not ready to refuse any.
+
+### Acceptance criterion — met
+
+The plan: *"an overconfident learner fails the gate at P̃=0.85 while a
+calibrated learner passes at the same P̃; property test holds over random
+graphs."* Both hold (`test_cac_edge_gate.py`, `test_cac_calibration_signal.py`).
+0.85 is the separating value: above the curriculum's 0.75, below the raised 0.90.
+
+### On real data, one concrete refusal
+
+```
+PathfindersChallenge  gap 0.583  certified: Strings
+  Strings / quiz   0.982 -> decayed 0.942   >= 0.90  ok
+  Strings / micro  0.998 -> decayed 0.954   >= 0.90  ok
+  Strings / code   0.989 -> decayed 0.839   <  0.90  REFUSED
+```
+
+Worth reading closely: the raw posteriors all clear 0.90. The refusal comes from
+**decay** — the code tier faded from 0.989 to 0.839 over ~18 days. The learner is
+still certified (0.839 > 0.75) and is also overconfident, so the gate says "show
+me Strings again before building on it". That is the intended behaviour, not an
+artifact: `meets_theta` is decay-aware by construction, and stale-plus-
+overconfident is precisely the combination Phase 4 was specified to catch.
+
+`rayhan_bug_test` is overconfident (gap 0.667) with nothing certified, so nothing
+to tighten — correctly untouched.
+
+## Verification
+
+- `1514` tests pass (`+14` edge gate)
+- Regression guard added: `run()` has its own prerequisite loop and no
+  `theta_edge` in scope. The edge block was first applied there by mistake,
+  which would have been a `NameError` on the first CONCEPT/PROBLEM turn through
+  that entry point. A test now asserts `theta_edge` never appears in `run()`.
+
+## Phase 2 verified by simulation — and two more bypasses found
+
+Phase 2's trigger has never fired on real data (`quiz_log` is starved), so the
+mechanism was unverified end to end. Six synthetic learners were seeded into a
+COPY of the database with the rows a real examiner would have written, then
+traced through `DB → _help_seeking → build_view → decide → prompt`.
+
+### The mechanism is correct
+
+| persona | quizzes | skips | give-ups | quality | cap |
+|---|---|---|---|---|---|
+| impulsive | 4 | 6 | 3 | impulsive | **hints** |
+| impulsive (borderline) | 6 | 4 | 1 | impulsive | **hints** |
+| measured | 10 | 1 | 0 | measured | full code |
+| skips, never surrenders | 4 | 6 | 0 | measured | full code |
+| surrenders, but rarely | 20 | 1 | 2 | measured | full code |
+| no history | 0 | 0 | 0 | measured | full code |
+
+Both halves of the conjunction matter and both were verified: skipping without
+surrendering does not trigger it, and surrendering at a low rate does not
+either. Cold start stays uncapped.
+
+### Bug 1 — twelve sections were ungoverned
+
+`section_allowed` fails OPEN on unrecognised headers, deliberately, so an
+unmapped section never blanks a response. The cost is that coverage degrades
+**silently** as prompts evolve. `SECTION_MIN_RUNG` had 13 entries; the prompts
+emit 25. Unmapped, and therefore surviving at every rung including NONE:
+
+```
+diagnostic branch : What's Wrong · Why · How to Fix
+planning branches : Strategy · Visual Logic · Implementation Plan ·
+                    Guiding Question · Architectural Overview ·
+                    System Design (Diagram) · Implementation Phases ·
+                    Why this approach works · Starter Skeleton
+```
+
+`Starter Skeleton` is the serious one — it emits real C.
+
+### Bug 2 — two of four prompt builders never saw the cap
+
+Same shape as the ScaffoldingAgent door, two more doors:
+
+| builder | intent | before |
+|---|---|---|
+| `_build_concept_prompt` | CONCEPT | governed |
+| `_build_diagnostic_prompt` | **DEBUG** | no `rung_cap` parameter at all |
+| `_build_complex_plan_prompt` | **COMPLEX_PROBLEM** | no `rung_cap` parameter at all |
+
+So a learner capped at HINT could reach full disclosure by **pasting code and
+asking why it breaks** — the debug path answered with no cap and no directive.
+`_build_complex_plan_prompt` emits a `Starter Skeleton` of real C on the same
+terms.
+
+Both now take `rung_cap` and apply it: the diagnostic branch filters its section
+list and appends the directive, matching the concept branch step for step; the
+plan prompt is a single literal, so the directive is appended last.
+
+### The guard against a fourth door
+
+`test_cac_section_coverage.py` scans `socratic.py` for every emitted `## `
+header and fails if one is missing from `SECTION_MIN_RUNG`, and asserts every
+prompt builder both **accepts** `rung_cap` and **uses** `disclosure_directive`.
+That converts the silent runtime fail-open into a loud test failure — which is
+what would have caught all three bypasses when they were written.
+
+## Verification
+
+- `1526` tests pass (`+12` section coverage)
+- Simulation: 11/11 checks, against a scratchpad COPY guarded by an assert

@@ -326,10 +326,12 @@ def main() -> int:
           + ("   <- FLOOR: C hooks see nothing, K baseline only"
              if a.c_state == "none"
              else "   <- CEILING: today's profile on every turn, over-states firing"))
-    print(f"  note              : cac_edge / cac_evidence_weight / cac_breakglass are "
-          f"still\n                      stubs (Phases 4-6). cac_rung and cac_horizon "
-          f"are live and\n                      require --c-state current to "
-          f"contribute anything.")
+    print(f"  note              : cac_evidence_weight / cac_breakglass are still stubs "
+          f"(Phases 5-6).\n                      cac_rung, cac_horizon and cac_edge are "
+          f"live and require\n                      --c-state current to contribute "
+          f"anything. The rung column below\n                      is driven mostly by "
+          f"the K region gate, not by cac_rung:\n                      help-seeking "
+          f"needs quiz_log, which is starved.")
     print()
 
     stats, redirects, rungs, per_user, off_graph, fired, edges = replay(

@@ -228,10 +228,28 @@ SECTION_MIN_RUNG: dict[str, Rung] = {
     "Your Turn: Apply the Fix":    Rung.HINT,
     "Challenge":                   Rung.HINT,
     "Quick Check":                 Rung.HINT,
+    # Diagnostic branch (`_build_diagnostic_prompt`). The learner has a broken
+    # artifact; these narrow attention to the defect without repairing it for
+    # them, which is what HINT means. "How to Fix" stays at HINT because its own
+    # instructions forbid a corrected program — it states the rule and stops.
+    "What's Wrong":                Rung.HINT,
+    "Why":                         Rung.ORIENT,
+    "How to Fix":                  Rung.HINT,
+    # Planning branches. Prose and diagrams that describe an approach without
+    # writing it.
+    "Strategy":                    Rung.ORIENT,
+    "Architectural Overview":      Rung.ORIENT,
+    "Why this approach works":     Rung.ORIENT,
+    "Visual Logic":                Rung.DIAGRAM,
+    "System Design (Diagram)":     Rung.DIAGRAM,
+    "Implementation Plan":         Rung.HINT,
+    "Implementation Phases":       Rung.HINT,
+    "Guiding Question":            Rung.HINT,
     # Code the learner did not write.
     "Example":                     Rung.EXAMPLE,
     "Worked Example":              Rung.EXAMPLE,
     "Example from Class":          Rung.EXAMPLE,
+    "Starter Skeleton":            Rung.EXAMPLE,
 }
 
 
@@ -303,6 +321,30 @@ def disclosure_directive(cap: Rung) -> str:
     return common + "- Do not answer this request."
 
 
+# Phase 4 · prerequisite-edge thresholds.
+#
+# THETA_BASE mirrors bkt_model.THETA_DECERTIFY: what the CURRICULUM demands to
+# keep an edge open, independent of any cognitive state. It is the floor, and
+# `_signal_calibration` may only move away from it upward — the same sign
+# constraint the rung ladder and the horizon obey, expressed for a continuous
+# quantity instead of an enum.
+#
+# THETA_OVERCONFIDENT is where an overconfident learner's bar sits instead. The
+# gap it opens (0.75 -> 0.90) is deliberately short of THETA_CERTIFY (0.95):
+# the intent is "show me more before you build on this", not a re-certification.
+THETA_BASE = 0.75
+THETA_OVERCONFIDENT = 0.90
+
+# A learner is treated as overconfident when more than half of what they got
+# wrong, they got wrong while the model expected them to be right.
+GAP_TIGHTEN = 0.5
+
+# ...and only once there is enough to say so. Three misses is the same evidence
+# floor bkt_model.N_MIN applies before certifying: one surprising miss is a bad
+# day, and tightening a gate on it would punish the ordinary case.
+GAP_MIN_WRONG = 3
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 3. Learner view — the only thing decide() is allowed to read
 # ══════════════════════════════════════════════════════════════════════════
@@ -325,6 +367,7 @@ class LearnerView:
     # C signals, each None when there is not yet enough evidence to compute it.
     cognitive_load: float | None = None       # 0..1, higher = more loaded
     gap_ratio: float | None = None            # 0..1, wrong-and-confident share
+    gap_n_wrong: int = 0                      # denominator behind gap_ratio
     help_seeking_quality: str | None = None   # "impulsive" | "measured"
     rushing: bool = False                     # fast answers on low mastery
     grit_index: float | None = None           # 0..1, higher = more persistent
@@ -368,6 +411,13 @@ class Decision:
     # recalibration silently re-interprets it under thresholds that were not in
     # force when the learner was actually there.
     policy_version: int = 1
+
+    # Phase 4 · the prerequisite bar this learner must clear on the edge they are
+    # standing at. Starts at the curriculum's own THETA_DECERTIFY and may only be
+    # raised: C tightens an edge, never loosens one below what the curriculum
+    # already demands. Carried explicitly rather than recomputed downstream so
+    # the number that gated a learner is in the audit row, not inferred from it.
+    theta_edge: float = THETA_BASE
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -391,21 +441,31 @@ class Decision:
             "beyond_region": self.beyond_region,
             "revealed_edge": list(self.revealed_edge) if self.revealed_edge else None,
             "policy_version": self.policy_version,
+            "theta_edge": round(self.theta_edge, 3),
             "reasons": list(self.reasons),
         }
 
 
 def _tighten(decision: Decision, *, rung: Rung | None = None,
              horizon: bool | None = None, edge: bool | None = None,
+             theta: float | None = None,
              redirect: str | None = None, reason: str) -> None:
     """The ONLY way a signal may alter a decision, and it only ever narrows.
 
-    Rung takes the minimum; the booleans can go True→False but never back. This
-    is where the "C can only narrow" invariant is enforced structurally — a signal
-    has no vocabulary for widening, so no future phase can accidentally add one
-    without editing this function and noticing what it is doing.
+    Rung takes the minimum; the booleans can go True→False but never back; theta
+    takes the MAXIMUM, because for a prerequisite bar "narrower" means higher.
+    This is where the "C can only narrow" invariant is enforced structurally — a
+    signal has no vocabulary for widening, so no future phase can accidentally
+    add one without editing this function and noticing what it is doing.
     """
     changed = False
+    if theta is not None and theta > decision.theta_edge:
+        # max(), and never below THETA_BASE: an edge may be made harder than the
+        # curriculum demands, never easier. Clamping here rather than trusting
+        # callers keeps the floor a property of the mutator, so a future signal
+        # passing a low theta cannot quietly open a gate.
+        decision.theta_edge = max(THETA_BASE, theta)
+        changed = True
     if rung is not None and rung < decision.rung_cap:
         decision.rung_cap = rung
         changed = True
@@ -570,8 +630,55 @@ def _signal_cognitive_load(view: LearnerView, topo: Topology,
 
 def _signal_calibration(view: LearnerView, topo: Topology,
                         concepts: set[str], decision: Decision) -> None:
-    """Phase 4 · switch `cac_edge` — overconfidence tightens a prerequisite edge."""
-    return
+    """Phase 4 · switch `cac_edge` — overconfidence tightens a prerequisite edge.
+
+    A learner who is wrong while the model expected them to be right does not
+    know they are wrong, so they will not come back and repair it — they will
+    build the next topic on the broken idea. That is the case worth spending a
+    control on. A learner who is wrong and expected to be wrong is simply
+    learning, and nothing here should touch them.
+
+    The response is to raise the bar on the edge they are standing at, from the
+    curriculum's THETA_BASE toward THETA_OVERCONFIDENT: show more before
+    building on this. It is never a refusal, and never a reduction — `_tighten`
+    takes the max and clamps at THETA_BASE, so this signal cannot open a gate
+    the curriculum had closed.
+
+    SOURCE NOTE. `view.gap_ratio` is fed from `learner_model._calibration`
+    (model-side, `prediction_log.p_bkt_pred`) rather than `_slip_vs_gap`
+    (self-reported `jol_log.confidence_1_5`). Self-report is both structurally
+    starved here and declared by the subject of the policy: a learner who
+    notices that admitting confidence tightens their gate stops admitting it.
+    Behaviour the learner never sees is the sounder basis.
+    """
+    if view.gap_ratio is None:
+        return                                  # cold start is not suspicion
+    if view.gap_n_wrong < GAP_MIN_WRONG:
+        return                                  # one bad day is not a pattern
+    if view.gap_ratio <= GAP_TIGHTEN:
+        return
+
+    certified = set(view.certified)
+    frontier = topo.frontier(certified)
+    if not frontier:
+        return
+
+    # Only concepts standing directly on an edge out of the frontier are
+    # affected. Tightening everything would make this a blanket restriction
+    # rather than an edge threshold, and would be indistinguishable from the
+    # region gate already in place.
+    at_edge = sorted(c for c in concepts
+                     if c not in certified
+                     and topo.hops_from(frontier, c) in (0, 1))
+    if not at_edge:
+        return
+
+    _tighten(
+        decision, edge=False, theta=THETA_OVERCONFIDENT,
+        reason=f"C/calibration {view.gap_ratio:.2f} over {view.gap_n_wrong} misses: "
+               f"'{at_edge[0]}' needs P\u0303 \u2265 {THETA_OVERCONFIDENT:.2f} "
+               f"(curriculum floor {THETA_BASE:.2f})",
+    )
 
 
 # Signal -> the switch that connects it. `decide()` consults this so a signal can
@@ -679,6 +786,7 @@ def build_view(username: str) -> LearnerView:
             logger.debug(f"[cac] certification read failed for {topic}: {e}")
 
     load = gap = grit = None
+    gap_n = 0
     quality = None
     rushing = False
     try:
@@ -686,7 +794,16 @@ def build_view(username: str) -> LearnerView:
         p = get_learner_profile(username)
         cog, meta = p.get("cognitive", {}), p.get("metacognitive", {})
         load = (cog.get("cognitive_load") or {}).get("index")
-        gap = (cog.get("error_slip_vs_gap") or {}).get("gap_ratio")
+        # Model-side calibration first, self-report only as a fallback. See
+        # `_signal_calibration` for why: jol_log is structurally starved AND
+        # declared by the subject of the policy, while p_bkt_pred is neither.
+        _cal = cog.get("calibration") or {}
+        gap = _cal.get("gap_ratio")
+        gap_n = int(_cal.get("n_wrong") or 0)
+        if gap is None:
+            _sr = cog.get("error_slip_vs_gap") or {}
+            gap = _sr.get("gap_ratio")
+            gap_n = int(_sr.get("n_wrong") or 0)
         quality = (meta.get("help_seeking") or {}).get("quality")
         rushing = bool((meta.get("pacing") or {}).get("rushing"))
         grit = (meta.get("persistence") or {}).get("grit_index")
@@ -695,7 +812,8 @@ def build_view(username: str) -> LearnerView:
 
     return LearnerView(
         username=username, certified=frozenset(certified),
-        cognitive_load=load, gap_ratio=gap, help_seeking_quality=quality,
+        cognitive_load=load, gap_ratio=gap, gap_n_wrong=gap_n,
+        help_seeking_quality=quality,
         rushing=rushing, grit_index=grit,
     )
 
