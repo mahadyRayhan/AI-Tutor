@@ -528,10 +528,47 @@ def test_redirect_never_becomes_a_refusal():
 
 
 def test_revealed_edge_is_recorded_for_e15():
-    """Policy leakage has to be measurable without re-instrumenting this path."""
+    """Policy leakage has to be measurable without re-instrumenting this path.
+
+    From READY the frontier is {Arrays, ...}, so Strings is one hop out: the
+    region check and the one-hop horizon name the same substitute and there is
+    nothing to arbitrate. The edge recorded is the one actually disclosed.
+    """
     d = decide(_loaded(0.85), ["File I/O"])
+    assert d.redirect_to == "Strings"
     assert d.audit()["revealed_edge"] == ["Strings", "File I/O"]
-    assert any("reveals edge" in r for r in d.reasons)
+
+
+def test_redirect_never_exceeds_the_horizon_that_produced_it():
+    """Regression: the two signals disagreed and the audit record lied.
+
+    From {Variables} the frontier is {Control Flow, Pointers}. The region check
+    names Strings — File I/O's direct prerequisite, two hops out — while a load
+    of 1.0 holds the learner to one. The region check ran first, `_tighten`
+    would not overwrite an existing redirect, so the horizon's nearer target was
+    dropped while its reason still claimed the substitution had been made and
+    `revealed_edge` named an edge nobody was shown. The learner was pointed at a
+    topic beyond the horizon that was still in force.
+    """
+    v = LearnerView("u", frozenset({"Variables"}), cognitive_load=1.0)
+    d = decide(v, ["File I/O"], region_gate=True)
+    assert d.in_horizon is False
+    assert d.redirect_to == "Arrays", "redirect must respect the contracted horizon"
+    assert d.revealed_edge == ("Arrays", "File I/O"), \
+        "the recorded leak must be the edge actually disclosed"
+    # Both findings stay on the record; the decision is their conjunction.
+    assert any("K/region" in r for r in d.reasons)
+    assert any("C/load" in r for r in d.reasons)
+
+
+def test_nearest_redirect_wins_not_first_writer():
+    """The rule is a minimum over distance from the frontier."""
+    base = frozenset({"Variables"})
+    far = decide(LearnerView("u", base), ["File I/O"], region_gate=True)
+    near = decide(LearnerView("u", base, cognitive_load=1.0),
+                  ["File I/O"], region_gate=True)
+    assert far.redirect_to == "Strings", "no load: the direct prerequisite stands"
+    assert near.redirect_to == "Arrays", "under load: the nearer node wins"
 
 
 def test_no_redirect_means_no_revealed_edge():

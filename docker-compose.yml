@@ -31,6 +31,18 @@ services:
       - SAGE_SESSION_HOURS
       - SAGE_COOKIE_SECURE
       - PYTHONPATH=/app
+      # CAC switches. Compose only forwards variables named here, so without
+      # these lines `export SAGE_CAC_ENFORCE_ENABLED=true` on the host never
+      # reaches the app and the layer stays silently in shadow mode. Unset on the
+      # host they resolve to their code defaults (enforce OFF, region gate ON),
+      # so listing them changes nothing until one is deliberately set.
+      - SAGE_CAC_ENFORCE_ENABLED
+      - SAGE_CAC_REGION_GATE_ENABLED
+      - SAGE_CAC_RUNG_ENABLED
+      - SAGE_CAC_HORIZON_ENABLED
+      - SAGE_CAC_EDGE_ENABLED
+      - SAGE_CAC_RECALIBRATE_EVERY
+      - SAGE_ABLATE
     volumes:
       # Maps host folder to the root (for absolute path code)
       # - ./database:/database

@@ -412,6 +412,13 @@ class Decision:
     # force when the learner was actually there.
     policy_version: int = 1
 
+    # Hops from the frontier to `redirect_to`, or None when unknown. Kept so
+    # `_tighten` can pick the NEAREST redirect without a topology reference:
+    # two signals may both name a substitute, and the nearer one is the binding
+    # constraint. Not part of audit() — it exists to order redirects, not to be
+    # reported.
+    redirect_hops: int | None = None
+
     # Phase 4 · the prerequisite bar this learner must clear on the edge they are
     # standing at. Starts at the curriculum's own THETA_DECERTIFY and may only be
     # raised: C tightens an edge, never loosens one below what the curriculum
@@ -449,7 +456,8 @@ class Decision:
 def _tighten(decision: Decision, *, rung: Rung | None = None,
              horizon: bool | None = None, edge: bool | None = None,
              theta: float | None = None,
-             redirect: str | None = None, reason: str) -> None:
+             redirect: str | None = None, redirect_hops: int | None = None,
+             reason: str) -> None:
     """The ONLY way a signal may alter a decision, and it only ever narrows.
 
     Rung takes the minimum; the booleans can go True→False but never back; theta
@@ -475,8 +483,18 @@ def _tighten(decision: Decision, *, rung: Rung | None = None,
     if edge is False and decision.edge_ok:
         decision.edge_ok = False
         changed = True
-    if redirect is not None and decision.redirect_to is None:
+    if redirect is not None and (
+            decision.redirect_to is None
+            # Nearer wins. A learner held to one hop must not be sent to a
+            # prerequisite two hops out just because the region check named it
+            # first: that redirect contradicts the horizon that is still in
+            # force, and it made the audit record claim a substitution the
+            # decision had not in fact made.
+            or (redirect_hops is not None
+                and (decision.redirect_hops is None
+                     or redirect_hops < decision.redirect_hops))):
         decision.redirect_to = redirect
+        decision.redirect_hops = redirect_hops
         changed = True
     if changed:
         decision.reasons.append(reason)
@@ -617,15 +635,20 @@ def _signal_cognitive_load(view: LearnerView, topo: Topology,
         return
 
     nearer = _nearest_within(topo, frontier, worst, d_max, certified)
-    if nearer is not None:
-        decision.revealed_edge = (nearer, worst)
     _tighten(
         decision, horizon=False, redirect=nearer,
+        redirect_hops=(topo.hops_from(frontier, nearer) if nearer else None),
         reason=f"C/load {view.cognitive_load:.2f}: '{worst}' is {worst_d} hops "
                f"past the frontier, limit {d_max}"
-               + (f"; redirect to '{nearer}' (reveals edge {nearer}->{worst})"
-                  if nearer else "; no nearer node to offer"),
+               + (f"; nearest reachable is '{nearer}'" if nearer
+                  else "; no nearer node to offer"),
     )
+    # The edge that LEAKS is the one actually named to the learner, which may be
+    # a different signal's redirect if that one was nearer. Reading it off the
+    # decision after the fact keeps E15 measuring what was really disclosed
+    # rather than what this signal proposed.
+    if decision.redirect_to:
+        decision.revealed_edge = (decision.redirect_to, worst)
 
 
 def _signal_calibration(view: LearnerView, topo: Topology,
@@ -736,15 +759,18 @@ def decide(view: LearnerView, query_concepts: Iterable[str],
         missing = topo.missing_prerequisites(target, certified)
         hint = sorted(missing)[0] if missing else None
         decision.beyond_region = True
+        _hint_hops = (topo.hops_from(topo.frontier(certified), hint)
+                      if hint else None)
         if region_gate:
             _tighten(
-                decision, redirect=hint, rung=Rung.ORIENT,
+                decision, redirect=hint, redirect_hops=_hint_hops, rung=Rung.ORIENT,
                 reason=f"K/region: '{target}' is beyond the frontier"
                        + (f"; answer briefly and motivate '{hint}'" if hint
                           else "; answer briefly"),
             )
         else:
             decision.redirect_to = hint
+            decision.redirect_hops = _hint_hops
             decision.reasons.append(
                 f"K/region (advisory): '{target}' is beyond the frontier"
                 + (f"; '{hint}' would help first" if hint else ""))
