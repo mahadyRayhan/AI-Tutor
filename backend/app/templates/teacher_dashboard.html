@@ -728,6 +728,7 @@
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— how well the mastery model's predictions have matched observed outcomes (the model grading itself)</span>
             </h2>
             <div id="mhBadge"></div>
+            <div id="mhCohorts"></div>
             <details style="margin-top:10px;">
                 <summary style="cursor:pointer; color:#7f8c8d; font-size:0.85rem; user-select:none;">🔧 Developer detail — calibration curve &amp; Brier scores</summary>
                 <div id="mhStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
@@ -1166,6 +1167,53 @@
                 </div>`;
             }
         }
+        // ── Evidence vs prior ────────────────────────────────────────────────
+        // A prior is not a prediction. Scored together, a class where most
+        // predictions are first-encounters produces a headline number that is
+        // mostly a measurement of the starting constants, not of the learning —
+        // and those call for different fixes, so they are shown apart.
+        const coh = document.getElementById('mhCohorts');
+        if (coh) {
+            const ev = (d.cohorts || {}).evidence, pr = (d.cohorts || {}).prior;
+            if (!ev || !pr || (!ev.n && !pr.n)) { coh.innerHTML = ''; }
+            else {
+                const priorShare = d.n ? Math.round(100 * pr.n / d.n) : 0;
+                const card = (title, c, note) => {
+                    if (!c || !c.n) return '';
+                    const s = c.reliability_score;
+                    const col = s == null ? '#999' : s >= 90 ? '#27ae60' : s >= 75 ? '#2a78d6'
+                              : s >= 60 ? '#e67e22' : '#e74c3c';
+                    return `<div style="flex:1; min-width:250px; background:#fff; border:1px solid #e5e7eb;
+                                 border-left:4px solid ${col}; border-radius:10px; padding:12px 15px;">
+                        <div style="font-size:0.78rem; font-weight:700; color:#2c3e50;">${title}</div>
+                        <div style="display:flex; align-items:baseline; gap:8px; margin:4px 0 2px;">
+                            <span style="font-size:1.7rem; font-weight:800; color:${col};
+                                         font-variant-numeric:tabular-nums; line-height:1;">${s == null ? '—' : s}</span>
+                            <span style="font-size:0.8rem; color:${col}; font-weight:600;">${c.reliability_label || ''}</span>
+                        </div>
+                        <div style="font-size:0.76rem; color:#7f8c8d;">
+                            predicts ${Math.round((c.avg_predicted || 0) * 100)}% ·
+                            observed ${Math.round((c.avg_observed || 0) * 100)}% ·
+                            ${c.n} predictions</div>
+                        <div style="font-size:0.74rem; color:#98a0a6; margin-top:5px; line-height:1.45;">${note}</div>
+                    </div>`;
+                };
+                const dominated = priorShare >= 50
+                    ? `<div style="font-size:0.78rem; color:#9a6207; background:#fdf8ee;
+                             border:1px solid #f2dcae; border-radius:8px; padding:9px 12px; margin-top:10px;">
+                         <b>${priorShare}% of all scored predictions are first encounters.</b>
+                         The headline score above is therefore mostly a measurement of the starting
+                         priors, not of how well the model learns. Read the two cards separately.</div>`
+                    : '';
+                coh.innerHTML = `<div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:12px;">
+                        ${card('With evidence', ev,
+                               'Predictions made after the model had already seen this student on this concept. This is how well it actually learns.')}
+                        ${card('First encounter (prior only)', pr,
+                               'The very first prediction per student &amp; concept — made from the configured prior, before any evidence. Measures the starting constants.')}
+                    </div>${dominated}`;
+            }
+        }
+
         let cmp = null;
         if (d.brier_bkt != null && d.brier_eff != null) {
             cmp = d.brier_eff < d.brier_bkt - 1e-6 ? 'better'
@@ -1174,8 +1222,16 @@
         if (statsEl) {
             statsEl.innerHTML =
                 mhTile(d.brier_eff != null ? d.brier_eff.toFixed(3) : '—', 'Brier — effective (acted-on)', 'lower is better · 0 = perfect', '#2a78d6') +
+                // "identical to raw" was reported without saying WHY. The effective
+                // prediction only differs from raw BKT when the student has recorded a
+                // self-assessment for that concept, so the honest subtitle is how often
+                // that actually happened — otherwise an inert hook reads as a finding.
                 mhTile(d.brier_bkt != null ? d.brier_bkt.toFixed(3) : '—', 'Brier — raw BKT',
-                       cmp === 'better' ? 'adaptation improves calibration ↓' : cmp === 'worse' ? 'adaptation worse here ↑' : cmp === 'same' ? 'identical to raw on this data' : '', '#eb6834') +
+                       d.eff_differs_n === 0
+                         ? 'adaptation never fired — no self-assessments logged'
+                         : (cmp === 'better' ? `adaptation improves calibration ↓ (fired on ${d.eff_differs_pct}% of predictions)`
+                         : cmp === 'worse' ? `adaptation worse here ↑ (fired on ${d.eff_differs_pct}% of predictions)`
+                         : `same score — adaptation fired on only ${d.eff_differs_pct}% of predictions`), '#eb6834') +
                 mhTile(d.n, 'Predictions scored', `${d.n_users} learners`, '#2c3e50');
         }
 

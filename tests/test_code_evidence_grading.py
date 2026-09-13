@@ -238,16 +238,48 @@ class TestDecayDoesNotEraseWrongAnswers:
         p0 = EVIDENCE_CONFIG["quiz"]["P_L0"]
         assert self._decay(0.051, 5) < p0, "decay reset a wrong answer back to the prior"
 
-    def test_low_posterior_recovers_only_slowly(self):
-        five_sec = self._decay(0.051, 5)
-        one_day = self._decay(0.051, 86400)
-        thirty_days = self._decay(0.051, 86400 * 30)
-        assert five_sec < one_day < thirty_days, "recovery must be monotone in elapsed time"
-        assert thirty_days < 0.30, "should still be climbing toward the prior, not at it"
+    def test_low_posterior_does_not_recover_with_time(self):
+        """Replaces `test_low_posterior_recovers_only_slowly`.
+
+        That test asserted the posterior climbs toward the prior as time passes —
+        `five_sec < one_day < thirty_days`. Decay is now one-directional, so that
+        premise is gone by design, not by accident: waiting is not evidence. What
+        the test class exists to protect — a wrong answer is not erased — is now
+        guaranteed more strongly, because the value does not move at all.
+        """
+        assert self._decay(0.051, 5) == 0.051
+        assert self._decay(0.051, 86400) == 0.051
+        assert self._decay(0.051, 86400 * 30) == 0.051
 
     def test_high_posterior_still_decays_downward(self):
         """The intended behaviour must be unchanged."""
         assert self._decay(0.90, 86400) < 0.90
+
+    def test_time_alone_never_raises_mastery(self):
+        """Decay is one-directional: waiting is not evidence.
+
+        The exponential asymptotes to the prior from BOTH directions, so a
+        posterior below the prior used to drift up on elapsed time alone. Harmless
+        at P_L0 = 0.30; at the measured 0.78 a wrong answer at 0.051 recovered to
+        0.615 in a month — the erased-wrong-answer bug in slow motion.
+        """
+        for p in (0.001, 0.051, 0.20, 0.50, 0.78, 0.95):
+            for secs in (5, 3600, 86400, 86400 * 7, 86400 * 30, 86400 * 365):
+                assert self._decay(p, secs) <= p, f"p={p} rose after {secs}s idle"
+
+    def test_a_wrong_answer_survives_a_month_of_silence(self):
+        """The concrete case that motivated the change."""
+        assert self._decay(0.051, 86400 * 30) == 0.051
+
+    def test_recovery_is_earned_not_waited_for(self):
+        """One correct answer must still lift a crushed posterior.
+
+        Freezing below the prior is only defensible because the ordinary BKT
+        update remains the way back up.
+        """
+        from app.core.bkt_model import EVIDENCE_CONFIG, _bkt_step
+        after = _bkt_step(0.051, True, EVIDENCE_CONFIG["quiz"])
+        assert after > 0.051 * 2, f"a correct answer barely moved it: {after}"
         assert self._decay(0.90, 86400 * 30) < self._decay(0.90, 86400)
 
     def test_decay_stays_in_the_unit_interval(self):

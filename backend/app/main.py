@@ -2474,13 +2474,17 @@ async def get_model_health(_t: dict = Depends(verify_teacher)):
     curve, so an instructor can see the model's track record before trusting a
     certification decision. Honest-by-design: it shows the model grading itself.
     """
+    # Ordered, because each prediction is classified by how much evidence the model
+    # had when it made it — and that is its position in the (student, concept, tier)
+    # sequence. The FIRST prediction for a triple is made from the prior alone.
     rows = [r for r in db.fetch_all(
-        "SELECT username, p_bkt_pred, p_eff_pred, is_correct FROM prediction_log"
+        "SELECT username, concept, tier, p_bkt_pred, p_eff_pred, is_correct "
+        "FROM prediction_log ORDER BY ts_utc, id"
     ) if r["is_correct"] is not None]
     n = len(rows)
     if n == 0:
         return {"n": 0, "n_users": 0, "brier_eff": None, "brier_bkt": None,
-                "bins_eff": [], "bins_bkt": []}
+                "bins_eff": [], "bins_bkt": [], "cohorts": {}}
 
     def brier(pairs):
         return round(sum((p - y) ** 2 for p, y in pairs) / len(pairs), 4) if pairs else None
@@ -2500,13 +2504,8 @@ async def get_model_health(_t: dict = Depends(verify_teacher)):
                 })
         return out
 
-    eff = [(r["p_eff_pred"], r["is_correct"]) for r in rows if r["p_eff_pred"] is not None]
-    bkt = [(r["p_bkt_pred"], r["is_correct"]) for r in rows if r["p_bkt_pred"] is not None]
-    n_users = db.fetch_one("SELECT COUNT(DISTINCT username) c FROM prediction_log")["c"]
-
-    # --- Single instructor-facing reliability value (0–100) from the effective preds. ---
-    # Expected Calibration Error: bin-size-weighted gap between predicted and observed;
-    # reliability = 100·(1 − ECE). One honest number an instructor can read without stats.
+    # Expected Calibration Error: bin-size-weighted gap between predicted and
+    # observed. reliability = 100·(1 − ECE) — one honest number, no stats needed.
     def ece(pairs, nb=10):
         if not pairs:
             return None
@@ -2521,39 +2520,86 @@ async def get_model_health(_t: dict = Depends(verify_teacher)):
                 e += (len(b) / len(pairs)) * abs(pm - am)
         return e
 
-    e_eff = ece(eff)
-    rel_score = round(100 * (1 - e_eff)) if e_eff is not None else None
-    avg_p = sum(p for p, _ in eff) / len(eff) if eff else None
-    avg_y = sum(y for _, y in eff) / len(eff) if eff else None
-    if avg_p is None:
-        rel_dir = None
-    elif avg_p < avg_y - 0.05:
-        rel_dir = "under"    # the model predicts lower than students actually perform
-    elif avg_p > avg_y + 0.05:
-        rel_dir = "over"     # the model predicts higher than students perform
-    else:
-        rel_dir = "well"
-    if rel_score is None:
-        rel_label = None
-    elif rel_score >= 90:
-        rel_label = "Reliable"
-    elif rel_score >= 75:
-        rel_label = "Mostly reliable"
-    elif rel_score >= 60:
-        rel_label = "Use with caution"
-    else:
-        rel_label = "Unreliable"
+    def label_for(score):
+        if score is None:
+            return None
+        if score >= 90:
+            return "Reliable"
+        if score >= 75:
+            return "Mostly reliable"
+        if score >= 60:
+            return "Use with caution"
+        return "Unreliable"
+
+    def summarise(subset):
+        """Brier, reliability and curve for one cohort of predictions."""
+        eff = [(r["p_eff_pred"], r["is_correct"]) for r in subset if r["p_eff_pred"] is not None]
+        bkt = [(r["p_bkt_pred"], r["is_correct"]) for r in subset if r["p_bkt_pred"] is not None]
+        e = ece(eff)
+        score = round(100 * (1 - e)) if e is not None else None
+        avg_p = sum(p for p, _ in eff) / len(eff) if eff else None
+        avg_y = sum(y for _, y in eff) / len(eff) if eff else None
+        if avg_p is None:
+            direction = None
+        elif avg_p < avg_y - 0.05:
+            direction = "under"   # predicts lower than students actually perform
+        elif avg_p > avg_y + 0.05:
+            direction = "over"
+        else:
+            direction = "well"
+        return {
+            "n": len(subset),
+            "brier_eff": brier(eff), "brier_bkt": brier(bkt),
+            "bins_eff": reliability(eff), "bins_bkt": reliability(bkt),
+            "reliability_score": score, "reliability_label": label_for(score),
+            "reliability_dir": direction,
+            "avg_predicted": round(avg_p, 3) if avg_p is not None else None,
+            "avg_observed": round(avg_y, 3) if avg_y is not None else None,
+        }
+
+    # --- Cohort split: a prior is not a prediction ------------------------------
+    # Scoring the model on its own priors measures the STARTING POINT, not the
+    # learning. Both matter, and they call for different fixes — a bad prior is a
+    # constant to re-measure, a bad update is an algorithm to change — so they are
+    # reported apart rather than averaged into one number that hides which is wrong.
+    # (CMP_SC 1050, Sept 2026: 87% of all predictions were first-encounters, so the
+    # single blended score was very nearly a measurement of the priors alone.)
+    seen = set()
+    cold, warm = [], []
+    for r in rows:
+        key = (r["username"], r["concept"], r["tier"])
+        (cold if key not in seen else warm).append(r)
+        seen.add(key)
+
+    n_users = db.fetch_one("SELECT COUNT(DISTINCT username) c FROM prediction_log")["c"]
+    overall = summarise(rows)
+
+    # Does the effective (acted-on) prediction ever actually differ from raw BKT?
+    # It only does when the student has recorded a self-assessment for that concept,
+    # so if this is 0 the two Brier scores being identical is arithmetic, not a
+    # finding — and the adaptation hook is inert.
+    n_differ = sum(1 for r in rows
+                   if r["p_eff_pred"] is not None and r["p_bkt_pred"] is not None
+                   and abs(r["p_eff_pred"] - r["p_bkt_pred"]) > 1e-9)
 
     return {
         "n": n,
         "n_users": n_users,
-        "brier_eff": brier(eff),
-        "brier_bkt": brier(bkt),
-        "bins_eff": reliability(eff),
-        "bins_bkt": reliability(bkt),
-        "reliability_score": rel_score,
-        "reliability_label": rel_label,
-        "reliability_dir": rel_dir,
+        # Back-compatible top-level keys describe the whole set.
+        "brier_eff": overall["brier_eff"],
+        "brier_bkt": overall["brier_bkt"],
+        "bins_eff": overall["bins_eff"],
+        "bins_bkt": overall["bins_bkt"],
+        "reliability_score": overall["reliability_score"],
+        "reliability_label": overall["reliability_label"],
+        "reliability_dir": overall["reliability_dir"],
+        "eff_differs_n": n_differ,
+        "eff_differs_pct": round(100 * n_differ / n, 1) if n else 0.0,
+        "cohorts": {
+            "all": overall,
+            "evidence": summarise(warm),   # the model had seen this student on this concept
+            "prior": summarise(cold),      # first encounter: the prior, untested
+        },
     }
 
 
