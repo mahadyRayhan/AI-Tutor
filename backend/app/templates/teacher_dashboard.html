@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Teacher Command Center</title>
+    <title>Teacher Workspace · SAGE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -35,6 +38,50 @@
         .tab-btn:hover { background: #f2f4f6; }
         .tab-btn.active { background: var(--primary, #2c3e50); color: #fff; }
         .tab-btn.active small { color: rgba(255,255,255,0.75); }
+        /* --- PRELAB SUBMISSIONS ---------------------------------------------
+           Scoped because the global th/td padding (15px) is tuned for four-column
+           tables; this one carries nine and needs to stay readable without a
+           horizontal scrollbar. Colours come from the page's own light palette —
+           an earlier pass used a dark set and washed out on white. */
+        .psub table { min-width: 0; }
+        .psub th { padding: 10px 12px; font-size: 0.72rem; letter-spacing: .03em; }
+        .psub td { padding: 11px 12px; font-size: 0.88rem; }
+        .psub tr:last-child td { border-bottom: none; }
+        .psub tbody tr:hover { background: #faf8fc; }
+        .psub .num { text-align: center; font-variant-numeric: tabular-nums; }
+        .psub .who { font-weight: 600; color: #2c3e50; }
+        .psub .dim { color: #9aa0a6; }
+        .psub .clip { max-width: 230px; overflow: hidden; text-overflow: ellipsis;
+                      white-space: nowrap; }
+
+        /* Verdict + status chips. nowrap so a two-word label never becomes a blob. */
+        .psub .chip { display: inline-block; white-space: nowrap; padding: 3px 9px;
+                      border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+                      border: 1px solid; }
+        .chip-good { color: #1e7e4f; background: #e8f7ef; border-color: #b7e4cb; }
+        .chip-warn { color: #9a6207; background: #fdf3e2; border-color: #f2dcae; }
+        .chip-bad  { color: #b3261e; background: #fdecea; border-color: #f5c3bf; }
+        .chip-mute { color: #6b7280; background: #f3f4f6; border-color: #e0e2e6; }
+
+        /* Review flags: an icon, with the reason on hover.
+           The tooltip lives on <body>, not inside the row. The scroll container
+           around this table sets overflow-x, and CSS turns the other axis into a
+           clipping one too — so any tooltip positioned inside it gets cut off at
+           the table edge, which is exactly what happened to the first row. A
+           fixed-position node parented to <body> escapes every such container. */
+        .psub .flag { display: inline-block; cursor: help;
+                      font-size: 15px; color: #d97706; margin-right: 4px; }
+        #psubTip {
+            position: fixed; z-index: 9999; display: none; max-width: 300px;
+            padding: 10px 12px; border-radius: 9px;
+            background: #2c3e50; color: #fff; font-size: 0.76rem; font-weight: 400;
+            line-height: 1.5; text-align: left;
+            box-shadow: 0 8px 24px rgba(0,0,0,.22);
+            pointer-events: none;   /* never eat the hover that summoned it */
+        }
+        #psubTip b { display: block; margin-bottom: 4px; color: #fcd34d; }
+        .psub .none { color: #d1d5db; }
+
         .grid-container[data-tab] { display: none; }
         .grid-container[data-tab].tab-visible { display: grid; }
 
@@ -304,34 +351,52 @@
     @keyframes pl-rot { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .pl-spin { animation-duration: 2.5s; } }
 </style>
+<link rel="stylesheet" href="/static/css/teacher_dashboard.css?v=ux2">
 </head>
 <body>
 
 <div class="container">
     <!-- HEADER -->
     <div class="header">
-        <h1>👨‍🏫 Teacher Command Center</h1>
+        <div class="brand-block">
+            <p class="brand-kicker">SAGE · Instructor</p>
+            <h1>Teacher workspace</h1>
+        </div>
         <div class="nav-actions">
-            <a href="index.html" class="btn btn-chat">💬 Go to Chatbot</a>
+            <a href="index.html" class="btn btn-chat">Open tutor</a>
             <button onclick="logout()" class="btn btn-logout">Logout</button>
         </div>
     </div>
 
     <!-- TAB NAV: NOW / CLASS / NEXT / SETUP / SYSTEM -->
-    <nav class="tab-nav" id="tabNav">
-        <button class="tab-btn" data-tabkey="NOW"    onclick="showTab('NOW')">Now<small>Who needs me today</small></button>
-        <button class="tab-btn" data-tabkey="CLASS"  onclick="showTab('CLASS')">Class<small>Where everyone stands</small></button>
-        <button class="tab-btn" data-tabkey="NEXT"   onclick="showTab('NEXT')">Next<small>What to teach &amp; prepare</small></button>
-        <button class="tab-btn" data-tabkey="CONTENT" onclick="showTab('CONTENT')">Content<small>Lecture videos</small></button>
-        <button class="tab-btn" data-tabkey="SETUP"  onclick="showTab('SETUP')">Setup<small>Course &amp; users</small></button>
-        <button class="tab-btn" data-tabkey="SYSTEM" onclick="showTab('SYSTEM')">System<small>Is the model trustworthy</small></button>
+    <nav class="tab-nav" id="tabNav" aria-label="Teacher workspace sections">
+        <button type="button" class="tab-btn" data-tabkey="NOW" onclick="showTab('NOW')">Overview</button>
+        <button type="button" class="tab-btn" data-tabkey="CLASS" onclick="showTab('CLASS')">Students</button>
+        <button type="button" class="tab-btn" data-tabkey="NEXT" onclick="showTab('NEXT')">Planning</button>
+        <button type="button" class="tab-btn" data-tabkey="CONTENT" onclick="showTab('CONTENT')">Content</button>
+        <button type="button" class="tab-btn" data-tabkey="SETUP" onclick="showTab('SETUP')">Course setup</button>
+        <button type="button" class="tab-btn" data-tabkey="SYSTEM" onclick="showTab('SYSTEM')">Advanced</button>
     </nav>
 
+    <section class="page-intro" aria-labelledby="tabTitle">
+        <div class="page-intro-copy">
+            <p class="page-kicker" id="tabKicker">Today</p>
+            <h2 id="tabTitle">Overview</h2>
+            <p id="tabDescription">Start with the students and reviews that need attention.</p>
+        </div>
+        <div class="colour-key" aria-label="Status colour key">
+            <span class="key-critical"><i></i>Needs action</span>
+            <span class="key-warning"><i></i>Watch soon</span>
+            <span class="key-info"><i></i>Information</span>
+            <span class="key-success"><i></i>On track</span>
+        </div>
+    </section>
+
     <!-- 0. ACTION TRIAGE — LANDING VIEW (named mechanism per learner, from the 3-tier BKT) -->
-    <div class="grid-container" data-tab="NOW">
+    <div class="grid-container" data-tab="CLASS">
         <!-- Struggle signal from affect_log (~3.3k rows), previously write-only. -->
         <div class="card full-width">
-            <h2>😟 Struggling Students</h2>
+            <h2>Students showing frustration</h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
                 Share of turns showing confusion or frustration. A rate, not a count, so a
                 student is not flagged merely for asking a lot of questions.
@@ -351,8 +416,10 @@
             <div id="affectHot" style="margin:14px 0;"></div>
             <div id="affectBody" style="overflow-x:auto;"></div>
         </div>
-        <div class="card full-width">
-            <h2>🚩 Who needs me today
+    </div>
+    <div class="grid-container" data-tab="NOW">
+        <div class="card full-width overview-primary">
+            <h2>Who needs attention
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— students grouped by what's happening, so one issue is one row. Expand to see who, or act on the whole group.</span>
             </h2>
             <div id="triageCounts" style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0;"></div>
@@ -380,7 +447,7 @@
              this: coverage, engagement and MCQ results were all being collected
              with no way to read them back. -->
         <div class="card full-width">
-            <h2>📊 Lecture Engagement</h2>
+            <h2>Lecture engagement</h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
                 Who watched, how much they actually attended, and how they did on the
                 in-video checkpoints.
@@ -398,8 +465,31 @@
             <div id="analyticsBody" style="overflow-x:auto;"></div>
         </div>
 
+        <!-- Prelab work captured from guided practice. There is no upload step
+             for the student: finishing the last guided step files the run, so
+             this is where the work arrives. -->
         <div class="card full-width">
-            <h2>🎬 Upload a Lecture Recording</h2>
+            <h2>Prelab submissions <span id="prelabSubCount" style="color:#94a3b8; font-weight:400; font-size:13px;"></span></h2>
+            <p style="color:#7f8c8d; font-size:13px; margin:-4px 0 12px;">
+                Captured automatically when a student finishes a prelab in guided mode —
+                nothing is uploaded or submitted by hand. Open a row to read the whole
+                conversation that produced the code.
+            </p>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
+                <select id="prelabSubVideo" onchange="loadPrelabSubmissions()"
+                        style="flex:1; min-width:280px; padding:9px; background:#fff;
+                               border:1px solid #e5e7eb; border-radius:8px; color:#333;
+                               font-family:inherit;">
+                    <option value="">All lectures</option>
+                </select>
+                <button class="btn" onclick="loadPrelabSubmissions()">Refresh</button>
+            </div>
+            <div id="prelabSubBody" style="overflow-x:auto;"></div>
+            <div id="prelabSubDetail" style="display:none; margin-top:16px;"></div>
+        </div>
+
+        <div class="card full-width">
+            <h2>Upload a lecture recording</h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 14px;">
                 Large files are sent in chunks, so a 140&nbsp;MB lecture uploads without timing out.
                 After uploading, attach the file to a video slot in the chapter list below.
@@ -413,12 +503,12 @@
                 <div style="height:8px; background:#1e2430; border-radius:6px; overflow:hidden;">
                     <div id="uploadProgressBar" style="height:100%; width:0%; background:#60a5fa; transition:width .2s;"></div>
                 </div>
-                <div id="uploadStatus" style="font-size:12px; color:#94a3b8; margin-top:6px;"></div>
+                <div id="uploadStatus" style="font-size:12px; color:#94a3b8; margin-top:6px;" aria-live="polite"></div>
             </div>
         </div>
 
         <div class="card full-width">
-            <h2>📁 Unassigned Recordings <span id="unassignedCount" style="color:#94a3b8; font-weight:400; font-size:13px;"></span></h2>
+            <h2>Unassigned recordings <span id="unassignedCount" style="color:#94a3b8; font-weight:400; font-size:13px;"></span></h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
                 Uploaded files not yet attached to any chapter. Students cannot see these.
             </p>
@@ -426,7 +516,7 @@
         </div>
 
         <div class="card full-width">
-            <h2>📚 Course Chapters</h2>
+            <h2>Course chapters</h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
                 From the Flipped Classroom Lecture Recording Plan. A slot with no recording shows as
                 <em>planned</em> — students see it as upcoming rather than missing.
@@ -435,9 +525,9 @@
         </div>
     </div>
 
-    <div class="grid-container" data-tab="SETUP">
+    <div class="grid-container" data-tab="NOW">
         <div class="card full-width">
-            <h2>📬 Pending Reviews</h2>
+            <h2>Pending reviews</h2>
             <div id="inboxList" style="display:grid; gap:10px;">
                 <!-- Items go here -->
             </div>
@@ -445,7 +535,7 @@
     </div>
     <div class="grid-container" data-tab="SETUP">
         <div class="card full-width">
-            <h2>🛠️ User Management</h2>
+            <h2>User management</h2>
             <div class="table-responsive">
                 <table id="userTable">
                     <thead>
@@ -477,7 +567,7 @@
     <!-- 2. RESOURCE & VISIBILITY -->
     <div class="grid-container" data-tab="SETUP">
         <div class="card">
-            <h2>📤 Resource Manager</h2>
+            <h2>Resource manager</h2>
             <div class="upload-area">
                 <div class="upload-row">
                     <div style="text-align:left; width:100%;">
@@ -504,12 +594,12 @@
                     🔒 Secure Upload & Ingest
                 </button>
                 
-                <div id="uploadStatus" style="margin-top:10px; font-weight:bold; font-size:0.9rem;"></div>
+                <div id="resourceUploadStatus" style="margin-top:10px; font-weight:bold; font-size:0.9rem;" aria-live="polite"></div>
             </div>
         </div>
 
         <div class="card">
-            <h2>👁️ Topic Visibility</h2>
+            <h2>Topic visibility</h2>
             <div id="topicGrid" class="topic-grid">
                 <!-- Loaded via JS -->
             </div>
@@ -520,7 +610,7 @@
     <div class="grid-container" data-tab="CLASS">
         <!-- Path deviation: where students leave the recommended sequence. -->
         <div class="card full-width">
-            <h2>🧭 Learning Path Deviation</h2>
+            <h2>Learning path movement</h2>
             <p style="color:#94a3b8; font-size:13px; margin:-4px 0 12px;">
                 Whether students follow the recommended order, jump ahead, revisit, or wander
                 off — and which concept they sit on longest.
@@ -542,7 +632,7 @@
             <div id="pathBody" style="overflow-x:auto;"></div>
         </div>
         <div class="card full-width">
-            <h2>🏫 Where the class stands
+            <h2>Class capability by topic
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— each topic, split by whether students can explain it, complete code, or write it from scratch. Sorted by what needs you most.</span>
             </h2>
             <div id="classStandingBody" style="overflow-x:auto;"></div>
@@ -553,7 +643,7 @@
     <div class="grid-container" data-tab="CLASS">
         <div class="card">
             <h2>
-                🧭 What kind of help students ask for
+                Types of help requested
                 <div class="info-icon">ⓘ
                     <span class="tooltip-text">
                         The mix of question <strong>types</strong> across the class — understanding a concept, solving a problem, debugging an error, code review, or quizzing. Tells you what students mostly come to the tutor for. (Security/greeting turns excluded — those live in the Security Ledger.)
@@ -564,7 +654,7 @@
         </div>
         <div class="card">
             <h2>
-                📚 Topics students ask about
+                Topics students ask about
                 <div class="info-icon">ⓘ
                     <span class="tooltip-text">
                         Which curriculum <strong>topics</strong> the questions are about (variables, loops, pointers…). High bars = where the class's attention is going.
@@ -579,9 +669,9 @@
     <!-- Risk Matrix has been merged into the Class Progress Monitor table below. -->
 
     <!-- 4. STUDENT PERFORMANCE (merged: risk + mastery + engagement) -->
-    <div class="grid-container" data-tab="NOW">
+    <div class="grid-container" data-tab="CLASS">
         <div class="card full-width">
-            <h2>🎓 Roster
+            <h2>Student roster
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— risk, mastery &amp; engagement in one view</span>
             </h2>
             <div id="riskMatrixSummary" style="display:flex; gap:12px; margin:10px 0; flex-wrap:wrap;"></div>
@@ -634,10 +724,11 @@
     <!-- 6. MODEL HEALTH — has the model's predictions matched reality? (prediction_log) -->
     <div class="grid-container" data-tab="SYSTEM">
         <div class="card full-width">
-            <h2>🎯 Model Health
+            <h2>Model health
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— how well the mastery model's predictions have matched observed outcomes (the model grading itself)</span>
             </h2>
             <div id="mhBadge"></div>
+            <div id="mhCohorts"></div>
             <details style="margin-top:10px;">
                 <summary style="cursor:pointer; color:#7f8c8d; font-size:0.85rem; user-select:none;">🔧 Developer detail — calibration curve &amp; Brier scores</summary>
                 <div id="mhStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
@@ -650,7 +741,7 @@
     <!-- 7. SECURITY LEDGER — aggregate; evasion separated from curriculum boundary -->
     <div class="grid-container" data-tab="SYSTEM">
         <div class="card full-width">
-            <h2>🛡️ Security Ledger
+            <h2>Security ledger
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— gated turns across the cohort; security evasion separated from normal pedagogical redirects (aggregate — no learners named)</span>
             </h2>
             <div id="secStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
@@ -661,7 +752,7 @@
     <!-- NEXT headline: What to prepare next (prep list → assignable groups) -->
     <div class="grid-container" data-tab="NEXT">
         <div class="card full-width">
-            <h2>🧑‍🏫 What to prepare next
+            <h2>What to prepare next
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— one prep action per topic, the group of students it's for, and reading/code you can assign to that group in one click.</span>
             </h2>
             <div id="prepBody"></div>
@@ -671,7 +762,7 @@
     <!-- NEXT: Did assignments land? (follow-through on the Prep List) -->
     <div class="grid-container" data-tab="NEXT">
         <div class="card full-width">
-            <h2>📬 Did assignments land?
+            <h2>Assignment follow-through
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— what you've assigned and how many students have opened it. Push again, or move on.</span>
             </h2>
             <div id="assignStatusBody"></div>
@@ -681,7 +772,7 @@
     <!-- NEXT: Ready for what's coming (DAG prerequisite walk) -->
     <div class="grid-container" data-tab="NEXT">
         <div class="card full-width">
-            <h2>🎯 Ready for what's coming
+            <h2>Readiness for the next topic
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— pick the topic you'll teach next; see if the class holds its prerequisites, and where the gap is.</span>
             </h2>
             <div style="display:flex; align-items:center; gap:10px; margin:10px 0 4px; flex-wrap:wrap;">
@@ -696,7 +787,7 @@
     <!-- 8. DECERTIFICATION FORECAST — who decays below θ_dec next, projected from the forgetting curve -->
     <div class="grid-container" data-tab="NEXT">
         <div class="card full-width">
-            <h2>🔮 Who's about to fade
+            <h2>Mastery likely to fade soon
                 <span style="font-size:0.8rem; font-weight:400; color:#777;">— certified learners projected to drop below the mastery threshold, and when. Act before the lapse, not after.</span>
             </h2>
             <div id="fcStats" style="display:flex; gap:14px; flex-wrap:wrap; margin:12px 0;"></div>
@@ -706,14 +797,14 @@
 </div>
 
 <!-- STUDENT DETAIL MODAL -->
-<div id="studentModal" class="modal-overlay">
-    <div class="modal-content">
+<div id="studentModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalStudentId">
+    <div class="modal-content" tabindex="-1">
         <div class="modal-header">
             <h2 style="margin:0; font-size:1.4rem;">
                 👤 <span id="modalStudentId">…</span> 
                 <span id="modalRiskBadge" class="status-badge"></span>
             </h2>
-            <button class="close-modal" onclick="closeModal()">×</button>
+            <button class="close-modal" onclick="closeModal()" aria-label="Close student details">×</button>
         </div>
         <div class="modal-body">
             <!-- LEFT: Stats -->
@@ -743,6 +834,7 @@
     const API_URL = "";
     let currentUserPage = 1;
     let currentRiskPage = 1;
+    let lastFocusedElement = null;
     // ── Class Progress Monitor state (client-side search / sort / paginate) ──
     let RISK_ALL = [];               // full class dataset, loaded once
     let riskSearch = '';
@@ -894,8 +986,6 @@
     }
 
     // ── Action Triage (landing view) — one named mechanism per learner ──
-    const MECH_COLOR = { decertified: '#c0392b', tier_imbalance: '#e67e22', stalled: '#8e44ad', thin_evidence: '#2980b9' };
-
     async function loadTriage() {
         const tbody = document.querySelector('#triageTable tbody');
         if (!tbody) return;
@@ -911,10 +1001,10 @@
 
     // mechanism → suggested batch action + labels (teacher language)
     const MECH_ACTION = {
-        decertified:   { action: 'force_review', verb: 'Refresh',        label: 'Faded' },
-        tier_imbalance:{ action: 'assign_task',  verb: 'Assign coding',  label: "Knows it, can't code it yet" },
-        stalled:       { action: 'assign_task',  verb: 'Plan a check-in',label: 'Stuck' },
-        thin_evidence: { action: 'assign_task',  verb: 'Add a check',    label: 'Not enough practice' },
+        decertified:   { action: 'force_review', verb: 'Record review plan', label: 'Faded' },
+        tier_imbalance:{ action: 'assign_task',  verb: 'Record coding plan', label: "Knows it, can't code it yet" },
+        stalled:       { action: 'assign_task',  verb: 'Record check-in plan', label: 'Stuck' },
+        thin_evidence: { action: 'assign_task',  verb: 'Record practice plan', label: 'Not enough practice' },
     };
     function clusterWhy(mech, topic) {
         switch (mech) {
@@ -934,13 +1024,14 @@
         const c = (data && data.counts) || {};
 
         if (countsEl) {
-            const chip = (label, n, color) =>
-                `<span style="display:inline-flex; align-items:center; gap:6px; background:#f7f7f9; padding:6px 10px; border-radius:4px; font-size:0.8rem; color:#2c3e50;"><span style="width:10px; height:10px; border-radius:50%; background:${color};"></span>${label}: <b>${n || 0}</b></span>`;
+            countsEl.className = 'metric-grid';
+            const metric = (label, n, state) =>
+                `<div class="metric metric-${state}"><span class="metric-value">${n || 0}</span><span class="metric-label">${label}</span></div>`;
             countsEl.innerHTML =
-                chip('Faded', c.decertified, MECH_COLOR.decertified) +
-                chip("Knows it, can't code it", c.tier_imbalance, MECH_COLOR.tier_imbalance) +
-                chip('Stuck', c.stalled, MECH_COLOR.stalled) +
-                chip('Not enough practice', c.thin_evidence, MECH_COLOR.thin_evidence);
+                metric('Faded mastery', c.decertified, 'critical') +
+                metric("Can't apply it yet", c.tier_imbalance, 'warning') +
+                metric('Stalled learners', c.stalled, 'warning') +
+                metric('Needs more evidence', c.thin_evidence, 'info');
         }
 
         if (!items.length) {
@@ -961,18 +1052,18 @@
             .sort((a, b) => (SEV[b.mechanism] - SEV[a.mechanism]) || (b.students.length - a.students.length));
 
         tbody.innerHTML = TRIAGE_CLUSTERS.map((cl, i) => {
-            const color = MECH_COLOR[cl.mechanism] || '#7f8c8d';
             const meta = MECH_ACTION[cl.mechanism] || { verb: 'Act', label: cl.mechanism };
+            const state = ({ decertified: 'critical', tier_imbalance: 'warning', stalled: 'warning', thin_evidence: 'info' })[cl.mechanism] || 'neutral';
             const n = cl.students.length;
             const who = n === 1
                 ? escapeHtml(sLabel(cl.students[0].hidden_username, cl.students[0].display_id))
                 : `${n} students`;
             return `<tr>
                 <td style="white-space:nowrap;">
-                    <span onclick="toggleCluster(${i})" style="cursor:pointer; font-weight:600; color:#2c3e50;">
-                        <span id="clExp${i}" style="color:#aaa;">▸</span> ${who}</span>
+                    <button class="cluster-toggle" onclick="toggleCluster(${i})" aria-expanded="false" aria-controls="clRow${i}">
+                        <span id="clExp${i}" style="color:#98a2b3;">▸</span> ${who}</button>
                 </td>
-                <td><span style="background:${color}; color:#fff; padding:2px 10px; border-radius:12px; font-weight:bold; font-size:0.78rem; white-space:nowrap;">${meta.label}</span></td>
+                <td><span class="status-chip status-${state}">${meta.label}</span></td>
                 <td style="font-size:0.85rem; color:#555;">${clusterWhy(cl.mechanism, cl.topic)}</td>
                 <td style="font-size:0.85rem;">
                     <button onclick="batchAction(${i})" style="background:#8e44ad; color:#fff; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">${meta.verb}${n > 1 ? ' · all ' + n : ''}</button>
@@ -989,12 +1080,13 @@
         const open = row.style.display !== 'none';
         row.style.display = open ? 'none' : 'table-row';
         if (exp) exp.textContent = open ? '▸' : '▾';
+        const toggle = row.previousElementSibling && row.previousElementSibling.querySelector('.cluster-toggle');
+        if (toggle) toggle.setAttribute('aria-expanded', String(!open));
         if (open) return;
         const cl = TRIAGE_CLUSTERS[i], detail = document.getElementById('clDetail' + i);
         if (!cl || !detail) return;
         detail.innerHTML = cl.students.map(s =>
-            `<span onclick="openStudentModal('${s.hidden_username}','${s.display_id}','','${encodeURIComponent('{}')}')"
-                style="display:inline-block; cursor:pointer; font-family:monospace; font-size:0.8rem; color:#2980b9; background:#eef4fb; padding:2px 8px; border-radius:6px; margin:2px 4px 2px 0;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</span>`).join('');
+            `<button class="student-link" onclick="openStudentModal('${s.hidden_username}','${s.display_id}','','${encodeURIComponent('{}')}')">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</button>`).join('');
     }
 
     // Batch action: log the prescribed action for EVERY student in the cluster, each with
@@ -1004,7 +1096,7 @@
         const status = document.getElementById('clStatus' + i);
         if (!cl) return;
         const meta = MECH_ACTION[cl.mechanism] || { action: 'assign_task' };
-        if (status) status.innerText = 'recording…';
+        if (status) status.innerText = 'saving plan…';
         let ok = 0;
         for (const s of cl.students) {
             try {
@@ -1018,7 +1110,7 @@
                 if (res.ok) ok++;
             } catch (e) { console.error('batch action failed for', s.display_id, e); }
         }
-        if (status) { status.style.color = ok === cl.students.length ? '#27ae60' : '#e67e22'; status.innerText = `✓ recorded for ${ok}/${cl.students.length}`; }
+        if (status) { status.style.color = ok === cl.students.length ? 'var(--success)' : 'var(--warning)'; status.innerText = `Plan saved for ${ok}/${cl.students.length}`; }
     }
 
     // ── Model Health — Brier score + reliability curve from prediction_log ──
@@ -1075,6 +1167,53 @@
                 </div>`;
             }
         }
+        // ── Evidence vs prior ────────────────────────────────────────────────
+        // A prior is not a prediction. Scored together, a class where most
+        // predictions are first-encounters produces a headline number that is
+        // mostly a measurement of the starting constants, not of the learning —
+        // and those call for different fixes, so they are shown apart.
+        const coh = document.getElementById('mhCohorts');
+        if (coh) {
+            const ev = (d.cohorts || {}).evidence, pr = (d.cohorts || {}).prior;
+            if (!ev || !pr || (!ev.n && !pr.n)) { coh.innerHTML = ''; }
+            else {
+                const priorShare = d.n ? Math.round(100 * pr.n / d.n) : 0;
+                const card = (title, c, note) => {
+                    if (!c || !c.n) return '';
+                    const s = c.reliability_score;
+                    const col = s == null ? '#999' : s >= 90 ? '#27ae60' : s >= 75 ? '#2a78d6'
+                              : s >= 60 ? '#e67e22' : '#e74c3c';
+                    return `<div style="flex:1; min-width:250px; background:#fff; border:1px solid #e5e7eb;
+                                 border-left:4px solid ${col}; border-radius:10px; padding:12px 15px;">
+                        <div style="font-size:0.78rem; font-weight:700; color:#2c3e50;">${title}</div>
+                        <div style="display:flex; align-items:baseline; gap:8px; margin:4px 0 2px;">
+                            <span style="font-size:1.7rem; font-weight:800; color:${col};
+                                         font-variant-numeric:tabular-nums; line-height:1;">${s == null ? '—' : s}</span>
+                            <span style="font-size:0.8rem; color:${col}; font-weight:600;">${c.reliability_label || ''}</span>
+                        </div>
+                        <div style="font-size:0.76rem; color:#7f8c8d;">
+                            predicts ${Math.round((c.avg_predicted || 0) * 100)}% ·
+                            observed ${Math.round((c.avg_observed || 0) * 100)}% ·
+                            ${c.n} predictions</div>
+                        <div style="font-size:0.74rem; color:#98a0a6; margin-top:5px; line-height:1.45;">${note}</div>
+                    </div>`;
+                };
+                const dominated = priorShare >= 50
+                    ? `<div style="font-size:0.78rem; color:#9a6207; background:#fdf8ee;
+                             border:1px solid #f2dcae; border-radius:8px; padding:9px 12px; margin-top:10px;">
+                         <b>${priorShare}% of all scored predictions are first encounters.</b>
+                         The headline score above is therefore mostly a measurement of the starting
+                         priors, not of how well the model learns. Read the two cards separately.</div>`
+                    : '';
+                coh.innerHTML = `<div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:12px;">
+                        ${card('With evidence', ev,
+                               'Predictions made after the model had already seen this student on this concept. This is how well it actually learns.')}
+                        ${card('First encounter (prior only)', pr,
+                               'The very first prediction per student &amp; concept — made from the configured prior, before any evidence. Measures the starting constants.')}
+                    </div>${dominated}`;
+            }
+        }
+
         let cmp = null;
         if (d.brier_bkt != null && d.brier_eff != null) {
             cmp = d.brier_eff < d.brier_bkt - 1e-6 ? 'better'
@@ -1083,8 +1222,16 @@
         if (statsEl) {
             statsEl.innerHTML =
                 mhTile(d.brier_eff != null ? d.brier_eff.toFixed(3) : '—', 'Brier — effective (acted-on)', 'lower is better · 0 = perfect', '#2a78d6') +
+                // "identical to raw" was reported without saying WHY. The effective
+                // prediction only differs from raw BKT when the student has recorded a
+                // self-assessment for that concept, so the honest subtitle is how often
+                // that actually happened — otherwise an inert hook reads as a finding.
                 mhTile(d.brier_bkt != null ? d.brier_bkt.toFixed(3) : '—', 'Brier — raw BKT',
-                       cmp === 'better' ? 'adaptation improves calibration ↓' : cmp === 'worse' ? 'adaptation worse here ↑' : cmp === 'same' ? 'identical to raw on this data' : '', '#eb6834') +
+                       d.eff_differs_n === 0
+                         ? 'adaptation never fired — no self-assessments logged'
+                         : (cmp === 'better' ? `adaptation improves calibration ↓ (fired on ${d.eff_differs_pct}% of predictions)`
+                         : cmp === 'worse' ? `adaptation worse here ↑ (fired on ${d.eff_differs_pct}% of predictions)`
+                         : `same score — adaptation fired on only ${d.eff_differs_pct}% of predictions`), '#eb6834') +
                 mhTile(d.n, 'Predictions scored', `${d.n_users} learners`, '#2c3e50');
         }
 
@@ -1352,8 +1499,8 @@
             </tr></thead><tbody>`;
         topics.forEach((t, i) => {
             const pill = `<span style="background:${t.status_color}; color:#fff; padding:2px 10px; border-radius:12px; font-size:0.76rem; font-weight:600; white-space:nowrap;">${t.status}</span>`;
-            html += `<tr onclick="toggleStandingRow(${i})" style="border-bottom:1px solid #f4f4f4; cursor:pointer;" title="Click to see the students behind this row">
-                <td style="padding:8px 6px; font-weight:600; color:#2c3e50;"><span id="stExp${i}" style="color:#aaa;">▸</span> ${t.concept}</td>
+            html += `<tr onclick="toggleStandingRow(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStandingRow(${i})}" tabindex="0" aria-label="Open details for ${escapeHtml(t.concept)}" style="border-bottom:1px solid #f4f4f4; cursor:pointer;" title="Click to see the students behind this row">
+                <td style="padding:8px 6px; font-weight:600; color:#2c3e50;"><span id="stExp${i}" style="color:#aaa;">▸</span> ${escapeHtml(t.concept)}</td>
                 ${capCell(t.explain)}${capCell(t.complete)}${capCell(t.write)}
                 <td style="padding:8px 6px; color:#555; font-variant-numeric:tabular-nums;">${t.practiced}/${t.total}</td>
                 <td style="padding:8px 6px;">${pill}</td>
@@ -1860,24 +2007,22 @@
         s = s || {};
         // Frustration is a model ESTIMATE — reported at the class level only, never
         // per learner as fact. Shows % of active learners reading elevated this window.
-        let frustChip = '';
+        let frustMetric = '';
         if (s.frust_pct != null && s.frust_active > 0) {
             const hot = s.frust_pct >= 25;
-            const bg = hot ? '#d35400' : '#7f8c8d';
-            frustChip =
-                `<span title="Estimated — cohort aggregate, not a per-student verdict" ` +
-                `style="background:${bg}; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">` +
-                `😟 Class frustration: ${s.frust_pct}% of active learners (${s.frust_elevated}/${s.frust_active})</span>`;
+            frustMetric = `<div class="metric metric-${hot ? 'warning' : 'neutral'}" title="Estimated cohort aggregate">
+                <span class="metric-value">${s.frust_pct}%</span>
+                <span class="metric-label">Elevated frustration · ${s.frust_elevated}/${s.frust_active} active</span>
+            </div>`;
         } else if (s.frust_active === 0) {
-            frustChip =
-                `<span style="background:#95a5a6; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">` +
-                `😐 Class frustration: no affect data this period</span>`;
+            frustMetric = `<div class="metric metric-neutral"><span class="metric-value">—</span><span class="metric-label">No frustration data this period</span></div>`;
         }
+        el.className = 'metric-grid';
         el.innerHTML =
-            `<span style="background:#e74c3c; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">Critical: ${s.critical || 0}</span>` +
-            `<span style="background:#f39c12; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">High: ${s.high || 0}</span>` +
-            `<span style="background:#3498db; color:#fff; padding:4px 12px; border-radius:12px; font-size:0.85rem; font-weight:600;">Watch: ${s.watch || 0}</span>` +
-            frustChip;
+            `<div class="metric metric-critical"><span class="metric-value">${s.critical || 0}</span><span class="metric-label">Need action</span></div>` +
+            `<div class="metric metric-warning"><span class="metric-value">${s.high || 0}</span><span class="metric-label">Watch soon</span></div>` +
+            `<div class="metric metric-info"><span class="metric-value">${s.watch || 0}</span><span class="metric-label">Monitor</span></div>` +
+            frustMetric;
     }
 
     // Load & join the whole class in one shot so search & sort span every student.
@@ -2027,30 +2172,30 @@
         if (total === 0) {
             tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:20px;">${riskSearch ? 'No students match your search.' : 'No students found.'}</td></tr>`;
         } else {
-            const tierColor = { Critical: '#e74c3c', High: '#f39c12', Watch: '#3498db', OK: '#27ae60', 'No Data': '#95a5a6' };
+            const tierClass = { Critical: 'critical', High: 'warning', Watch: 'info', OK: 'success', 'No Data': 'neutral' };
             pageRows.forEach(s => {
                 USER_ID_MAP[s.hidden_username] = s.display_id;
                 const tier = s.risk_tier || 'No Data';
-                const color = tierColor[tier] || '#95a5a6';
-                const riskBadge = `<span style="background:${color}; color:#fff; padding:2px 10px; border-radius:12px; font-weight:bold; font-size:0.8rem;">${tier}</span>`;
+                const riskBadge = `<span class="status-chip status-${tierClass[tier] || 'neutral'}">${tier}</span>`;
                 const masteryStr = encodeURIComponent(JSON.stringify(s.mastery || {}));
                 const timeCellId = `time-${s.display_id}`;
                 const activeCell = (s._activeMin == null)
                     ? '<span style="color:#bdc3c7; font-size:0.8rem;">Pending...</span>'
                     : `<span style="font-weight:600; color:#2c3e50;">${s._activeStr}</span>`;
-                const masteryPct = `${s.avg_mastery_pct != null ? s.avg_mastery_pct : 0}%`;
+                const masteryValue = s.avg_mastery_pct != null ? s.avg_mastery_pct : 0;
+                const masteryPct = `<div class="mastery-cell"><div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, masteryValue)}%"></div></div><strong>${masteryValue}%</strong></div>`;
                 const actionBtn = (tier === 'Critical' || tier === 'High')
-                    ? `<button onclick="event.stopPropagation(); pushQuickChallenge('${s.hidden_username}', '${s.display_id}')" style="background:#8e44ad; color:#fff; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem;">Push Challenge</button>`
+                    ? `<button onclick="event.stopPropagation(); openChallengeComposer('${s.hidden_username}', '${s.display_id}', '${tier}', '${masteryStr}')" style="background:#2563eb; color:#fff; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem;">Create challenge</button>`
                     : '<span style="color:#aaa;">—</span>';
                 tbody.innerHTML += `
-                    <tr class="clickable-row" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${tier}', '${masteryStr}')">
+                    <tr class="clickable-row" tabindex="0" onclick="openStudentModal('${s.hidden_username}', '${s.display_id}', '${tier}', '${masteryStr}')" onkeydown="if(event.key==='Enter'){openStudentModal('${s.hidden_username}', '${s.display_id}', '${tier}', '${masteryStr}')}" aria-label="Open ${escapeHtml(sLabel(s.hidden_username, s.display_id))} details">
                         <td style="font-family:monospace; font-weight:600; color:#2c3e50;">${escapeHtml(sLabel(s.hidden_username, s.display_id))}</td>
                         <td>${riskBadge}</td>
-                        <td style="font-size:0.85rem; color:#555;">${s.risk_reason_m || '—'}</td>
+                        <td style="font-size:0.85rem; color:#555;">${escapeHtml(s.risk_reason_m || '—')}</td>
                         <td>${masteryPct}</td>
                         <td id="${timeCellId}" class="active-time-cell" data-username="${s.hidden_username}">${activeCell}</td>
-                        <td>${s.weakest_topic || '—'}</td>
-                        <td>${s.last_active || '—'}</td>
+                        <td>${escapeHtml(s.weakest_topic || '—')}</td>
+                        <td>${escapeHtml(s.last_active || '—')}</td>
                         <td>${actionBtn}</td>
                     </tr>`;
             });
@@ -2149,13 +2294,13 @@
         
         // 3. Clear previous selection to avoid confusion
         input.value = ''; 
-        document.getElementById('uploadStatus').innerText = '';
+        document.getElementById('resourceUploadStatus').innerText = '';
     }
 
     async function uploadFiles() {
         const fileInput = document.getElementById('fileInput');
         const typeSelect = document.getElementById('resourceType');
-        const statusDiv = document.getElementById('uploadStatus');
+        const statusDiv = document.getElementById('resourceUploadStatus');
         const type = typeSelect.value;
         
         if (fileInput.files.length === 0) {
@@ -2517,18 +2662,18 @@
                            low: 'assign_task', thin_evidence: 'assign_task' })[flag.mechanism] || null;
         const why = (flag.mechanism && flag.mechanism !== 'on_track')
             ? `<div style="font-size:0.78rem; color:#c0392b; margin-bottom:6px;">⚑ ${flag.label}${concept ? ' on ' + concept : ''} — suggested action highlighted.</div>` : '';
-        const btn = (action, label, emoji) => {
+        const btn = (action, label) => {
             const hot = (action === suggest);
             return `<button onclick="doInstructorAction('${username}','${displayId}','${action}','${(concept || '').replace(/'/g, '')}')"
-                style="border:1px solid ${hot ? '#8e44ad' : '#ccc'}; background:${hot ? '#8e44ad' : '#fff'}; color:${hot ? '#fff' : '#444'};
+                style="border:1px solid ${hot ? '#2563eb' : '#cfd5df'}; background:${hot ? '#2563eb' : '#fff'}; color:${hot ? '#fff' : '#344054'};
                        padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:${hot ? '700' : '500'};">
-                ${emoji} ${label}</button>`;
+                ${label}</button>`;
         };
         host.innerHTML = `${why}
             <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
-                ${btn('assign_task', 'Assign task', '📌')}
-                ${btn('unlock_prereq', 'Unlock prerequisite', '🔓')}
-                ${btn('force_review', 'Force review', '🔁')}
+                ${btn('assign_task', 'Prepare a task')}
+                ${btn('unlock_prereq', 'Record unlock plan')}
+                ${btn('force_review', 'Record review plan')}
                 <span id="actionStatus" style="font-size:0.78rem; color:#27ae60;"></span>
             </div>`;
     }
@@ -2547,9 +2692,9 @@
                 })
             });
             if (!res.ok) throw new Error('log failed');
-            const label = { assign_task: 'Task assigned', unlock_prereq: 'Prerequisite unlocked', force_review: 'Review scheduled' }[action] || 'Action';
-            if (status) status.innerText = `✓ ${label} · recorded`;
-            // "Assign task" also drops focus into the existing challenge composer.
+            const label = { assign_task: 'Task plan recorded', unlock_prereq: 'Unlock plan recorded', force_review: 'Review plan recorded' }[action] || 'Plan recorded';
+            if (status) status.innerText = label;
+            // Preparing a task also opens the existing challenge composer.
             if (action === 'assign_task') {
                 const ta = document.getElementById('challengeInput');
                 if (ta) { ta.focus(); if (concept) ta.value = `Write a small C program that uses ${concept}.`; }
@@ -2561,6 +2706,7 @@
     }
 
     async function openStudentModal(realUsername, displayId, riskLevel, masteryJson) {
+        lastFocusedElement = document.activeElement;
         // 1. Header setup
         document.getElementById('modalStudentId').innerText = sLabel(realUsername, displayId);
         document.getElementById('studentModal').dataset.student = realUsername;
@@ -2581,6 +2727,7 @@
         chatDiv.innerHTML = '<div style="text-align:center; color:#999;">Loading data...</div>';
         
         document.getElementById('studentModal').style.display = 'flex';
+        document.querySelector('#studentModal .modal-content').focus();
 
         try {
             const res = await fetch(`${API_URL}/api/v1/analytics/student_detail/${realUsername}`);
@@ -2706,6 +2853,15 @@
 
     function closeModal() {
         document.getElementById('studentModal').style.display = 'none';
+        if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') lastFocusedElement.focus();
+    }
+
+    function openChallengeComposer(username, displayId, riskLevel, masteryJson) {
+        openStudentModal(username, displayId, riskLevel, masteryJson);
+        window.setTimeout(() => {
+            const input = document.getElementById('challengeInput');
+            if (input) input.focus();
+        }, 0);
     }
 
     function toggleChatMsg(elementId, btn) {
@@ -2725,9 +2881,15 @@
     window.onclick = function(event) {
         const modal = document.getElementById('studentModal');
         if (event.target == modal) {
-            modal.style.display = "none";
+            closeModal();
         }
     }
+
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && document.getElementById('studentModal').style.display === 'flex') {
+            closeModal();
+        }
+    });
 
     let questionTypeChart, topicChart;
     function renderCharts(data) {
@@ -2932,6 +3094,352 @@
         if (prev) sel.value = prev;
     }
 
+    // ── Prelab submissions ────────────────────────────────────────────────
+    // The list view deliberately shows attempts and total wrong turns next to the
+    // result: a student who reached the same code after nine failed steps has not
+    // done the same work as one who reached it after none, and that difference is
+    // invisible in a submitted file.
+    // Filled from the submissions endpoint, which derives it from prelab.json —
+    // the same source that decides where a finished prelab is filed. Built from the
+    // video catalogue instead, the values silently stopped matching whenever a
+    // recording was re-attached to a slot.
+    function fillPrelabSubPicker(lectures) {
+        const sel = document.getElementById('prelabSubVideo');
+        if (!sel) return;
+        const prev = sel.value;
+        const opts = ['<option value="">All lectures</option>'];
+        (lectures || []).forEach(v => {
+            const ch = v.chapter ? `Ch${v.chapter} · ` : '';
+            opts.push(`<option value="${escapeHtml(v.filename)}">${ch}${escapeHtml(v.title)}</option>`);
+        });
+        sel.innerHTML = opts.join('');
+        if (prev && opts.some(o => o.includes(`value="${prev}"`))) sel.value = prev;
+    }
+
+    // Short labels: the column is narrow and a sentence in a pill wraps into a
+    // blob. The full phrasing lives in the title and in the detail panel.
+    const GRADE_LABEL = {
+        pass:            ['Matches',      'chip-good', 'Output matches the handout exactly, wording included'],
+        wording_differs: ['Values OK',    'chip-warn', 'Every value is right; only the printf wording differs'],
+        values_differ:   ['Wrong output', 'chip-bad',  'The program computes something else'],
+        compile_error:   ["Won't build",  'chip-bad',  'The program does not compile'],
+        no_code:         ['No program',   'chip-mute', 'No complete program was found in the conversation'],
+        not_gradable:    ['No sample',    'chip-mute', 'The handout stores no sample output to check against'],
+    };
+
+    function gradePill(status) {
+        const [label, cls, why] = GRADE_LABEL[status] || ['Not checked', 'chip-mute', ''];
+        return `<span class="chip ${cls}" title="${escapeHtml(why)}">${label}</span>`;
+    }
+
+    // Signals worth a second look before grading — never an accusation. A guided
+    // prelab is meant to be got wrong on the way through, so a run with no wrong
+    // turns at all is the one to read rather than skim.
+    function flagPills(raw) {
+        let flags = [];
+        try { flags = typeof raw === 'string' ? JSON.parse(raw || '[]') : (raw || []); }
+        catch (e) { flags = []; }
+        if (!flags.length) return '<span class="none">–</span>';
+        const ICON = { flawless_run: '⚑', fast_replies: '⏱' };
+        return flags.map(f =>
+            `<span class="flag" data-label="${escapeHtml(f.label || f.code)}"
+                   data-why="${escapeHtml(f.why || '')}">${ICON[f.code] || '⚑'}</span>`
+        ).join('');
+    }
+
+    // One shared tooltip node, positioned from the icon's viewport rect. Delegated
+    // so it keeps working after the table re-renders.
+    function psubTipEl() {
+        let el = document.getElementById('psubTip');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'psubTip';
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
+    document.addEventListener('mouseover', function (e) {
+        const flag = e.target.closest && e.target.closest('.psub .flag');
+        if (!flag) return;
+        const el = psubTipEl();
+        el.innerHTML = `<b>${flag.dataset.label || ''}</b>${flag.dataset.why || ''}`;
+        el.style.display = 'block';
+
+        const r = flag.getBoundingClientRect();
+        const t = el.getBoundingClientRect();
+        // Above the icon when there is room, otherwise below it.
+        const above = r.top - t.height - 10;
+        el.style.top = (above > 8 ? above : r.bottom + 10) + 'px';
+        // Right-align to the icon, then keep the whole box on screen.
+        let left = r.right - t.width;
+        left = Math.max(8, Math.min(left, window.innerWidth - t.width - 8));
+        el.style.left = left + 'px';
+    });
+
+    document.addEventListener('mouseout', function (e) {
+        if (e.target.closest && e.target.closest('.psub .flag')) {
+            const el = document.getElementById('psubTip');
+            if (el) el.style.display = 'none';
+        }
+    });
+
+    async function loadPrelabSubmissions() {
+        const body  = document.getElementById('prelabSubBody');
+        const count = document.getElementById('prelabSubCount');
+        const fname = (document.getElementById('prelabSubVideo') || {}).value || '';
+        document.getElementById('prelabSubDetail').style.display = 'none';
+        body.innerHTML = '<div style="color:#9aa0a6; font-size:13px;">Loading…</div>';
+        try {
+            const qs = fname ? `?video_filename=${encodeURIComponent(fname)}` : '';
+            const res = await fetch(`${API_URL}/api/v1/prelab/submissions${qs}`, { headers: TEACHER_HDR() });
+            if (!res.ok) throw new Error(res.status);
+            const d = await res.json();
+            count.textContent = d.count ? `(${d.count})` : '';
+            if (d.lectures) fillPrelabSubPicker(d.lectures);
+
+            if (!d.count) {
+                body.innerHTML = `<div style="color:#9aa0a6; font-size:13px; padding:10px 0;">
+                    No prelab work captured yet${fname ? ' for this lecture' : ''}. A submission appears
+                    here the moment a student finishes the last step of a prelab in guided mode.</div>`;
+                return;
+            }
+
+            const rows = d.submissions.map(r => {
+                const who  = escapeHtml(r.email || r.username || '—');
+                const when = r.updated_at ? String(r.updated_at).slice(0, 10) : '—';
+                const time = r.updated_at ? String(r.updated_at).slice(11, 16) : '';
+                const done = r.has_reflection
+                    ? '<span class="chip chip-good" title="Solved and explained in their own words">Explained</span>'
+                    : '<span class="chip chip-warn" title="Solved, but stopped before writing the explanation">Solved</span>';
+                // Attempts only earn ink when there was more than one.
+                const tries = (r.attempt_count || 1) > 1
+                    ? ` <span style="color:#d97706; font-weight:600;">·&nbsp;${r.attempt_count}&nbsp;tries</span>`
+                    : '';
+                const wrong = (r.total_fails || 0) === 0
+                    ? '<span class="dim">0</span>'
+                    : `<strong>${r.total_fails}</strong>`;
+                const mark = (r.teacher_score === null || r.teacher_score === undefined)
+                    ? '<span class="none">–</span>'
+                    : `<strong style="color:#8e44ad;">${r.teacher_score}</strong>`;
+
+                return `<tr>
+                    <td class="who">${who}</td>
+                    <td class="clip dim" title="${escapeHtml(r.video_title || r.video_filename || '')}"
+                        style="max-width:150px;">${escapeHtml(r.video_title || r.video_filename || '—')}</td>
+                    <td class="clip" title="${escapeHtml(r.prelab_prompt || '')}">
+                        ${escapeHtml(r.prelab_prompt || '')}</td>
+                    <td class="num">${r.steps_passed || 0}/${r.steps_total || 0}${tries}</td>
+                    <td class="num">${wrong}</td>
+                    <td>${gradePill(r.grade_status)}</td>
+                    <td>${done}</td>
+                    <td class="num">${flagPills(r.flags)}</td>
+                    <td class="num">${mark}</td>
+                    <td class="dim" style="font-size:0.78rem; white-space:nowrap;">${when}<br>${time}</td>
+                    <td><button class="btn" style="padding:4px 10px; font-size:12px;"
+                                onclick="openPrelabSubmission(${r.id})">Open</button></td>
+                </tr>`;
+            }).join('');
+
+            body.innerHTML = `<div class="psub"><table>
+                <thead><tr>
+                    <th>Student</th><th>Lecture</th><th>Prelab</th>
+                    <th class="num">Steps</th>
+                    <th class="num" title="Steps the student got wrong before passing">Wrong</th>
+                    <th title="Compiled and diffed against the handout's sample output">Output</th>
+                    <th>Status</th>
+                    <th class="num" title="Signals worth a second look before grading">Review</th>
+                    <th class="num">Mark</th>
+                    <th>Updated</th><th></th>
+                </tr></thead><tbody>${rows}</tbody></table></div>`;
+        } catch (e) {
+            body.innerHTML = `<div style="color:#e74c3c; font-size:13px;">Could not load submissions (${e.message}).</div>`;
+        }
+    }
+
+    // What the automatic check actually disagreed about — the compiler's message,
+    // or the specific lines whose output differed. A bare verdict is not enough to
+    // grade from, and an instructor should not have to re-run the program to see it.
+    function gradeDetailHtml(d) {
+        const det = d.grade_detail || {};
+        if (d.grade_status === 'compile_error') {
+            return `<pre style="margin:0; white-space:pre-wrap; font-size:0.75rem; color:#b3261e;
+                        max-height:220px; overflow:auto; line-height:1.45;">${escapeHtml(det.error || '')}</pre>`;
+        }
+        if (d.grade_status === 'pass') {
+            return `<div style="color:#6b7280;">Every line matched, including the wording.</div>`;
+        }
+        if (!det.rows || !det.rows.length) {
+            return `<div style="color:#6b7280;">${escapeHtml(det.reason || 'Nothing to compare.')}</div>`;
+        }
+        const wordingOnly = d.grade_status === 'wording_differs';
+        const rows = det.rows.map(r => `<tr>
+            <td style="color:#9aa0a6; padding:3px 10px 3px 0; vertical-align:top;">${r.line}</td>
+            <td style="color:#555; padding:3px 10px 3px 0; font-family:ui-monospace,Menlo,monospace;
+                       font-size:0.72rem;">${escapeHtml(r.expected === null ? '(no line)' : r.expected)}</td>
+            <td style="color:${wordingOnly ? '#9a6207' : '#b3261e'}; padding:3px 0;
+                       font-family:ui-monospace,Menlo,monospace; font-size:0.72rem;">${
+                escapeHtml(r.actual === null ? '(no line)' : r.actual)}</td>
+        </tr>`).join('');
+        const summary = wordingOnly
+            ? `All ${det.expected_lines} values are correct; ${det.mismatch_count} line(s) are worded differently.`
+            : `${det.value_mismatch_count} of ${det.expected_lines} line(s) print the wrong value.`;
+        return `<div style="color:#6b7280; margin-bottom:8px;">${summary}</div>
+                <div style="overflow-x:auto;"><table style="border-collapse:collapse; min-width:0;">
+                <thead><tr style="color:#9aa0a6; text-align:left; font-size:0.7rem;
+                                  text-transform:uppercase; letter-spacing:.04em;">
+                    <th style="padding:0 10px 4px 0;">#</th>
+                    <th style="padding:0 10px 4px 0;">Handout</th>
+                    <th style="padding:0 0 4px;">Their program</th></tr></thead>
+                <tbody>${rows}</tbody></table></div>`;
+    }
+
+    async function recheckPrelab(id) {
+        try {
+            const res = await fetch(`${API_URL}/api/v1/prelab/submissions/${id}/recheck`, {
+                method: 'POST', headers: TEACHER_HDR()
+            });
+            if (!res.ok) throw new Error(res.status);
+            await openPrelabSubmission(id);
+            loadPrelabSubmissions();
+        } catch (e) {
+            alert(`Re-check failed (${e.message}).`);
+        }
+    }
+
+    async function savePrelabGrade(id) {
+        const score = document.getElementById('gradeScore').value;
+        const note  = document.getElementById('gradeNote').value;
+        const flag  = document.getElementById('gradeSaved');
+        try {
+            const res = await fetch(`${API_URL}/api/v1/prelab/submissions/${id}/grade`, {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/json' }, TEACHER_HDR()),
+                body: JSON.stringify({ score: score === '' ? null : parseFloat(score), note: note })
+            });
+            if (!res.ok) throw new Error(res.status);
+            flag.textContent = 'Saved';
+            setTimeout(() => { flag.textContent = ''; }, 2000);
+            loadPrelabSubmissions();
+        } catch (e) {
+            flag.style.color = '#f87171';
+            flag.textContent = `Failed (${e.message})`;
+        }
+    }
+
+    async function openPrelabSubmission(id) {
+        const box = document.getElementById('prelabSubDetail');
+        box.style.display = 'block';
+        box.innerHTML = '<div style="color:#9aa0a6; font-size:13px;">Loading transcript…</div>';
+        try {
+            const res = await fetch(`${API_URL}/api/v1/prelab/submissions/${id}`, { headers: TEACHER_HDR() });
+            if (!res.ok) throw new Error(res.status);
+            const d = await res.json();
+
+            const H = (t) => `<div style="font-size:0.7rem; color:#9aa0a6; text-transform:uppercase;
+                                          letter-spacing:.05em; font-weight:700; margin:18px 0 7px;">${t}</div>`;
+            const BOX = 'background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:13px;';
+
+            // Every turn, in order, full width. This is the point of capturing a
+            // conversation instead of a file: the wrong turns and the hints spent
+            // are the evidence, and they do not fit in a narrow side column.
+            const turns = (d.transcript || []).map(m => {
+                const student = (m.role || '').toLowerCase() === 'user';
+                const raw = m.content || '';
+                const isCode = /[;{}]/.test(raw) && /\n/.test(raw);
+                return `<div style="display:flex; gap:12px; margin-bottom:9px;">
+                    <div style="flex:0 0 54px; text-align:right; padding-top:9px; font-size:0.65rem;
+                                text-transform:uppercase; letter-spacing:.05em; font-weight:700;
+                                color:${student ? '#8e44ad' : '#9aa0a6'};">
+                        ${student ? 'Student' : 'Tutor'}</div>
+                    <div style="flex:1; min-width:0; padding:9px 12px; border-radius:9px;
+                                background:${student ? '#f7f2fb' : '#f8f9fa'};
+                                border:1px solid ${student ? '#e6d8f0' : '#eceef1'};
+                                white-space:pre-wrap; overflow-x:auto; color:#333;
+                                line-height:1.5; font-size:${isCode ? '0.78' : '0.85'}rem;
+                                font-family:${isCode ? "ui-monospace, SFMono-Regular, Menlo, monospace" : 'inherit'};
+                        ">${escapeHtml(raw)}</div>
+                </div>`;
+            }).join('') || '<div style="color:#9aa0a6;">No transcript stored.</div>';
+
+            box.innerHTML = `
+              <div style="border-top:2px solid #f0f0f4; padding-top:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;
+                            gap:12px; flex-wrap:wrap; margin-bottom:6px;">
+                    <div>
+                        <h3 style="margin:0; font-size:1.05rem; color:#2c3e50;">${escapeHtml(d.email || d.username || '')}</h3>
+                        <div style="color:#9aa0a6; font-size:0.8rem; margin-top:2px;">
+                            ${escapeHtml(d.video_title || '')}</div>
+                    </div>
+                    <button class="btn" style="padding:5px 12px; font-size:12px;"
+                            onclick="document.getElementById('prelabSubDetail').style.display='none'">Close</button>
+                </div>
+                <div style="color:#555; font-size:0.85rem; line-height:1.5; margin:10px 0 4px;">
+                    ${escapeHtml(d.prelab_prompt || '')}</div>
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px;">
+                    <div>
+                        ${H('Final program')}
+                        <pre style="${BOX} margin:0; overflow:auto; max-height:330px;
+                                    font-size:0.78rem; line-height:1.5; color:#333;">${
+                            escapeHtml(d.final_code || '(no complete program found in the conversation)')}</pre>
+                    </div>
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;
+                                    margin:18px 0 7px;">
+                            <span style="font-size:0.7rem; color:#9aa0a6; text-transform:uppercase;
+                                         letter-spacing:.05em; font-weight:700;">Output check</span>
+                            <button class="btn" style="padding:3px 9px; font-size:11px;"
+                                    onclick="recheckPrelab(${d.id})">Re-check</button>
+                        </div>
+                        <div style="${BOX} max-height:330px; overflow:auto; font-size:0.83rem; color:#333;">
+                            <div style="margin-bottom:9px;">${gradePill(d.grade_status)}</div>
+                            ${gradeDetailHtml(d)}
+                        </div>
+                    </div>
+                </div>
+
+                ${(d.flags && d.flags.length) ? `
+                ${H('Worth a look')}
+                <div style="background:#fdf8ee; border:1px solid #f2dcae; border-radius:10px;
+                            padding:13px; font-size:0.85rem;">
+                    ${d.flags.map(f => `<div style="margin-bottom:8px;">
+                        <strong style="color:#9a6207;">⚑ ${escapeHtml(f.label || f.code)}</strong>
+                        <div style="color:#555; margin-top:2px; line-height:1.5;">${escapeHtml(f.why || '')}</div>
+                    </div>`).join('')}
+                    <div style="color:#9aa0a6; font-size:0.78rem; border-top:1px solid #f2dcae;
+                                padding-top:8px; margin-top:4px;">
+                        A signal to read the transcript, not a finding. The conversation below is the evidence.</div>
+                </div>` : ''}
+
+                ${H('Their own explanation')}
+                <div style="${BOX} font-size:0.85rem; color:#333; white-space:pre-wrap; line-height:1.55;">${
+                    escapeHtml(d.reflection || 'Not written — the student stopped before the summary.')}</div>
+
+                ${H('Your mark')}
+                <div style="display:flex; gap:9px; align-items:center; flex-wrap:wrap;">
+                    <input id="gradeScore" type="number" step="0.5" placeholder="Score"
+                           value="${d.teacher_score === null || d.teacher_score === undefined ? '' : d.teacher_score}"
+                           style="width:92px; padding:9px; background:#fff; border:1px solid #e5e7eb;
+                                  border-radius:8px; color:#333; font-family:inherit;">
+                    <input id="gradeNote" type="text" placeholder="Note to yourself (optional)"
+                           value="${escapeHtml(d.teacher_note || '')}"
+                           style="flex:1; min-width:200px; padding:9px; background:#fff;
+                                  border:1px solid #e5e7eb; border-radius:8px; color:#333; font-family:inherit;">
+                    <button class="btn" onclick="savePrelabGrade(${d.id})">Save mark</button>
+                    <span id="gradeSaved" style="font-size:12px; color:#27ae60;"></span>
+                </div>
+
+                ${H(`The whole conversation · ${(d.transcript || []).length} turns`)}
+                <div style="border:1px solid #e5e7eb; border-radius:10px; padding:13px;
+                            background:#fcfcfd;">${turns}</div>
+              </div>`;
+            box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (e) {
+            box.innerHTML = `<div style="color:#f87171; font-size:13px;">Could not load transcript (${e.message}).</div>`;
+        }
+    }
+
     async function loadVideoAnalytics() {
         const fname = document.getElementById('analyticsVideo').value;
         const body = document.getElementById('analyticsBody');
@@ -3064,6 +3572,29 @@
                 Optionally prefix a line with <code>[Concept]</code> to tag it.
                 Students get <strong>one at random</strong> when the video ends.
             </div>
+            <div style="border:1px dashed #2a2f3a; border-radius:8px; padding:10px; margin-bottom:10px;">
+                <div style="font-size:12px; font-weight:600; margin-bottom:4px;">⬆️ Upload a prelab handout</div>
+                <div style="font-size:11px; color:#64748b; margin-bottom:8px;">
+                    Plain-text export (<code>.txt</code>) with <code>DESCRIPTION</code> and
+                    <code>SAMPLE OUTPUT</code> headings. SAGE reads the first paragraph as the
+                    question and the rest as the grading rubric, checks the two agree by
+                    compiling and running a solution, and drafts similar problems.
+                    <strong>Nothing is saved until you approve it.</strong>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <input type="file" id="prelabFile" accept=".txt,text/plain"
+                           style="font-size:11px; color:#94a3b8; max-width:230px;">
+                    <label style="font-size:11px; color:#64748b;">Variants
+                        <select id="prelabVariantN" style="background:#0b0d12; color:#e2e8f0;
+                                border:1px solid #2a2f3a; border-radius:5px; padding:2px 4px; font-size:11px;">
+                            <option>0</option><option>2</option><option selected>3</option>
+                        </select></label>
+                    <button class="btn btn-sm" id="prelabUploadBtn"
+                            onclick="prelabUploadHandout('${escapeHtml(filename)}')">Analyze</button>
+                    <span id="prelabUploadStatus" style="font-size:11px; color:#94a3b8;"></span>
+                </div>
+                <div id="prelabReview"></div>
+            </div>
             <textarea id="prelabText" rows="12" spellcheck="false"
                 style="width:100%; box-sizing:border-box; padding:10px; border-radius:8px;
                        background:#0b0d12; color:#e2e8f0; border:1px solid #2a2f3a;
@@ -3144,13 +3675,233 @@
         }
     }
 
+    // ── Handout upload: analyze, review, then commit ─────────────────────────
+    // Deliberately two steps. The analyze call never writes, so a handout whose
+    // rubric disagrees with its own sample output stops in front of the teacher
+    // instead of reaching students.
+    let PRELAB_REVIEW = null;
+
+    const VSTATE = {
+        verified:    { color: '#34d399', bg: '#064e3b55', icon: '✓' },
+        mismatch:      { color: '#f87171', bg: '#7f1d1d55', icon: '✕' },
+        format_differs:{ color: '#38bdf8', bg: '#07598555', icon: 'i' },
+        no_sample:   { color: '#fbbf24', bg: '#78350f55', icon: '!' },
+        unavailable: { color: '#fbbf24', bg: '#78350f55', icon: '!' },
+        error:       { color: '#fbbf24', bg: '#78350f55', icon: '!' },
+    };
+
+    async function prelabUploadHandout(filename) {
+        const input  = document.getElementById('prelabFile');
+        const btn    = document.getElementById('prelabUploadBtn');
+        const status = document.getElementById('prelabUploadStatus');
+        const review = document.getElementById('prelabReview');
+        if (!input || !input.files.length) {
+            status.style.color = '#fbbf24';
+            status.textContent = 'Choose a .txt file first.';
+            return;
+        }
+
+        const body = new FormData();
+        body.append('file', input.files[0]);
+        body.append('video_filename', filename);
+        body.append('variants', document.getElementById('prelabVariantN').value);
+
+        btn.disabled = true;
+        const label = btn.innerHTML;
+        // Compiling and running a program per problem takes real time; say so
+        // rather than leaving a dead button.
+        btn.innerHTML = '<span class="pl-spin"></span> Analyzing…';
+        status.style.color = '#94a3b8';
+        status.textContent = 'parsing, compiling and checking — this takes a moment';
+        review.innerHTML = '';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/prelab/upload`,
+                                    { method: 'POST', headers: TEACHER_HDR(), body });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+            PRELAB_REVIEW = d;
+            status.textContent = '';
+            renderPrelabReview(filename);
+        } catch (e) {
+            status.style.color = '#f87171';
+            status.textContent = e.message;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = label;
+        }
+    }
+
+    function prelabCard(spec, idx) {
+        const v = spec.verification || {};
+        const st = VSTATE[v.status] || VSTATE.error;
+        const dd = v.diff || {};
+        // On a real contradiction show ONLY the lines whose VALUES differ. Listing
+        // every line that also happens to be worded differently buries the eight
+        // that matter among fifteen that do not, and makes a sound handout look
+        // broken. When the values all agree, the wording differences ARE the story.
+        const isValueFault = v.status === 'mismatch';
+        const diff = (isValueFault ? dd.value_mismatches : dd.mismatches) || [];
+        const shownTotal = isValueFault ? dd.value_mismatch_count : dd.mismatch_count;
+        const wordingOnly = isValueFault
+            ? Math.max(0, (dd.mismatch_count || 0) - (dd.value_mismatch_count || 0)) : 0;
+        const diffHtml = diff.length ? `
+            <table style="width:100%; border-collapse:collapse; font-size:11px; margin-top:6px;
+                          font-family:ui-monospace,Menlo,monospace;">
+              <thead><tr style="color:#64748b; text-align:left;">
+                <th style="padding:2px 6px;">Line</th>
+                <th style="padding:2px 6px;">Handout says</th>
+                <th style="padding:2px 6px;">Requirements produce</th>
+              </tr></thead><tbody>` +
+              diff.map(r => `<tr>
+                  <td style="padding:2px 6px; color:#64748b;">${r.line}</td>
+                  <td style="padding:2px 6px; color:#94a3b8;">${escapeHtml(r.expected ?? '—')}</td>
+                  <td style="padding:2px 6px; color:${isValueFault ? '#f87171' : '#38bdf8'};">${escapeHtml(r.actual ?? '—')}</td>
+                </tr>`).join('') + '</tbody></table>' +
+              (shownTotal > diff.length
+                ? `<div style="font-size:11px; color:#64748b; margin-top:4px;">
+                     …and ${shownTotal - diff.length} more.</div>` : '') +
+              (wordingOnly
+                ? `<div style="font-size:11px; color:#64748b; margin-top:4px;">
+                     ${wordingOnly} further line${wordingOnly === 1 ? '' : 's'} differ only in
+                     wording, not in any value — not counted as a fault.</div>` : '')
+            : '';
+
+        return `<div style="border:1px solid #2a2f3a; border-radius:8px; padding:10px; margin-top:8px; background:#0b0d12;">
+            <div style="display:flex; gap:8px; align-items:flex-start;">
+                <input type="checkbox" class="prelab-keep" data-idx="${idx}"
+                       ${v.status === 'mismatch' ? '' : 'checked'} style="margin-top:3px;">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:.04em;">
+                        ${spec.origin === 'generated' ? 'Generated variant' : 'From the handout'}</div>
+                    <div style="font-size:12.5px; color:#e2e8f0; margin:4px 0 6px; line-height:1.5;">
+                        ${escapeHtml(spec.prompt)}</div>
+                    <div style="display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px;
+                                color:${st.color}; background:${st.bg}; border:1px solid ${st.color}55;">
+                        ${st.icon} ${escapeHtml(v.message || v.status || 'unchecked')}</div>
+                    ${diffHtml}
+                    <details style="margin-top:8px;">
+                        <summary style="font-size:11px; color:#64748b; cursor:pointer;">
+                            Rubric (${(spec.rubric || []).length}) · sample output · reference solution
+                        </summary>
+                        <ul style="font-size:11.5px; color:#94a3b8; margin:6px 0; padding-left:18px; line-height:1.6;">
+                            ${(spec.rubric || []).map(r => `<li>${escapeHtml(r)}</li>`).join('') ||
+                              '<li style="color:#64748b;">none</li>'}
+                        </ul>
+                        ${spec.sample_output ? `<pre style="font-size:11px; background:#0f1115; color:#94a3b8;
+                             padding:8px; border-radius:6px; overflow-x:auto; max-height:180px;">${escapeHtml(spec.sample_output)}</pre>` : ''}
+                        ${spec.reference_solution ? `<pre style="font-size:11px; background:#0f1115; color:#64748b;
+                             padding:8px; border-radius:6px; overflow-x:auto; max-height:180px;">${escapeHtml(spec.reference_solution)}</pre>` : ''}
+                    </details>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function renderPrelabReview(filename) {
+        const host = document.getElementById('prelabReview');
+        const d = PRELAB_REVIEW;
+        if (!host || !d) return;
+
+        const all = [d.source, ...(d.variants || [])];
+        const failed = d.source.verification && d.source.verification.status === 'mismatch';
+        // Advisory, not a gate. The instructor wrote the handout and may know
+        // something the checker does not, so this says what was found and leaves
+        // the decision with them — it only declines to pre-tick a failed problem.
+        const banner = failed
+            ? `<div style="margin-top:10px; padding:10px; border-radius:8px; background:#78350f33;
+                          border:1px solid #fbbf2455; color:#fcd34d; font-size:12px; line-height:1.6;">
+                 <strong>Warning — this handout disagrees with its own sample output.</strong><br>
+                 A program written from the requirements alone does not reproduce the sample
+                 output, so a student who follows the requirements exactly would be marked wrong
+                 on the lines below. You can fix the handout and re-upload, or save it anyway —
+                 it is left unticked so saving it is a deliberate choice.
+               </div>`
+            : (d.uncovered_concepts && d.uncovered_concepts.length
+                ? `<div style="margin-top:10px; padding:10px; border-radius:8px; background:#07598533;
+                              border:1px solid #38bdf855; color:#7dd3fc; font-size:12px; line-height:1.6;">
+                     <strong>Ahead of the recordings.</strong> These concepts have no completed
+                     lecture yet: ${d.uncovered_concepts.map(escapeHtml).join(', ')}.<br>
+                     The guided tutor keeps students inside the concept list, so they will be
+                     coached with material the class has not covered. Fine if that is intended.
+                   </div>`
+            : (!d.compiler_available
+                ? `<div style="margin-top:10px; padding:8px 10px; border-radius:8px; background:#78350f33;
+                              border:1px solid #fbbf2455; color:#fcd34d; font-size:12px;">
+                     No C compiler on this server, so nothing below was verified by running it.
+                   </div>` : ''));
+
+        host.innerHTML = banner +
+            all.map((sp, i) => prelabCard(sp, i)).join('') + `
+              <div style="display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;">
+                  <button class="btn btn-sm" id="prelabCommitBtn"
+                          onclick="commitPrelabReview('${escapeHtml(filename)}')">Save selected</button>
+                  <label style="font-size:11px; color:#64748b;">
+                      <input type="checkbox" id="prelabReplace"> replace existing questions
+                  </label>
+                  <span id="prelabCommitStatus" style="font-size:11px; margin-left:auto;"></span>
+              </div>`;
+    }
+
+    async function commitPrelabReview(filename) {
+        const d = PRELAB_REVIEW;
+        if (!d) return;
+        const all = [d.source, ...(d.variants || [])];
+        const chosen = [...document.querySelectorAll('.prelab-keep')]
+            .filter(c => c.checked).map(c => all[parseInt(c.dataset.idx, 10)]);
+        const status = document.getElementById('prelabCommitStatus');
+        const btn = document.getElementById('prelabCommitBtn');
+        if (!chosen.length) {
+            status.style.color = '#fbbf24';
+            status.textContent = 'Nothing selected.';
+            return;
+        }
+
+        btn.disabled = true;
+        const label = btn.innerHTML;
+        btn.innerHTML = '<span class="pl-spin"></span> Saving…';
+        status.style.color = '#94a3b8';
+        status.textContent = '';
+
+        try {
+            const res = await fetch(`${API_URL}/api/v1/video/prelab/commit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...TEACHER_HDR() },
+                body: JSON.stringify({
+                    video_filename: filename,
+                    problems: chosen,
+                    replace: document.getElementById('prelabReplace').checked,
+                })
+            });
+            const r = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(r.detail || `HTTP ${res.status}`);
+            status.style.color = r.flagged ? '#fcd34d' : '#34d399';
+            status.textContent = `✓ Saved ${r.added} — ${r.total} on this video`
+                + (r.flagged ? ` (${r.flagged} with a warning)` : '');
+            btn.innerHTML = '✓ Saved';
+            markPrelabCount(filename, r.total);
+            // Reopening reloads from disk, so the text box reflects what was saved
+            // rather than the state it held before the upload.
+            setTimeout(() => {
+                const panel = document.getElementById('prelabEditorPanel');
+                if (panel) panel.remove();
+            }, 1200);
+        } catch (e) {
+            status.style.color = '#f87171';
+            status.textContent = e.message;
+            btn.disabled = false;
+            btn.innerHTML = label;
+        }
+    }
+
     // Reflect the saved count on the video row, so the panel closing is not the
     // only evidence anything happened.
     function markPrelabCount(filename, count) {
         document.querySelectorAll('button').forEach(b => {
             if (b.getAttribute('onclick')?.includes(`openPrelabEditor('${filename}'`)) {
-                b.innerHTML = count ? `📝 Prelab (${count})` : '📝 Prelab';
-                b.style.background = count ? '#1f3d2b' : '#334155';
+                b.textContent = count ? `Prelab (${count})` : 'Prelab';
+                b.classList.toggle('has-prelab', Boolean(count));
+                b.style.removeProperty('background');
             }
         });
     }
@@ -3172,6 +3923,7 @@
             renderUnassigned();
             renderChapters();
             fillAnalyticsPicker(cat.chapters);
+            loadPrelabSubmissions();   // also refreshes its own lecture picker
         } catch (e) {
             console.error('Content load failed', e);
         }
@@ -3199,40 +3951,37 @@
         const live = v.available;
         const missing = v.filename && !v.available;
         const state = live
-            ? `<span style="color:#34d399; font-size:12px;">🎬 ${escapeHtml(v.filename)}</span>`
+            ? `<span class="video-file"><span class="video-file-dot"></span>${escapeHtml(v.filename)}</span>`
             : missing
-                ? `<span style="color:#f87171; font-size:12px;" title="Row points at a file that is not on disk">⚠ missing: ${escapeHtml(v.filename)}</span>`
-                : `<span style="color:#64748b; font-size:12px;">planned</span>`;
+                ? `<span class="video-state-stack" title="This recording is not on disk"><span class="status-chip status-critical">File missing</span><span class="video-file-name">${escapeHtml(v.filename)}</span></span>`
+                : `<span class="status-chip status-neutral">Planned</span>`;
         const action = live || missing
-            ? `<button class="btn btn-sm" style="background:#334155;" onclick="assignSlot(${v.id}, null)">Unassign</button>`
+            ? `<button class="btn btn-sm" onclick="assignSlot(${v.id}, null)">Unassign</button>`
             : (UNASSIGNED.length
-                ? `<select id="sel-${v.id}" style="background:#0f1115; color:#e2e8f0; border:1px solid #2a2f3a; border-radius:6px; padding:4px 6px; font-size:12px;">
-                       <option value="">— choose file —</option>${opts}
+                ? `<select class="video-file-select" id="sel-${v.id}" aria-label="Choose a recording for ${escapeHtml(v.title)}">
+                       <option value="">Choose recording</option>${opts}
                    </select>
                    <button class="btn btn-sm" onclick="assignSlot(${v.id}, document.getElementById('sel-${v.id}').value)">Attach</button>`
-                : `<span style="color:#475569; font-size:12px;">upload a file first</span>`);
+                : `<span class="video-upload-hint">Upload a recording to attach</span>`);
         const meta = [v.slides, v.sections].filter(Boolean).join(' · ');
         const label = v.kind === 'supplement'
-            ? `<span style="color:#a78bfa;">✚ Supplement</span>`
-            : `<strong>Video ${v.video_number ?? '—'}</strong>`;
+            ? `<span class="video-kind">Supplement</span>`
+            : `<span class="video-kind">Video ${v.video_number ?? '—'}</span>`;
         return `
-        <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
-                    border-top:1px solid #1e2430;">
-            <div style="flex:1; min-width:0;">
-                <div style="font-size:13px;">${label} · ${escapeHtml(v.title)}</div>
-                ${meta ? `<div style="color:#64748b; font-size:11px; margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
+        <div class="video-row">
+            <div class="video-main">
+                <div class="video-title">${label}<span>${escapeHtml(v.title)}</span></div>
+                ${meta ? `<div class="video-meta">${escapeHtml(meta)}</div>` : ''}
             </div>
-            <div style="flex:0 0 auto;">${state}</div>
-            <div style="flex:0 0 auto; display:flex; gap:6px; align-items:center;">
+            <div class="video-state">${state}</div>
+            <div class="video-actions">
                 ${action}
                 ${v.filename
-                    ? `<button class="btn btn-sm" style="background:#334155;"
-                         onclick="openPrelabEditor('${escapeHtml(v.filename)}', '${escapeHtml(v.title).replace(/'/g, "\\'")}')">📝 Prelab</button>`
+                    ? `<button class="btn btn-sm" onclick="openPrelabEditor('${escapeHtml(v.filename)}', '${escapeHtml(v.title).replace(/'/g, "\\'")}')">Prelab</button>`
                     : ''}
-                <button class="btn btn-sm" style="background:#334155;" title="Rename / renumber"
-                        onclick="editSlot(${v.id})">✏️</button>
-                <button class="btn btn-sm" style="background:#7f1d1d;" title="Remove this slot (the file on disk is kept)"
-                        onclick="deleteSlot(${v.id}, '${escapeHtml(v.title).replace(/'/g, "\\'")}')">🗑</button>
+                <button class="btn btn-sm" title="Rename or renumber" onclick="editSlot(${v.id})">Edit</button>
+                <button class="btn btn-sm btn-danger-quiet" title="Remove this slot; the recording file is kept"
+                        onclick="deleteSlot(${v.id}, '${escapeHtml(v.title).replace(/'/g, "\\'")}')">Remove</button>
             </div>
         </div>
         <div id="prelab-ed-${v.id}"></div>`;
@@ -3241,48 +3990,65 @@
     function renderChapters() {
         const el = document.getElementById('chapterList');
         if (!el) return;
+        const existingCards = Array.from(el.querySelectorAll('.chapter-card'));
+        const previouslyOpen = new Set(existingCards.filter(card => card.open).map(card => Number(card.dataset.chapter)));
+        const preserveOpenState = existingCards.length > 0;
         // Options for the assign dropdowns: unassigned files only, so one recording
         // cannot be silently attached to two slots.
         const opts = UNASSIGNED.map(f =>
             `<option value="${escapeHtml(f.filename)}">${escapeHtml(f.filename)}</option>`).join('');
 
-        el.innerHTML = (CATALOG.chapters || []).map(c => {
+        const chapters = CATALOG.chapters || [];
+        const firstNeedsWork = chapters.findIndex(c => c.total > 0 && c.recorded < c.total);
+        const defaultOpen = firstNeedsWork >= 0 ? firstNeedsWork : 0;
+
+        el.innerHTML = chapters.map((c, chapterIndex) => {
             const badge = c.status
-                ? `<span style="margin-left:8px; font-size:11px; color:#34d399;">${escapeHtml(c.status)}</span>` : '';
+                ? `<span class="status-chip status-info">${escapeHtml(c.status)}</span>` : '';
             const done = c.total > 0 && c.recorded === c.total;
             const counter = c.total === 0
-                ? `<span style="color:#64748b; font-size:12px;">no videos planned</span>`
-                : `<span style="color:${done ? '#34d399' : '#94a3b8'}; font-size:12px;">${c.recorded}/${c.total} recorded</span>`;
+                ? `<span class="status-chip status-neutral">No videos planned</span>`
+                : `<span class="status-chip status-${done ? 'success' : 'warning'}">${c.recorded} of ${c.total} recorded</span>`;
 
             const all = c.videos || [];
             const lectures = all.filter(v => v.kind !== 'supplement');
             const extras   = all.filter(v => v.kind === 'supplement');
 
             const lectureRows = lectures.map(v => videoRow(v, opts)).join('')
-                || `<div style="padding:12px 14px; color:#64748b; font-size:13px;">No videos planned for this chapter yet.</div>`;
+                || `<div class="chapter-empty">No videos have been planned for this chapter.</div>`;
 
-            // The supplement section is always shown, so an empty chapter still offers
-            // somewhere to put extra material without planning a numbered slot first.
             const extraRows = extras.map(v => videoRow(v, opts)).join('')
-                || `<div style="padding:10px 14px; color:#475569; font-size:12px;">No supplementary videos.</div>`;
+            const supplementSection = extras.length
+                ? `<div class="supplement-heading">Supplementary videos <span>${extras.length}</span></div>${extraRows}`
+                : '';
 
             return `
-            <div style="background:#0f1115; border:1px solid #2a2f3a; border-radius:10px; overflow:hidden;">
-                <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:#141821;">
-                    <div style="flex:1;">
-                        <strong>Chapter ${c.number}</strong> · ${escapeHtml(c.title)}${badge}
+            <details class="chapter-card" data-chapter="${c.number}" ${(preserveOpenState ? previouslyOpen.has(Number(c.number)) : chapterIndex === defaultOpen) ? 'open' : ''}>
+                <summary class="chapter-summary">
+                    <span class="chapter-heading">
+                        <span class="chapter-number">Chapter ${c.number}</span>
+                        <span class="chapter-title">${escapeHtml(c.title)}</span>
+                        ${badge}
+                    </span>
+                    <span class="chapter-summary-end">
+                        ${counter}
+                        <span class="chapter-chevron" aria-hidden="true"></span>
+                    </span>
+                </summary>
+                <div class="chapter-body">
+                    <div class="chapter-toolbar">
+                        <span>Manage this chapter</span>
+                        <div>
+                            <button class="btn btn-sm btn-primary" onclick="addSlot(${c.number}, 'lecture')">Add video</button>
+                            <button class="btn btn-sm" onclick="addSlot(${c.number}, 'supplement')">Add supplement</button>
+                        </div>
                     </div>
-                    ${counter}
-                    <button class="btn btn-sm" onclick="addSlot(${c.number}, 'lecture')">+ Video</button>
-                    <button class="btn btn-sm" style="background:#4c1d95;" onclick="addSlot(${c.number}, 'supplement')">+ Supplement</button>
+                    <div class="chapter-videos">
+                        ${lectureRows}
+                        ${supplementSection}
+                    </div>
                 </div>
-                ${lectureRows}
-                <div style="padding:8px 14px; background:#12151d; border-top:1px solid #1e2430;
-                            color:#a78bfa; font-size:12px; font-weight:600; letter-spacing:.3px;">
-                    SUPPLEMENT${extras.length ? ` (${extras.length})` : ''}
-                </div>
-                ${extraRows}
-            </div>`;
+            </details>`;
         }).join('');
     }
 
@@ -3454,15 +4220,27 @@
     }
 
     function showTab(name) {
+        const tabMeta = {
+            NOW: { kicker: 'Today', title: 'Overview', description: 'Start with the students and reviews that need attention.' },
+            CLASS: { kicker: 'Class', title: 'Students', description: 'Understand progress, engagement, and where learners are getting stuck.' },
+            NEXT: { kicker: 'Plan', title: 'Teaching plan', description: 'Choose the next topic and prepare targeted support for the class.' },
+            CONTENT: { kicker: 'Course', title: 'Content', description: 'Organize chapters, recordings, prelabs, and lecture engagement.' },
+            SETUP: { kicker: 'Administration', title: 'Course setup', description: 'Manage access, resources, and which topics students can use.' },
+            SYSTEM: { kicker: 'Advanced', title: 'Model and safety', description: 'Inspect model calibration and aggregate safety signals.' }
+        };
         if (name === 'CONTENT') loadContentTab();
-        if (name === 'NOW') loadFrustration();
-        if (name === 'CLASS') loadPathDeviation();
+        if (name === 'CLASS') { loadFrustration(); loadPathDeviation(); }
         document.querySelectorAll('.grid-container[data-tab]').forEach(sec => {
             sec.classList.toggle('tab-visible', sec.dataset.tab === name);
         });
         document.querySelectorAll('.tab-btn').forEach(b => {
             b.classList.toggle('active', b.dataset.tabkey === name);
+            b.setAttribute('aria-current', b.dataset.tabkey === name ? 'page' : 'false');
         });
+        const meta = tabMeta[name] || tabMeta.NOW;
+        document.getElementById('tabKicker').textContent = meta.kicker;
+        document.getElementById('tabTitle').textContent = meta.title;
+        document.getElementById('tabDescription').textContent = meta.description;
         try { localStorage.setItem(TAB_KEY, name); } catch (e) {}
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }

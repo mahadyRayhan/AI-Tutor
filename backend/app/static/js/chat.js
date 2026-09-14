@@ -690,7 +690,18 @@ function displaySuggestions(suggestions, container) {
         const btn = document.createElement('button');
         btn.className = 'suggestion-btn';
 
-        if (text.toLowerCase().startsWith('challenge')) {
+        if (text.startsWith('Prelab:')) {
+            // Another practice problem on the same lecture. The payload is the whole
+            // problem statement (that text is what routes into guided mode), so the
+            // chip shows a short label instead of a paragraph.
+            const problem = text.replace('Prelab:', '').trim();
+            btn.classList.add('challenge');
+            btn.innerText = "🧪 Try another prelab on this topic";
+            btn.title = problem;
+            btn.addEventListener('click', function () {
+                window.sendMessage(problem);
+            });
+        } else if (text.toLowerCase().startsWith('challenge')) {
             btn.classList.add('challenge');
             btn.innerText = "💪 " + text.replace('Challenge:', '').trim();
             btn.onclick = function () {

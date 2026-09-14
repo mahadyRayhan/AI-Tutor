@@ -43,17 +43,41 @@ from app.core.threshold_calibrator import calibrator, THRESHOLD_PRIORS
 logger = logging.getLogger(__name__)
 
 # ── Evidence-tier configuration ───────────────────────────────────────────────
+#
+# P_L0 is MEASURED, not chosen (2026-09-13, n=5636 first encounters, CMP_SC 1050):
+# the fraction of students correct on their first ever attempt at a concept in
+# that tier, which is the definition of the prior.
+#
+#     tier    was     measured    n
+#     quiz    0.30    0.781       5286
+#     micro   0.05    0.450        131
+#     code    0.01    0.269        219
+#
+# The old values were 2.6x, 9x and 27x too low. Because mastery is conjunctive
+# across the three tiers, a student with no history started near 1% — the model
+# asserting near-certainty of ignorance from zero evidence. That produced 2351
+# quiz predictions of "<=10% chance" against an observed 52% correct, and it is
+# most of why Model Health read 57/100 ("Unreliable, tends to under-estimate").
+#
+# P_G and P_S are deliberately UNCHANGED. Both can only be estimated from bands
+# of the model's own predictions, and those bands are contaminated by exactly the
+# miscalibration being fixed here: the low band is full of students who DO know
+# the material but were crushed by the bad prior, so it reads as a guess rate of
+# 0.52; the high band is selected on students already answering correctly, so it
+# reads as a slip rate of 0.04. Re-estimate both from fresh predictions once
+# these priors have been live for a week — not before.
+#   Re-run: the band query in docs/ (p_eff_pred >= 0.8 vs <= 0.1, grouped by tier)
 EVIDENCE_CONFIG = {
     "quiz": {
-        "P_G": 0.20, "P_S": 0.10, "P_L0": 0.30, "P_T": 0.09,
+        "P_G": 0.20, "P_S": 0.10, "P_L0": 0.78, "P_T": 0.09,
         "ceiling": 0.60, "col": "p_mastery_quiz"
     },
     "micro": {
-        "P_G": 0.10, "P_S": 0.15, "P_L0": 0.05, "P_T": 0.09,
+        "P_G": 0.10, "P_S": 0.15, "P_L0": 0.45, "P_T": 0.09,
         "ceiling": 0.25, "col": "p_mastery_micro"
     },
     "code": {
-        "P_G": 0.05, "P_S": 0.20, "P_L0": 0.01, "P_T": 0.09,
+        "P_G": 0.05, "P_S": 0.20, "P_L0": 0.27, "P_T": 0.09,
         "ceiling": 0.10, "col": "p_mastery_code"
     },
 }
@@ -141,7 +165,21 @@ def _apply_decay(p_tilde: float, tier: str, last_at: datetime | None,
     # evidence erased on their very next interaction:
     #     P̃ 0.300 → 0.051 ❌  then, seconds later,  0.051 →(decay)→ 0.300
     # Wrong answers effectively did not count. Clamp to the unit interval only.
-    return round(min(1.0, max(decayed, 1e-6)), 6)
+    decayed = min(1.0, max(decayed, 1e-6))
+
+    # One-directional: time alone NEVER raises belief that a student knows
+    # something. The exponential above asymptotes to P̃₀ from both directions, so
+    # a posterior sitting BELOW the prior drifts UP with nothing but elapsed time
+    # — "we gradually forget that you got it wrong". That was mild while the quiz
+    # prior was 0.30; once P_L0 was re-measured at 0.78 a wrong answer at 0.051
+    # recovered to 0.615 in thirty days, a slow-motion return of the erased-wrong-
+    # answer bug described above.
+    #
+    # This is NOT that clamp reintroduced: `max(decayed, p0)` snapped the value UP
+    # to the prior, whereas this holds it at the lower of the two. Decay from above
+    # (the intended forgetting, and what drives spaced review) is untouched.
+    # Recovery is earned by answering correctly, not by waiting.
+    return round(min(p_tilde, decayed), 6)
 
 
 from app.core.concept_canon import canonical_concept, is_attributable_concept

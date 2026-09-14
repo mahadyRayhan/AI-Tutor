@@ -223,9 +223,9 @@ ISSUE/
 # `database` above excludes backend/database/ wholesale, and git will not descend
 # into an excluded directory — so a bare `!.../prelab.json` would never match.
 # Re-include each parent, then re-exclude its contents, then allow the one file.
-!backend/database/
-backend/database/*
-!backend/database/video/
-backend/database/video/*
-!backend/database/video/prelab.json
+# !backend/database/
+# backend/database/*
+# !backend/database/video/
+# backend/database/video/*
+# !backend/database/video/prelab.json
 .env.bak.*

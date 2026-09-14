@@ -2511,13 +2511,17 @@ async def get_model_health(_t: dict = Depends(verify_teacher)):
     curve, so an instructor can see the model's track record before trusting a
     certification decision. Honest-by-design: it shows the model grading itself.
     """
+    # Ordered, because each prediction is classified by how much evidence the model
+    # had when it made it — and that is its position in the (student, concept, tier)
+    # sequence. The FIRST prediction for a triple is made from the prior alone.
     rows = [r for r in db.fetch_all(
-        "SELECT username, p_bkt_pred, p_eff_pred, is_correct FROM prediction_log"
+        "SELECT username, concept, tier, p_bkt_pred, p_eff_pred, is_correct "
+        "FROM prediction_log ORDER BY ts_utc, id"
     ) if r["is_correct"] is not None]
     n = len(rows)
     if n == 0:
         return {"n": 0, "n_users": 0, "brier_eff": None, "brier_bkt": None,
-                "bins_eff": [], "bins_bkt": []}
+                "bins_eff": [], "bins_bkt": [], "cohorts": {}}
 
     def brier(pairs):
         return round(sum((p - y) ** 2 for p, y in pairs) / len(pairs), 4) if pairs else None
@@ -2537,13 +2541,8 @@ async def get_model_health(_t: dict = Depends(verify_teacher)):
                 })
         return out
 
-    eff = [(r["p_eff_pred"], r["is_correct"]) for r in rows if r["p_eff_pred"] is not None]
-    bkt = [(r["p_bkt_pred"], r["is_correct"]) for r in rows if r["p_bkt_pred"] is not None]
-    n_users = db.fetch_one("SELECT COUNT(DISTINCT username) c FROM prediction_log")["c"]
-
-    # --- Single instructor-facing reliability value (0–100) from the effective preds. ---
-    # Expected Calibration Error: bin-size-weighted gap between predicted and observed;
-    # reliability = 100·(1 − ECE). One honest number an instructor can read without stats.
+    # Expected Calibration Error: bin-size-weighted gap between predicted and
+    # observed. reliability = 100·(1 − ECE) — one honest number, no stats needed.
     def ece(pairs, nb=10):
         if not pairs:
             return None
@@ -2558,39 +2557,86 @@ async def get_model_health(_t: dict = Depends(verify_teacher)):
                 e += (len(b) / len(pairs)) * abs(pm - am)
         return e
 
-    e_eff = ece(eff)
-    rel_score = round(100 * (1 - e_eff)) if e_eff is not None else None
-    avg_p = sum(p for p, _ in eff) / len(eff) if eff else None
-    avg_y = sum(y for _, y in eff) / len(eff) if eff else None
-    if avg_p is None:
-        rel_dir = None
-    elif avg_p < avg_y - 0.05:
-        rel_dir = "under"    # the model predicts lower than students actually perform
-    elif avg_p > avg_y + 0.05:
-        rel_dir = "over"     # the model predicts higher than students perform
-    else:
-        rel_dir = "well"
-    if rel_score is None:
-        rel_label = None
-    elif rel_score >= 90:
-        rel_label = "Reliable"
-    elif rel_score >= 75:
-        rel_label = "Mostly reliable"
-    elif rel_score >= 60:
-        rel_label = "Use with caution"
-    else:
-        rel_label = "Unreliable"
+    def label_for(score):
+        if score is None:
+            return None
+        if score >= 90:
+            return "Reliable"
+        if score >= 75:
+            return "Mostly reliable"
+        if score >= 60:
+            return "Use with caution"
+        return "Unreliable"
+
+    def summarise(subset):
+        """Brier, reliability and curve for one cohort of predictions."""
+        eff = [(r["p_eff_pred"], r["is_correct"]) for r in subset if r["p_eff_pred"] is not None]
+        bkt = [(r["p_bkt_pred"], r["is_correct"]) for r in subset if r["p_bkt_pred"] is not None]
+        e = ece(eff)
+        score = round(100 * (1 - e)) if e is not None else None
+        avg_p = sum(p for p, _ in eff) / len(eff) if eff else None
+        avg_y = sum(y for _, y in eff) / len(eff) if eff else None
+        if avg_p is None:
+            direction = None
+        elif avg_p < avg_y - 0.05:
+            direction = "under"   # predicts lower than students actually perform
+        elif avg_p > avg_y + 0.05:
+            direction = "over"
+        else:
+            direction = "well"
+        return {
+            "n": len(subset),
+            "brier_eff": brier(eff), "brier_bkt": brier(bkt),
+            "bins_eff": reliability(eff), "bins_bkt": reliability(bkt),
+            "reliability_score": score, "reliability_label": label_for(score),
+            "reliability_dir": direction,
+            "avg_predicted": round(avg_p, 3) if avg_p is not None else None,
+            "avg_observed": round(avg_y, 3) if avg_y is not None else None,
+        }
+
+    # --- Cohort split: a prior is not a prediction ------------------------------
+    # Scoring the model on its own priors measures the STARTING POINT, not the
+    # learning. Both matter, and they call for different fixes — a bad prior is a
+    # constant to re-measure, a bad update is an algorithm to change — so they are
+    # reported apart rather than averaged into one number that hides which is wrong.
+    # (CMP_SC 1050, Sept 2026: 87% of all predictions were first-encounters, so the
+    # single blended score was very nearly a measurement of the priors alone.)
+    seen = set()
+    cold, warm = [], []
+    for r in rows:
+        key = (r["username"], r["concept"], r["tier"])
+        (cold if key not in seen else warm).append(r)
+        seen.add(key)
+
+    n_users = db.fetch_one("SELECT COUNT(DISTINCT username) c FROM prediction_log")["c"]
+    overall = summarise(rows)
+
+    # Does the effective (acted-on) prediction ever actually differ from raw BKT?
+    # It only does when the student has recorded a self-assessment for that concept,
+    # so if this is 0 the two Brier scores being identical is arithmetic, not a
+    # finding — and the adaptation hook is inert.
+    n_differ = sum(1 for r in rows
+                   if r["p_eff_pred"] is not None and r["p_bkt_pred"] is not None
+                   and abs(r["p_eff_pred"] - r["p_bkt_pred"]) > 1e-9)
 
     return {
         "n": n,
         "n_users": n_users,
-        "brier_eff": brier(eff),
-        "brier_bkt": brier(bkt),
-        "bins_eff": reliability(eff),
-        "bins_bkt": reliability(bkt),
-        "reliability_score": rel_score,
-        "reliability_label": rel_label,
-        "reliability_dir": rel_dir,
+        # Back-compatible top-level keys describe the whole set.
+        "brier_eff": overall["brier_eff"],
+        "brier_bkt": overall["brier_bkt"],
+        "bins_eff": overall["bins_eff"],
+        "bins_bkt": overall["bins_bkt"],
+        "reliability_score": overall["reliability_score"],
+        "reliability_label": overall["reliability_label"],
+        "reliability_dir": overall["reliability_dir"],
+        "eff_differs_n": n_differ,
+        "eff_differs_pct": round(100 * n_differ / n, 1) if n else 0.0,
+        "cohorts": {
+            "all": overall,
+            "evidence": summarise(warm),   # the model had seen this student on this concept
+            "prior": summarise(cold),      # first encounter: the prior, untested
+        },
     }
 
 
@@ -4453,10 +4499,14 @@ async def submit_video_reflection(req: VideoReflectionRequest, _caller: dict = D
 async def get_video_prelab(video_filename: str):
     """Prelab practice questions for one video.
 
-    prelab.json is a plain chapter -> video -> prelabs tree (see _find_video). The
-    response shape is kept as a list of {prompt} objects because that is what the
-    classroom modal already renders; `samples` and `concept` are always empty now
-    that a question is just its text.
+    prelab.json is a plain chapter -> video -> prelabs tree (see _find_video).
+
+    STUDENT-FACING. A prelab now carries a rubric and a reference solution as well
+    as a prompt, and those two are the answer key — they decide whether a
+    submission is right. `student_view` keeps the prompt, the concept chip and the
+    sample output and drops the rest, so the grading criteria cannot be read out of
+    the page that poses the question. Entries stored as bare strings (everything
+    written before the upload pipeline existed) still work.
     """
     fname = os.path.basename(video_filename)
     try:
@@ -4465,8 +4515,9 @@ async def get_video_prelab(video_filename: str):
         logger.warning(f"Prelab load failed for {video_filename}: {e}")
         return {"problems": []}
 
-    problems = [{"prompt": q, "samples": [], "concept": ""}
-                for q in (vid or {}).get("prelabs", []) if (q or "").strip()]
+    from app.core import prelab_ingest
+    problems = [p for p in (prelab_ingest.student_view(q)
+                            for q in (vid or {}).get("prelabs", [])) if p]
     return {"problems": problems}
 
 
@@ -4492,6 +4543,24 @@ def _load_prelab_file() -> dict:
         raise HTTPException(status_code=500, detail="prelab.json is unreadable")
     data.setdefault("chapters", [])
     return data
+
+
+def _write_prelab_file(data: dict) -> None:
+    """Persist prelab.json atomically.
+
+    Written to a temp file and renamed, so a crash mid-write leaves the previous
+    file intact rather than a truncated one the app would refuse to parse.
+    """
+    path = _prelab_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.error(f"[prelab] write failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not save prelab.json")
 
 
 def _find_video(data: dict, fname: str) -> dict | None:
@@ -4534,10 +4603,266 @@ def _find_video(data: dict, fname: str) -> dict | None:
 
 @app.get("/api/v1/video/prelab-edit/{video_filename}")
 async def get_prelab_for_edit(video_filename: str, _: str = Depends(verify_teacher)):
-    """The editable question list for one video — one question per line in the UI."""
+    """The editable question list for one video — one question per line in the UI.
+
+    TEACHER-ONLY, so this one does include the rubric. The plain-text box still
+    edits prompts only; `details` carries the full record so the dashboard can show
+    which prelabs have a rubric and how each was verified.
+    """
+    from app.core import prelab_ingest
     fname = os.path.basename(video_filename)
     vid = _find_video(_load_prelab_file(), fname)
-    return {"video_filename": fname, "questions": list((vid or {}).get("prelabs", []))}
+    stored = list((vid or {}).get("prelabs", []))
+    details = [prelab_ingest.normalise_stored(q) for q in stored]
+    return {"video_filename": fname,
+            "questions": [d["prompt"] for d in details],
+            "details": details}
+
+
+# ── Prelab ingest: handout -> verified practice problems ────────────────────
+# An instructor uploads the .txt export of a prelab handout. The upload endpoint
+# PARSES and VERIFIES but never writes; the teacher approves what they see and
+# `commit` saves it. Splitting the two is what makes the verification useful —
+# a mismatch is something a person still has a chance to fix.
+
+class PrelabCommitSpec(BaseModel):
+    prompt: str
+    rubric: List[str] = []
+    sample_output: str = ""
+    concepts: List[str] = []
+    reference_solution: str = ""
+    origin: str = "upload"
+    verification: Dict[str, Any] = {}
+
+
+class PrelabCommitRequest(BaseModel):
+    video_filename: str
+    problems: List[PrelabCommitSpec]
+    replace: bool = False   # default appends; the teacher opts into overwriting
+
+
+@app.post("/api/v1/video/prelab/upload")
+async def upload_prelab_handout(
+    file: UploadFile = File(...),
+    video_filename: str = Form(...),
+    variants: int = Form(3),
+    _t: dict = Depends(verify_teacher),
+):
+    """Parse an uploaded prelab handout, verify it, and draft variants.
+
+    Nothing is saved. The response is a preview for the teacher to approve, which
+    matters most when verification FAILS: the handout that prompted this feature
+    contradicted its own sample output on 8 of 15 lines, and the only useful place
+    to catch that is in front of the person who can correct it.
+
+    Compiling and running C blocks, and the model is called once per problem, so
+    the whole job goes to a worker thread rather than stalling the event loop.
+    """
+    from app.core import prelab_ingest
+
+    if not (file.filename or "").lower().endswith(".txt"):
+        raise HTTPException(status_code=400,
+                            detail="Upload the .txt export of the handout. "
+                                   "PDF and LaTeX are not parsed.")
+
+    payload = await file.read()
+    if len(payload) > prelab_ingest.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File is larger than "
+                   f"{prelab_ingest.MAX_UPLOAD_BYTES // 1024} KB.")
+    try:
+        raw = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        raw = payload.decode("latin-1", errors="replace")
+
+    try:
+        spec = prelab_ingest.parse_prelab_txt(raw)
+    except prelab_ingest.PrelabParseError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    n = max(0, min(int(variants or 0), 5))
+
+    if llm_smart is None:
+        # Startup failed or is still running. Without a model there is no reference
+        # solution, so there is no verification — and an unverified prelab is
+        # exactly what this endpoint exists to prevent.
+        raise HTTPException(status_code=503,
+                            detail="The reasoning model is not available, so this "
+                                   "handout cannot be verified. Try again shortly.")
+
+    def _work():
+        # llm_smart is the reasoning model; writing a correct reference solution
+        # is the whole basis of the check, so it is not the place to save tokens.
+        gen = llm_smart.generate_response
+        checked = prelab_ingest.verify_spec(spec, gen)
+        drafts = [] if n == 0 else prelab_ingest.generate_variants(checked, gen, n)
+        return checked, drafts
+
+    try:
+        checked, drafts = await asyncio.to_thread(_work)
+    except Exception as e:
+        logger.error(f"[prelab] ingest failed for {file.filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=502,
+                            detail=f"Could not process the handout: {e}")
+
+    # Coverage check: does the handout practise anything the class has not reached?
+    # Advisory, like the sample-output check — a prelab may legitimately run ahead
+    # of the recordings, and only the instructor knows whether it should.
+    taught = []
+    try:
+        for r in db.fetch_all(
+                "SELECT title FROM video_catalog WHERE status='complete' "
+                "AND filename IS NOT NULL AND filename != ''"):
+            taught.append((r["title"] or "").lower())
+    except Exception as e:
+        logger.debug(f"[prelab] catalog coverage lookup failed: {e}")
+
+    def _covered(concept: str) -> bool:
+        # A concept counts as taught when a recorded lecture's title shares a
+        # substantive word with it. Deliberately loose: this is a prompt to the
+        # instructor, not a gate, and a false "not covered" costs more attention
+        # than a missed one.
+        words = {w for w in re.findall(r"[a-z]{4,}", concept.lower())}
+        return any(w in title for w in words for title in taught)
+
+    uncovered = [c for c in checked.concepts if not _covered(c)] if taught else []
+
+    status = checked.verification.get("status")
+    logger.info(f"[prelab] ingested {file.filename} for {video_filename}: "
+                f"{status}, {len(drafts)} variant(s)")
+    return {
+        "video_filename": os.path.basename(video_filename or ""),
+        "source": checked.to_dict(),
+        "variants": [d.to_dict() for d in drafts],
+        # A failed check is ADVISORY. The teacher wrote the handout and may have a
+        # reason the checker cannot see, so it is surfaced prominently and left to
+        # them — the review panel just does not pre-select a problem that failed.
+        "uncovered_concepts": uncovered,
+        "has_warning": status in ("mismatch", "format_differs", "error",
+                                  "unavailable", "no_sample") or bool(uncovered),
+        "compiler_available": prelab_ingest.compiler_path() is not None,
+    }
+
+
+@app.post("/api/v1/prelab/submissions/{sub_id}/recheck")
+async def recheck_prelab_submission(sub_id: int, _t: dict = Depends(verify_teacher)):
+    """Re-run the automatic check against the current handout.
+
+    Use after correcting a handout's sample output: the student's work has not
+    changed, so re-deriving the verdict is right and asking them to redo it is not.
+    """
+    from app.core import prelab_submission
+    status = await asyncio.to_thread(prelab_submission.regrade, sub_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="No such submission.")
+    return {"ok": True, "id": sub_id, "grade_status": status}
+
+
+class PrelabGradeRequest(BaseModel):
+    score: float = None
+    note: str = ""
+
+
+@app.post("/api/v1/prelab/submissions/{sub_id}/grade")
+async def grade_prelab_submission(sub_id: int, req: PrelabGradeRequest,
+                                  _t: dict = Depends(verify_teacher)):
+    """Record the instructor's mark on one submission.
+
+    The automatic verdict stored at capture time is evidence — it says whether the
+    program builds and matches the handout's output. It is not the grade, and it
+    never overwrites this.
+    """
+    from app.core import prelab_submission
+    if not prelab_submission.set_teacher_grade(sub_id, req.score, req.note):
+        raise HTTPException(status_code=404, detail="No such submission.")
+    return {"ok": True, "id": sub_id, "score": req.score}
+
+
+@app.get("/api/v1/prelab/submissions")
+async def list_prelab_submissions(video_filename: str = None, username: str = None,
+                                  _t: dict = Depends(verify_teacher)):
+    """Prelab work captured automatically from guided practice.
+
+    There is no upload step for the student: reaching the last guided step files
+    the run. This is the grader's list view, so transcripts are left out and only
+    their size is reported — a class of them would be megabytes.
+    """
+    from app.core import prelab_submission
+    rows = prelab_submission.list_submissions(video_filename=video_filename,
+                                              username=username)
+    return {"count": len(rows), "submissions": rows,
+            "lectures": prelab_submission.lecture_options()}
+
+
+@app.get("/api/v1/prelab/submissions/{sub_id}")
+async def get_prelab_submission(sub_id: int, _t: dict = Depends(verify_teacher)):
+    """One submission with the full conversation that produced it."""
+    from app.core import prelab_submission
+    rec = prelab_submission.get_submission(sub_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="No such submission.")
+    return rec
+
+
+@app.post("/api/v1/video/prelab/commit")
+async def commit_prelab_problems(req: PrelabCommitRequest,
+                                 _t: dict = Depends(verify_teacher)):
+    """Save the problems the teacher approved onto one video.
+
+    Saves whatever the teacher approved, including a problem whose check failed —
+    the verification is advisory and the instructor is the authority on their own
+    handout. The verdict is stored on the record and logged, so a prelab saved over
+    a warning stays identifiable afterwards rather than becoming indistinguishable
+    from a verified one. Appends by default: uploading a second handout for a
+    lecture should add to its practice set, not silently replace what is there.
+    """
+    from app.core import prelab_ingest
+
+    fname = os.path.basename(req.video_filename or "")
+    if not fname:
+        raise HTTPException(status_code=400, detail="video_filename is required")
+
+    incoming = []
+    for p in req.problems:
+        if not (p.prompt or "").strip():
+            continue
+        incoming.append({
+            "prompt": p.prompt.strip(),
+            "rubric": [r.strip() for r in p.rubric if r.strip()],
+            "sample_output": p.sample_output,
+            "concepts": [c.strip() for c in p.concepts if c.strip()],
+            "reference_solution": p.reference_solution,
+            "origin": p.origin,
+            "verification": p.verification,
+        })
+    if not incoming:
+        raise HTTPException(status_code=400, detail="No problems to save.")
+
+    data = _load_prelab_file()
+    vid = _find_video(data, fname)
+    if vid is None:
+        unassigned = next((c for c in data["chapters"] if c.get("number") == 0), None)
+        if unassigned is None:
+            unassigned = {"number": 0, "title": "Unassigned recordings", "videos": []}
+            data["chapters"].insert(0, unassigned)
+        vid = {"video_number": None, "filename": fname,
+               "title": os.path.splitext(fname)[0].replace("_", " "),
+               "prelabs": []}
+        unassigned.setdefault("videos", []).append(vid)
+
+    existing = [] if req.replace else list(vid.get("prelabs", []))
+    vid["prelabs"] = existing + incoming
+    _write_prelab_file(data)
+
+    flagged = sum(1 for p in incoming
+                  if (p["verification"] or {}).get("status") == "mismatch")
+    logger.info(f"[prelab] {fname}: committed {len(incoming)} problem(s) "
+                f"({'replaced' if req.replace else 'appended'})"
+                + (f", {flagged} saved despite a failed check" if flagged else ""))
+    return {"status": "success", "video_filename": fname,
+            "added": len(incoming), "total": len(vid["prelabs"]),
+            "flagged": flagged}
 
 
 @app.post("/api/v1/video/prelab")
@@ -4568,20 +4893,30 @@ async def save_video_prelab(req: PrelabSaveRequest, _: str = Depends(verify_teac
                "title": os.path.splitext(fname)[0].replace("_", " "),
                "prelabs": []}
         unassigned.setdefault("videos", []).append(vid)
-    vid["prelabs"] = questions
 
-    path = _prelab_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, path)
-    except Exception as e:
-        logger.error(f"[prelab] write failed: {e}")
-        raise HTTPException(status_code=500, detail="Could not save prelab.json")
+    # This editor is a list of prompts, but a prelab may now also carry a rubric,
+    # a sample output and a reference solution. Assigning the strings straight
+    # back would silently discard all of that — an instructor fixing one typo
+    # would destroy the grading criteria for every problem on the lecture. So an
+    # edited prompt is merged INTO the record it came from, matched by position,
+    # and only genuinely new lines are stored as bare prompts.
+    previous = list(vid.get("prelabs", []))
+    merged = []
+    for i, text in enumerate(questions):
+        prior = previous[i] if i < len(previous) else None
+        if isinstance(prior, dict):
+            kept = dict(prior)
+            kept["prompt"] = text
+            merged.append(kept)
+        else:
+            merged.append(text)
+    dropped = len(previous) - len(questions)
+    vid["prelabs"] = merged
 
-    logger.info(f"[prelab] {fname}: saved {len(questions)} question(s)")
+    _write_prelab_file(data)
+
+    logger.info(f"[prelab] {fname}: saved {len(questions)} question(s)"
+                + (f", {dropped} removed" if dropped > 0 else ""))
     return {"status": "success", "video_filename": fname, "count": len(questions)}
 
 
