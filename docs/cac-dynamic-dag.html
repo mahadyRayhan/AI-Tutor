@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAC Dynamic DAG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<style>
+:root{--ground:#F7F9F9;--panel:#FFFFFF;--panel-sunk:#EEF3F4;--ink:#101619;--ink-2:#3D4B50;--ink-3:#6B7A80;
+--rule:#D8E1E3;--rule-strong:#B4C3C7;--accent:#0E6D7C;--accent-soft:#E2F0F2;
+--certified:#257F4B;--frontier:#A96A11;--hazard:#B23A26;--locked:#93A1A6;
+--certified-bg:#E6F2EA;--frontier-bg:#FBF0DC;--hazard-bg:#F8E7E3;
+--two:#3456A8;--one:#A8501A;--redirect:#6A4BB0;
+--shadow:0 1px 2px rgba(16,22,25,.06),0 8px 24px -16px rgba(16,22,25,.28)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ground:#0C1114;--panel:#131B1F;--panel-sunk:#0F171A;--ink:#E3EBEE;--ink-2:#AEBDC2;--ink-3:#7E8F95;
+--rule:#253236;--rule-strong:#35474D;--accent:#4FB6C6;--accent-soft:#123035;--certified:#4FBE7E;--frontier:#D9A245;--hazard:#E4715A;--locked:#6B7B81;
+--certified-bg:#12291D;--frontier-bg:#2B2110;--hazard-bg:#2E1815;--two:#7F9FEA;--one:#E39A62;--redirect:#AE93EE;
+--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.8)}}
+:root[data-theme="dark"]{--ground:#0C1114;--panel:#131B1F;--panel-sunk:#0F171A;--ink:#E3EBEE;--ink-2:#AEBDC2;--ink-3:#7E8F95;
+--rule:#253236;--rule-strong:#35474D;--accent:#4FB6C6;--accent-soft:#123035;--certified:#4FBE7E;--frontier:#D9A245;--hazard:#E4715A;--locked:#6B7B81;
+--certified-bg:#12291D;--frontier-bg:#2B2110;--hazard-bg:#2E1815;--two:#7F9FEA;--one:#E39A62;--redirect:#AE93EE;
+--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.8)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding-block:52px 110px;padding-inline:20px}
+h1,h2,h3{font-family:"IBM Plex Serif",Georgia,serif;text-wrap:balance;margin:0}
+h1{font-size:clamp(1.9rem,4vw,2.6rem);font-weight:600;line-height:1.12;letter-spacing:-.015em}
+h2{font-size:1.45rem;font-weight:600;line-height:1.25}
+h3{font-size:1.1rem;font-weight:600;line-height:1.3}
+p{margin:0}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:.7rem;font-weight:500;letter-spacing:.13em;text-transform:uppercase;color:var(--accent)}
+.dek{color:var(--ink-2);font-size:1.05rem;max-width:66ch}
+header{display:flex;flex-direction:column;gap:12px;padding-bottom:26px;border-bottom:2px solid var(--ink)}
+section{padding-top:48px;display:flex;flex-direction:column;gap:14px}
+.lede{color:var(--ink-2);max-width:68ch;font-size:.97rem}
+.lede em,.txt em,td em{color:var(--ink);font-style:normal;font-weight:600}
+.k{font-family:"IBM Plex Mono",monospace;font-size:.86em;color:var(--accent)}
+.fig{margin:0;background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:10px;box-shadow:var(--shadow)}
+.svgbox{overflow-x:auto}
+.svgbox svg{display:block;width:100%;min-width:600px;height:auto}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;padding:4px 2px}
+.legend span{display:inline-flex;align-items:center;gap:7px;font-size:.78rem;color:var(--ink-2)}
+.dot{width:11px;height:11px;border-radius:50%;flex:none;border:2px solid}
+.pill{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:.74rem;line-height:1.35;padding:2px 8px;border-radius:999px;border:1.5px solid currentColor;background:var(--panel);white-space:nowrap}
+.c-full{color:var(--certified)}.c-hints{color:var(--accent)}.c-two{color:var(--two)}.c-one{color:var(--one)}.c-redirect{color:var(--redirect)}.c-revisit{color:var(--hazard)}
+
+/* distance cards */
+.slope{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.card .big{font-family:"IBM Plex Serif",Georgia,serif;font-size:1.25rem;font-weight:600}
+.card p{font-size:.88rem;color:var(--ink-2)}
+
+/* explorer */
+.explorer{display:grid;grid-template-columns:290px minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:880px){.explorer{grid-template-columns:1fr}}
+.controls{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:16px}
+.ctl{display:flex;flex-direction:column;gap:7px}
+.ctl label,.ctl .lab{font-family:"IBM Plex Mono",monospace;font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+button{font:inherit;color:inherit}
+.chip{font-size:.8rem;padding:3px 10px;border-radius:999px;border:1px solid var(--rule-strong);background:var(--panel);cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--certified-bg);border-color:var(--certified);color:var(--certified);font-weight:600}
+.preset{font-size:.8rem;padding:4px 10px;border-radius:6px;border:1px solid var(--rule-strong);background:var(--panel-sunk);cursor:pointer}
+.preset:hover,.chip:hover{border-color:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--rule-strong);border-radius:6px;overflow:hidden;align-self:flex-start}
+.seg button{border:0;background:var(--panel);padding:4px 12px;font-size:.82rem;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--panel)}
+select{font:inherit;font-size:.88rem;padding:4px 6px;border-radius:6px;border:1px solid var(--rule-strong);background:var(--panel);color:var(--ink)}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.val{font-family:"IBM Plex Mono",monospace;font-size:.85rem;color:var(--ink)}
+.note{font-size:.8rem;color:var(--ink-3)}
+.figcol{display:flex;flex-direction:column;gap:12px;min-width:0}
+.trace{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.trace ol{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px}
+.trace li{font-size:.9rem;color:var(--ink-2)}
+.trace li b{color:var(--ink);font-weight:600}
+.result{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding-top:10px;border-top:1px solid var(--rule)}
+.result .pill{font-size:.85rem}
+
+/* trait rows */
+.trait{display:grid;grid-template-columns:minmax(0,600px) minmax(0,1fr);gap:26px;align-items:center;padding:22px 0;border-bottom:1px solid var(--rule)}
+.trait:last-child{border-bottom:none}
+@media (max-width:880px){.trait{grid-template-columns:1fr;gap:12px}}
+.txt{display:flex;flex-direction:column;gap:8px}
+.txt p{font-size:.93rem;color:var(--ink-2)}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:.84rem;margin-top:4px}
+.facts dt{color:var(--ink-3)}
+.facts dd{margin:0;color:var(--ink)}
+.flow-yes{color:var(--hazard);font-weight:600}
+.flow-no{color:var(--ink-2);font-weight:600}
+
+.where{border:1px solid var(--rule);border-radius:8px;background:var(--panel);overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.875rem}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+thead th{font-family:"IBM Plex Mono",monospace;font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:500;background:var(--panel-sunk)}
+thead th small{display:block;text-transform:none;letter-spacing:0;font-family:"IBM Plex Sans",sans-serif;font-size:.74rem;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:none}
+td.rowh{font-weight:600;white-space:nowrap}
+td.rowh small{display:block;font-weight:400;color:var(--ink-3);font-size:.76rem;white-space:normal}
+.foot{font-size:.82rem;color:var(--ink-3);max-width:70ch}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.node{cursor:pointer}
+.node:focus{outline:none}
+@keyframes flow{to{stroke-dashoffset:-20}}
+.flowline{animation:flow 1.1s linear infinite}
+@media (prefers-reduced-motion:reduce){.flowline{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">SAGE · Cognitive Access Control · as built</div>
+  <h1>The Dynamic DAG</h1>
+  <p class="dek">The instructor's map never changes. What changes is how much each student gets from each topic on it. First it depends on <em>how far ahead</em> the topic is. Then it depends on <em>three metacognitive traits</em>, and each trait can only make access stricter.</p>
+</header>
+
+<!-- ───────────────────────── 1. static map ───────────────────────── -->
+<section>
+  <div class="eyebrow">1 · The static DAG</div>
+  <h2>The instructor's map</h2>
+  <p class="lede">Nine topics and eight prerequisite links (<span class="k">CANONICAL_PREREQ_EDGES</span>). Every student gets the same map. After Variables it splits into two branches: <em>Control Flow</em> (Functions, Arrays, Strings, Structures, File I/O) and <em>Pointers</em> (Memory Allocation). Branches matter later, because overconfidence travels along them.</p>
+  <figure class="fig"><div class="svgbox"><svg id="svg-static" viewBox="0 0 780 372" role="img" aria-label="Static prerequisite map of nine C topics"></svg></div></figure>
+</section>
+
+<!-- ───────────────────────── 2. distance rule ───────────────────────── -->
+<section>
+  <div class="eyebrow">2 · Mastery on the nodes (K)</div>
+  <h2>Distance decides the starting access</h2>
+  <p class="lede">A topic is <em>mastered</em> when the student is certified on it: 0.95 or higher on all three kinds of evidence (quiz, micro-challenge, code), with at least 3 of each. They keep it while all three stay at 0.75 or higher. The <em>next topics</em> are the ones whose prerequisites are all mastered. Access is counted in steps from what the student has mastered:</p>
+  <div class="slope">
+    <div class="card"><span class="pill c-full" style="align-self:flex-start">full access</span><div class="big">Mastered, or 1 step ahead</div><p>Everything the tutor can give, including code for their problem.</p></div>
+    <div class="card"><span class="pill c-two" style="align-self:flex-start">2 sentences</span><div class="big">2 steps ahead</div><p>A two-sentence answer, then why the missing prerequisite matters.</p></div>
+    <div class="card"><span class="pill c-one" style="align-self:flex-start">1 sentence</span><div class="big">3 or more steps ahead</div><p>A one-sentence answer, then why the missing prerequisite matters.</p></div>
+  </div>
+  <p class="foot">Code: the region gate in <span class="k">cac_graph.decide()</span> sets <span class="k">rung = ORIENT</span> and <span class="k">orient_sentences = 2 if far ≤ 1 else 1</span>. This step uses mastery only. Everything after it is metacognition, which can only tighten what this step allows.</p>
+</section>
+
+<!-- ───────────────────────── 3. traits ───────────────────────── -->
+<section>
+  <div class="eyebrow">3 · Metacognition on top (C)</div>
+  <h2>Which traits travel through the DAG, and how</h2>
+  <p class="lede">Three traits are built. <em>Only overconfidence travels along the map.</em> The other two apply to the whole student: they change every topic at once, and branches play no part. All three figures show the same student, who has mastered Variables and Control Flow.</p>
+
+  <div>
+    <div class="trait">
+      <figure class="fig"><div class="svgbox"><svg id="svg-over" viewBox="0 0 780 372" role="img" aria-label="Overconfidence in Control Flow flows to its branch"></svg></div></figure>
+      <div class="txt">
+        <div class="eyebrow" style="color:var(--hazard)">Overconfidence · Phase 4</div>
+        <h3>Flows down its own branch</h3>
+        <p>The student keeps getting Control Flow questions wrong that the model expected them to get right. They don't know they're wrong, so they will build Arrays, Strings and File I/O on the broken idea.</p>
+        <p>So every topic <em>after Control Flow on its branch</em> now requires <em>Control Flow ≥ 0.80</em> instead of 0.75. If the student is below that, they are sent back to revisit Control Flow. Control Flow itself stays open, and so do Pointers and Memory Allocation, which are on the other branch.</p>
+        <dl class="facts">
+          <dt>Travels on DAG</dt><dd class="flow-yes">Yes: to every later topic on that branch</dd>
+          <dt>Measured</dt><dd>Per topic, from <span class="k">prediction_log</span></dd>
+          <dt>Fires when</dt><dd>At least 3 wrong answers on the topic, and more than half of them were answers the model expected to be right (p ≥ 0.7)</dd>
+          <dt>Moves</dt><dd>The mastery bar, 0.75 → 0.80, checked on the overconfident topic</dd>
+          <dt>Strength</dt><dd>Hard: the gatekeeper refuses and names what to revisit</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="trait">
+      <figure class="fig"><div class="svgbox"><svg id="svg-load" viewBox="0 0 780 372" role="img" aria-label="High cognitive load shrinks reach"></svg></div></figure>
+      <div class="txt">
+        <div class="eyebrow" style="color:var(--redirect)">Cognitive load · Phase 3</div>
+        <h3>Shrinks how far ahead they can reach</h3>
+        <p>A student who is overloaded and reaches far ahead isn't curious. They're drowning. So their reach shrinks, and a topic beyond it is <em>redirected</em> to the nearest topic they can absorb. Here File I/O is replaced with Strings. The request is never simply refused.</p>
+        <dl class="facts">
+          <dt>Travels on DAG</dt><dd class="flow-no">No: applies to the whole student</dd>
+          <dt>Measured</dt><dd>Cognitive-load index, 0 to 1</dd>
+          <dt>Fires when</dt><dd>Above 0.5: up to 3 steps ahead. Above 0.7: up to 2 steps ahead. These are default thresholds, recalibrated from the population and versioned.</dd>
+          <dt>Moves</dt><dd>The horizon. A topic beyond it is swapped for a nearer one.</dd>
+          <dt>Strength</dt><dd>Hard: the topic being taught is swapped</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="trait">
+      <figure class="fig"><div class="svgbox"><svg id="svg-help" viewBox="0 0 780 372" role="img" aria-label="Impulsive help-seeking caps every topic at hints"></svg></div></figure>
+      <div class="txt">
+        <div class="eyebrow" style="color:var(--accent)">Help-seeking · Phase 2</div>
+        <h3>Caps every topic at hints</h3>
+        <p>The student gives up immediately and skips often, reaching for the answer before trying. Code given now would answer the give-up rather than the question. So topics that were fully open drop to <em>hints, no code</em>. Topics already limited to a short answer stay as they were.</p>
+        <dl class="facts">
+          <dt>Travels on DAG</dt><dd class="flow-no">No: applies to the whole student</dd>
+          <dt>Measured</dt><dd>Help-seeking quality from the learner model</dd>
+          <dt>Fires when</dt><dd>At least one immediate give-up and a skip rate above 30%</dd>
+          <dt>Moves</dt><dd>The disclosure level: at most hints</dd>
+          <dt>Strength</dt><dd>Soft: an instruction in the prompt</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 4. matrix ───────────────────────── -->
+<section>
+  <div class="eyebrow">4 · Metacognition × distance</div>
+  <h2>How each trait changes 1-, 2- and 3-step access</h2>
+  <p class="lede">This is the same student, mastered in Variables and Control Flow. Each row switches on one trait, and the last row switches on all of them. Every cell comes from the same logic as <span class="k">decide()</span> plus the gatekeeper, and shows what the student gets when enforcement is on.</p>
+  <div class="where"><table id="matrix"></table></div>
+  <p class="foot">When traits combine, <em>the strictest one wins</em>. The disclosure level takes the lowest, the mastery bar takes the highest, and the nearest redirect wins. All of this happens in one function, <span class="k">_tighten</span>, which has no way to loosen anything. Formally, <span class="k">M(C,K,S) ⊆ M(C,K)</span>: metacognition can only shrink what mastery allows.</p>
+</section>
+
+<!-- ───────────────────────── 5. explorer ───────────────────────── -->
+<section>
+  <div class="eyebrow">5 · Try it</div>
+  <h2>Dynamic DAG explorer</h2>
+  <p class="lede">Set a student, then <em>click any topic</em> to ask about it. Every topic's badge shows what the student would get. The panel below the map walks through the four checks in order.</p>
+  <div class="explorer">
+    <div class="controls">
+      <div class="ctl"><span class="lab">Presets</span>
+        <div class="chips" id="presets"></div></div>
+      <div class="ctl"><span class="lab">View</span>
+        <div class="seg" id="viewseg"><button data-v="static" aria-pressed="false">Static</button><button data-v="dynamic" aria-pressed="true">Dynamic</button></div></div>
+      <div class="ctl"><span class="lab">Mastered topics</span>
+        <div class="chips" id="mastery"></div>
+        <span class="note">Adding a topic adds its prerequisites. Removing one removes what depends on it.</span></div>
+      <div class="ctl"><label for="help">Help-seeking</label>
+        <div class="seg" id="helpseg"><button data-v="0" aria-pressed="true">Normal</button><button data-v="1" aria-pressed="false">Impulsive</button></div></div>
+      <div class="ctl"><label for="load">Cognitive load <span class="val" id="loadval"></span></label>
+        <input type="range" id="load" min="0" max="1" step="0.05">
+        <span class="note" id="loadnote"></span></div>
+      <div class="ctl"><label for="over">Overconfident in</label>
+        <select id="over"></select>
+        <div id="scorewrap" class="ctl" style="gap:4px">
+          <label for="score">Its score (lowest of the three) <span class="val" id="scoreval"></span></label>
+          <input type="range" id="score" min="0.75" max="1" step="0.01">
+        </div>
+        <span class="note" id="overnote"></span></div>
+    </div>
+    <div class="figcol">
+      <figure class="fig"><div class="svgbox"><svg id="svg-live" viewBox="0 0 780 372" role="img" aria-label="Interactive dynamic DAG"></svg></div>
+        <div class="legend" id="legend"></div></figure>
+      <div class="trace" id="trace" aria-live="polite"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 6. status ───────────────────────── -->
+<section>
+  <div class="eyebrow">6 · Status</div>
+  <h2>What is built and how it's enforced</h2>
+  <div class="where"><table>
+    <thead><tr><th>Piece</th><th>Acts on</th><th>Travels on DAG</th><th>Enforcement</th><th>Fires on real data</th></tr></thead>
+    <tbody>
+      <tr><td><em>Distance</em><br><span class="k">K/region</span></td><td>each topic, by steps from mastery</td><td>it <em>is</em> the DAG</td><td>soft (sentence limit in prompt)</td><td><em>yes</em>: 90.9% of turns are beyond the next topic</td></tr>
+      <tr><td><em>Overconfidence</em><br><span class="k">C/calibration</span></td><td>the mastery bar of the source topic</td><td class="flow-yes">yes, down its branch</td><td>hard (gatekeeper)</td><td><em>yes</em>: 1 of 26 evidence-bearing learners</td></tr>
+      <tr><td><em>Cognitive load</em><br><span class="k">C/load</span></td><td>the horizon</td><td class="flow-no">no, whole student</td><td>hard (topic swapped)</td><td>not yet: no real student's load is above the thresholds</td></tr>
+      <tr><td><em>Help-seeking</em><br><span class="k">C/help-seeking</span></td><td>the disclosure level</td><td class="flow-no">no, whole student</td><td>soft (hints cap in prompt)</td><td>not yet: quiz data too sparse</td></tr>
+    </tbody>
+  </table></div>
+  <p class="foot"><em>Shadow by default.</em> Every turn forms and logs a full decision (<span class="k">cac_access_event</span>, <span class="k">cac_edge_threshold</span>), but students are affected only when <span class="k">SAGE_CAC_ENFORCE_ENABLED</span> is on. Every answering path, both Socratic and Scaffolding, runs <span class="k">_apply_cac</span> first.</p>
+  <p class="foot"><em>Known limits.</em> (1) Only overconfidence follows branches. Load and help-seeking apply to the whole student. (2) Overconfidence raises a bar rather than lowering the disclosure level. (3) Sentence and hint caps are prompt instructions; nothing filters the output. (4) The gatekeeper's "anyway" / "I know" override skips the overconfidence bar along with the ordinary prerequisite check. (5) Students can't see this map in the tutor yet.</p>
+</section>
+
+</div>
+
+<script>
+(function(){
+"use strict";
+// ── Topology: mirrors backend/app/core/cac_graph.py ──────────────────────
+const NODES=["Variables","Control Flow","Functions","Arrays","Strings","Pointers","Structures","Memory Allocation","File I/O"];
+const EDGES=[["Variables","Control Flow"],["Variables","Pointers"],["Control Flow","Functions"],["Control Flow","Arrays"],["Arrays","Strings"],["Arrays","Structures"],["Pointers","Memory Allocation"],["Strings","File I/O"]];
+const THETA_BASE=0.75, THETA_OVER=0.80;
+const LOAD_HORIZON=[[0.7,1],[0.5,2]];
+const RUNG={ORIENT:1,HINT:3,CODE:5};
+const POS={"Variables":[70,190],"Control Flow":[225,105],"Pointers":[225,300],"Functions":[385,45],"Arrays":[385,150],"Memory Allocation":[385,300],"Strings":[545,100],"Structures":[545,205],"File I/O":[705,100]};
+const preds={},succs={};
+NODES.forEach(n=>{preds[n]=new Set();succs[n]=new Set();});
+EDGES.forEach(([a,b])=>{preds[b].add(a);succs[a].add(b);});
+
+function descendants(n){const out=new Set(),st=[...succs[n]];while(st.length){const x=st.pop();if(!out.has(x)){out.add(x);st.push(...succs[x]);}}return out;}
+function ancestors(n){const out=new Set(),st=[...preds[n]];while(st.length){const x=st.pop();if(!out.has(x)){out.add(x);st.push(...preds[x]);}}return out;}
+function frontier(C){return new Set(NODES.filter(n=>!C.has(n)&&[...preds[n]].every(p=>C.has(p))));}
+function hopsFrom(F,t){
+  if(F.has(t))return 0;
+  const seen=new Set(F);let layer=[...F],depth=0;
+  while(layer.length){depth++;const nxt=[];
+    for(const n of layer)for(const s of succs[n]){if(seen.has(s))continue;if(s===t)return depth;seen.add(s);nxt.push(s);}
+    layer=nxt;}
+  return null;
+}
+function horizonLimit(load){for(const [th,d] of LOAD_HORIZON)if(load>th)return d;return null;}
+function nearestWithin(F,t,dmax,C){
+  const seen=new Set([t]);let layer=[t];
+  while(layer.length){const nxt=[];
+    for(const n of layer)for(const p of [...preds[n]].sort()){
+      if(seen.has(p))continue;seen.add(p);
+      const d=hopsFrom(F,p);
+      if(d!==null&&d<=dmax&&!C.has(p))return p;
+      nxt.push(p);}
+    layer=nxt;}
+  return null;
+}
+
+// ── decide(): one asked topic, same order and same _tighten rules ────────
+function decide(s,t){
+  const d={rung:RUNG.CODE,sent:2,redirect:null,rhops:null,inHorizon:true,theta:THETA_BASE,thetaTopics:[],steps:{}};
+  const C=s.C,F=frontier(C);
+  function tighten(o){
+    if(o.rung!=null&&o.rung<d.rung)d.rung=o.rung;
+    if(o.horizon===false)d.inHorizon=false;
+    if(o.sent!=null&&o.sent<d.sent)d.sent=o.sent;
+    if(o.theta!=null)d.theta=Math.max(THETA_BASE,d.theta,o.theta);
+    (o.thetaTopics||[]).forEach(x=>{if(!d.thetaTopics.includes(x))d.thetaTopics.push(x);});
+    if(o.redirect!=null&&(d.redirect==null||(o.rhops!=null&&(d.rhops==null||o.rhops<d.rhops)))){d.redirect=o.redirect;d.rhops=o.rhops;}
+  }
+  // 1. distance (K/region)
+  if(C.has(t))d.steps.dist={kind:"mastered"};
+  else if(F.has(t))d.steps.dist={kind:"next"};
+  else{
+    const missing=[...preds[t]].filter(p=>!C.has(p)).sort();
+    const hint=missing[0]||null;
+    const h=hopsFrom(F,t);const far=h===null?99:h;
+    const sent=far<=1?2:1;
+    tighten({redirect:hint,rhops:hint?hopsFrom(F,hint):null,rung:RUNG.ORIENT,sent});
+    d.steps.dist={kind:"beyond",steps:far===99?null:far+1,sent,hint};
+  }
+  // 2. help-seeking
+  const rungBefore=d.rung;
+  if(s.impulsive)tighten({rung:RUNG.HINT});
+  d.steps.help={on:s.impulsive,changed:d.rung<rungBefore};
+  // 3. cognitive load
+  const dmax=horizonLimit(s.load);
+  d.steps.load={dmax};
+  if(dmax!==null&&F.size){
+    const wd=hopsFrom(F,t);
+    if(wd!==null&&wd>dmax){
+      const nearer=nearestWithin(F,t,dmax,C);
+      tighten({horizon:false,redirect:nearer,rhops:nearer?hopsFrom(F,nearer):null});
+      d.steps.load.exceeded=true;
+    }
+  }
+  // 4. overconfidence (calibration) → gatekeeper
+  d.steps.over={};
+  if(s.over){
+    const desc=descendants(s.over);
+    if(desc.has(t)&&!C.has(t)){
+      tighten({theta:THETA_OVER,thetaTopics:[s.over]});
+      d.steps.over.hit=true;
+    }
+  }
+  // outcome under enforcement
+  let out;
+  const marginal=d.theta>THETA_BASE&&d.thetaTopics.filter(src=>s.C.has(src)&&s.score<THETA_OVER);
+  if(marginal&&marginal.length)out={kind:"revisit",text:"revisit "+marginal[0]};
+  else if(!d.inHorizon&&d.redirect)out={kind:"redirect",text:"→ "+d.redirect+" · "+d.sent+" sent."};
+  else if(d.rung>=RUNG.CODE)out={kind:"full",text:"full access"};
+  else if(d.rung===RUNG.HINT)out={kind:"hints",text:"hints only"};
+  else out={kind:d.sent===2?"two":"one",text:d.sent+(d.sent===2?" sentences":" sentence")};
+  d.out=out;
+  return d;
+}
+
+const KIND_VAR={full:"--certified",hints:"--accent",two:"--two",one:"--one",redirect:"--redirect",revisit:"--hazard"};
+
+// ── SVG rendering ────────────────────────────────────────────────────────
+const NS="http://www.w3.org/2000/svg";
+function el(tag,attrs,parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e;}
+function txt(x,y,s,attrs,parent){const e=el("text",Object.assign({x,y},attrs),parent);e.textContent=s;return e;}
+const R=21;
+
+function render(svg,s,opts){
+  opts=opts||{};
+  const dyn=opts.mode!=="static";
+  const uid=svg.id;
+  while(svg.firstChild)svg.removeChild(svg.firstChild);
+  const defs=el("defs",{},svg);
+  [["n","--rule-strong"],["h","--hazard"]].forEach(([k,c])=>{
+    const m=el("marker",{id:uid+"-a"+k,viewBox:"0 0 10 10",refX:"9",refY:"5",markerWidth:"6",markerHeight:"6",orient:"auto-start-reverse"},defs);
+    el("path",{d:"M0 0L10 5L0 10z",fill:`var(${c})`},m);
+  });
+  // branch bands
+  el("rect",{x:150,y:6,width:624,height:246,rx:8,fill:"var(--panel-sunk)",opacity:.6},svg);
+  el("rect",{x:150,y:258,width:624,height:108,rx:8,fill:"var(--panel-sunk)",opacity:.6},svg);
+  const bl={"font-family":"IBM Plex Mono,monospace","font-size":"10.5",fill:"var(--ink-3)","letter-spacing":".06em"};
+  txt(764,24,"CONTROL FLOW BRANCH",Object.assign({"text-anchor":"end"},bl),svg);
+  txt(764,358,"POINTERS BRANCH",Object.assign({"text-anchor":"end"},bl),svg);
+
+  const C=s.C,F=frontier(C);
+  const over=dyn&&s.over?s.over:null;
+  const flowNodes=over?descendants(over):new Set();
+  const dmax=dyn?horizonLimit(s.load):null;
+
+  // edges
+  EDGES.forEach(([a,b])=>{
+    const [x1,y1]=POS[a],[x2,y2]=POS[b];
+    const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L;
+    const flow=over&&(a===over||flowNodes.has(a))&&flowNodes.has(b);
+    const attrs={x1:x1+ux*(R+3),y1:y1+uy*(R+3),x2:x2-ux*(R+5),y2:y2-uy*(R+5),
+      stroke:flow?"var(--hazard)":"var(--rule-strong)","stroke-width":flow?3:1.7,
+      "marker-end":`url(#${uid}-a${flow?"h":"n"})`};
+    if(flow){attrs["stroke-dasharray"]="7 3";attrs["class"]="flowline";}
+    el("line",attrs,svg);
+  });
+
+  NODES.forEach(n=>{
+    const [x,y]=POS[n];
+    const g=el("g",{},svg);
+    let fill="var(--panel)",stroke="var(--ink-3)",dash=null,op=1;
+    if(dyn){
+      if(C.has(n)){fill="var(--certified-bg)";stroke="var(--certified)";}
+      else if(F.has(n)){fill="var(--frontier-bg)";stroke="var(--frontier)";}
+      else{fill="var(--panel-sunk)";stroke="var(--locked)";}
+      if(dmax!==null){const h=hopsFrom(F,n);if(h!==null&&h>dmax){op=.5;dash="4 3";}}
+    }
+    g.setAttribute("opacity",op);
+    if(opts.selected===n)el("circle",{cx:x,cy:y,r:R+8,fill:"none",stroke:"var(--accent)","stroke-width":2.5},g);
+    if(over===n){
+      el("circle",{cx:x,cy:y,r:R+5,fill:"none",stroke:"var(--hazard)","stroke-width":2,"stroke-dasharray":"3 2"},g);
+      const tag="overconfident";const w=tag.length*6.2+12;
+      el("rect",{x:x-w/2,y:y-R-24,width:w,height:15,rx:7.5,fill:"var(--hazard)"},g);
+      txt(x,y-R-13,tag,{"text-anchor":"middle","font-family":"IBM Plex Mono,monospace","font-size":"9.5",fill:"var(--panel)"},g);
+    }
+    const c=el("circle",{cx:x,cy:y,r:R,fill,stroke,"stroke-width":3},g);
+    if(dash)c.setAttribute("stroke-dasharray",dash);
+    if(dyn&&flowNodes.has(n)&&!C.has(n))el("circle",{cx:x+R-4,cy:y-R+4,r:5,fill:"var(--hazard)",stroke:"var(--panel)","stroke-width":1.5},g);
+    txt(x,y+R+15,n,{"text-anchor":"middle","font-family":"IBM Plex Sans,sans-serif","font-size":"12.5","font-weight":"500",fill:"var(--ink)"},g);
+    if(dyn){
+      const o=decide(s,n).out;
+      const col=`var(${KIND_VAR[o.kind]})`;
+      const w=o.text.length*6.3+16;
+      el("rect",{x:x-w/2,y:y+R+22,width:w,height:17,rx:8.5,fill:"var(--panel)",stroke:col,"stroke-width":1.5},g);
+      txt(x,y+R+34.5,o.text,{"text-anchor":"middle","font-family":"IBM Plex Mono,monospace","font-size":"10.5",fill:col,"font-weight":"500"},g);
+    }
+    if(opts.onSelect){
+      g.setAttribute("class","node");g.setAttribute("tabindex","0");g.setAttribute("role","button");
+      g.setAttribute("aria-label","Ask about "+n);
+      g.addEventListener("click",()=>opts.onSelect(n));
+      g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();opts.onSelect(n);}});
+    }
+  });
+}
+
+// ── Static figures ───────────────────────────────────────────────────────
+const TWO=()=>new Set(["Variables","Control Flow"]);
+const base=()=>({C:TWO(),over:"",score:0.79,load:0.3,impulsive:false});
+render(document.getElementById("svg-static"),base(),{mode:"static"});
+render(document.getElementById("svg-over"),Object.assign(base(),{over:"Control Flow"}));
+render(document.getElementById("svg-load"),Object.assign(base(),{load:0.8}));
+render(document.getElementById("svg-help"),Object.assign(base(),{impulsive:true}));
+
+// ── Matrix ───────────────────────────────────────────────────────────────
+(function(){
+  const cols=[["Control Flow","mastered"],["Arrays","1 step · next"],["Strings","2 steps"],["File I/O","3 steps"],["Pointers","1 step · other branch"],["Memory Allocation","2 steps · other branch"]];
+  const rows=[
+    ["Normal","no traits",{}],
+    ["Impulsive help-seeking","whole student",{impulsive:true}],
+    ["Cognitive load 0.8","whole student",{load:0.8}],
+    ["Overconfident in Control Flow","its branch · score 0.79",{over:"Control Flow",score:0.79}],
+    ["Overconfident in Control Flow","its branch · score 0.85",{over:"Control Flow",score:0.85}],
+    ["All three at once","strictest wins",{impulsive:true,load:0.8,over:"Control Flow",score:0.79}],
+  ];
+  const tb=document.getElementById("matrix");
+  const th=document.createElement("thead"),tr=document.createElement("tr");
+  tr.innerHTML="<th>Student</th>"+cols.map(([n,l])=>`<th>${n}<small>${l}</small></th>`).join("");
+  th.appendChild(tr);tb.appendChild(th);
+  const body=document.createElement("tbody");
+  rows.forEach(([name,sub,patch])=>{
+    const s=Object.assign(base(),patch);
+    const r=document.createElement("tr");
+    r.innerHTML=`<td class="rowh">${name}<small>${sub}</small></td>`+cols.map(([n])=>{
+      const o=decide(s,n).out;return `<td><span class="pill c-${o.kind}">${o.text}</span></td>`;}).join("");
+    body.appendChild(r);
+  });
+  tb.appendChild(body);
+})();
+
+// ── Explorer ─────────────────────────────────────────────────────────────
+const PRESETS={
+  "Normal":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.3,impulsive:false},
+  "Impulsive":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.3,impulsive:true},
+  "High load":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.8,impulsive:false},
+  "Overconfident":{C:["Variables","Control Flow","Arrays"],over:"Control Flow",score:0.79,load:0.3,impulsive:false},
+  "Beginner":{C:["Variables"],over:"",score:0.79,load:0.3,impulsive:false},
+};
+let S=null,view="dynamic",selected="Strings";
+function applyPreset(name){const p=PRESETS[name];S={C:new Set(p.C),over:p.over,score:p.score,load:p.load,impulsive:p.impulsive};}
+applyPreset("Overconfident");
+
+const $=id=>document.getElementById(id);
+const presetsEl=$("presets");
+Object.keys(PRESETS).forEach(name=>{const b=document.createElement("button");b.className="preset";b.textContent=name;
+  b.addEventListener("click",()=>{applyPreset(name);sync();});presetsEl.appendChild(b);});
+const masteryEl=$("mastery");
+NODES.forEach(n=>{const b=document.createElement("button");b.className="chip";b.textContent=n;b.dataset.n=n;
+  b.addEventListener("click",()=>{
+    if(S.C.has(n)){S.C.delete(n);descendants(n).forEach(x=>S.C.delete(x));}
+    else{S.C.add(n);ancestors(n).forEach(x=>S.C.add(x));}
+    sync();});
+  masteryEl.appendChild(b);});
+const overSel=$("over");
+[["","— none —"]].concat(NODES.map(n=>[n,n])).forEach(([v,l])=>{const o=document.createElement("option");o.value=v;o.textContent=l;overSel.appendChild(o);});
+overSel.addEventListener("change",()=>{S.over=overSel.value;sync();});
+$("load").addEventListener("input",e=>{S.load=parseFloat(e.target.value);sync();});
+$("score").addEventListener("input",e=>{S.score=parseFloat(e.target.value);sync();});
+document.querySelectorAll("#helpseg button").forEach(b=>b.addEventListener("click",()=>{S.impulsive=b.dataset.v==="1";sync();}));
+document.querySelectorAll("#viewseg button").forEach(b=>b.addEventListener("click",()=>{view=b.dataset.v;sync();}));
+
+function pill(o){return `<span class="pill c-${o.kind}">${o.text}</span>`;}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+function traceHTML(t){
+  const d=decide(S,t),F=frontier(S.C),st=d.steps,li=[];
+  // 1 distance
+  if(st.dist.kind==="mastered")li.push(`<b>Distance:</b> already mastered, so full access.`);
+  else if(st.dist.kind==="next")li.push(`<b>Distance:</b> the next topic (1 step ahead), so full access.`);
+  else li.push(`<b>Distance:</b> ${st.dist.steps?st.dist.steps+" steps ahead":"far ahead"}, so a ${st.dist.sent}-sentence answer`+(st.dist.hint?` that explains why <em>${esc(st.dist.hint)}</em> matters first.`:"."));
+  // 2 help-seeking
+  if(!st.help.on)li.push(`<b>Help-seeking:</b> normal, so no change.`);
+  else if(st.help.changed)li.push(`<b>Help-seeking:</b> impulsive, so capped at <em>hints, no code</em>.`);
+  else li.push(`<b>Help-seeking:</b> impulsive (hints cap), but the short answer is already stricter, so no change.`);
+  // 3 load
+  const L=S.load.toFixed(2);
+  if(st.load.dmax===null)li.push(`<b>Cognitive load ${L}:</b> 0.5 or below, so reach is unlimited.`);
+  else if(st.load.exceeded){
+    li.push(`<b>Cognitive load ${L}:</b> reach is limited to ${st.load.dmax+1} steps ahead. <em>${esc(t)}</em> is beyond that, so `+(d.redirect&&!d.inHorizon?`they are taught <em>${esc(d.redirect)}</em> instead.`:`there is no nearer topic to offer.`));
+  }else li.push(`<b>Cognitive load ${L}:</b> reach is limited to ${st.load.dmax+1} steps ahead. <em>${esc(t)}</em> is within reach, so no change.`);
+  // 4 overconfidence
+  if(!S.over)li.push(`<b>Overconfidence:</b> none, so no change.`);
+  else if(t===S.over)li.push(`<b>Overconfidence:</b> this is the topic they're overconfident in. It stays open, because the risk is what they build on top of it.`);
+  else if(!descendants(S.over).has(t))li.push(`<b>Overconfidence:</b> in <em>${esc(S.over)}</em>, which does not come before ${esc(t)} on its branch, so no change.`);
+  else if(S.C.has(t))li.push(`<b>Overconfidence:</b> ${esc(t)} comes after <em>${esc(S.over)}</em> but is already mastered, so no change.`);
+  else if(!S.C.has(S.over))li.push(`<b>Overconfidence:</b> ${esc(t)} comes after <em>${esc(S.over)}</em>, which isn't mastered yet. The normal prerequisite rules already apply, so the raised bar adds nothing.`);
+  else{
+    const ok=S.score>=THETA_OVER;
+    li.push(`<b>Overconfidence:</b> ${esc(t)} comes after <em>${esc(S.over)}</em> on its branch, so ${esc(S.over)} must be at least <em>0.80</em> (normally 0.75). Its score is ${S.score.toFixed(2)}, `+(ok?"so the bar is met.":`so the bar is <em>not met</em> and they must revisit ${esc(S.over)} first.`));
+  }
+  return `<div class="eyebrow">Student asks about</div><h3>${esc(t)}</h3><ol>${li.map(x=>`<li>${x}</li>`).join("")}</ol>
+  <div class="result"><span class="lab note" style="text-transform:uppercase;letter-spacing:.09em;font-family:'IBM Plex Mono',monospace;font-size:.68rem">They get</span>${pill(d.out)}<span class="note">When enforcement is on. By default this is only logged.</span></div>`;
+}
+
+function legendHTML(){
+  if(view==="static")return `<span>The instructor's fixed map. Switch to <em>Dynamic</em> to see access.</span>`;
+  return [
+    `<span><i class="dot" style="background:var(--certified-bg);border-color:var(--certified)"></i>mastered</span>`,
+    `<span><i class="dot" style="background:var(--frontier-bg);border-color:var(--frontier)"></i>next (1 step)</span>`,
+    `<span><i class="dot" style="background:var(--panel-sunk);border-color:var(--locked)"></i>further ahead</span>`,
+    `<span><i class="dot" style="background:var(--hazard);border-color:var(--hazard)"></i>overconfidence reaches it</span>`,
+    `<span><i class="dot" style="background:var(--panel-sunk);border-color:var(--locked);border-style:dashed;opacity:.6"></i>beyond load horizon</span>`,
+    `<span>click a topic to ask</span>`].join("");
+}
+
+function sync(){
+  masteryEl.querySelectorAll(".chip").forEach(b=>b.setAttribute("aria-pressed",S.C.has(b.dataset.n)?"true":"false"));
+  document.querySelectorAll("#helpseg button").forEach(b=>b.setAttribute("aria-pressed",(b.dataset.v==="1")===S.impulsive?"true":"false"));
+  document.querySelectorAll("#viewseg button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view?"true":"false"));
+  $("load").value=S.load;$("loadval").textContent=S.load.toFixed(2);
+  const dm=horizonLimit(S.load);
+  $("loadnote").textContent=dm===null?"0.5 or below: no reach limit":`above ${dm===1?"0.7":"0.5"}: reach limited to ${dm+1} steps ahead`;
+  overSel.value=S.over;
+  $("score").value=S.score;$("scoreval").textContent=S.score.toFixed(2);
+  $("scorewrap").hidden=!S.over;
+  $("overnote").innerHTML=!S.over?"":!S.C.has(S.over)?`${esc(S.over)} isn't mastered, so the raised bar has nothing to add yet.`:
+    S.score>=THETA_OVER?`≥ 0.80: bar met, so later topics stay open.`:`below 0.80: later topics on its branch send them back to ${esc(S.over)}.`;
+  render($("svg-live"),S,{mode:view,selected:view==="dynamic"?selected:null,onSelect:n=>{selected=n;if(view!=="dynamic")view="dynamic";sync();}});
+  $("legend").innerHTML=legendHTML();
+  $("trace").innerHTML=view==="dynamic"?traceHTML(selected):`<p class="note">Static view: the same map for every student. No access decisions are shown.</p>`;
+}
+sync();
+})();
+</script>
+</body>
+</html>
