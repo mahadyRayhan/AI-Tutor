@@ -31,6 +31,7 @@ class AgentState(BaseModel):
     # is both the default and what a disconnected/shadow-mode layer leaves in place,
     # so an agent that never reads it behaves exactly as before. Only ever lowered.
     rung_cap: int = 5
+    orient_sentences: int = 2        # length of an orienting answer: 2, or 1 when 3+ steps ahead
     cac_reasons: List[str] = []      # audit trail for why it was lowered
 
     # CAC runs on several entry paths (guided/scaffolding as well as Socratic)
@@ -42,6 +43,7 @@ class AgentState(BaseModel):
     # Phase 4 · the prerequisite bar CAC set for this turn. THETA_BASE (0.75) is
     # the curriculum's own floor and means "unchanged"; only ever raised.
     theta_edge: float = 0.75
+    theta_topics: List[str] = []     # topics that must clear theta_edge (the overconfident ones)
 
     # CAC horizon redirect (Phase 3). Both "" when the turn was not redirected.
     # redirect_from is what the learner ASKED for; redirect_to is the nearer

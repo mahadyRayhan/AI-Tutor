@@ -92,13 +92,15 @@ class SocraticTutorAgent(BaseAgent):
             # reach full disclosure simply by pasting code and asking why it
             # breaks — the same rephrasing bypass the scaffolding door had.
             prompt = self._build_diagnostic_prompt(state.query, context_text, state.user_goal,
-                                                   state.profile, rung_cap=state.rung_cap)
+                                                   state.profile, rung_cap=state.rung_cap,
+                                                   orient_sentences=state.orient_sentences)
             style_used = None
         elif state.intent == "COMPLEX_PROBLEM":
             # Provide a high-level architectural plan without scaffolding
             # Emits a "Starter Skeleton" of real C, so it is capped too.
             prompt = self._build_complex_plan_prompt(state.query, context_text,
-                                                     state.user_goal, rung_cap=state.rung_cap)
+                                                     state.user_goal, rung_cap=state.rung_cap,
+                                                     orient_sentences=state.orient_sentences)
             style_used = None
         else:
             # Default to Concept Explanation
@@ -109,7 +111,7 @@ class SocraticTutorAgent(BaseAgent):
                 mastery_weak_tier=state.mastery_weak_tier,
                 calibration_state=state.calibration_state,
                 calibration_detail=state.calibration_detail,
-                rung_cap=state.rung_cap,
+                rung_cap=state.rung_cap, orient_sentences=state.orient_sentences,
                 redirect_to=state.redirect_to, redirect_from=state.redirect_from,
             )
 
@@ -234,7 +236,7 @@ class SocraticTutorAgent(BaseAgent):
         try: return json.loads(response.replace("```json", "").replace("```", "").strip())
         except: return ["Tell me more", "Example code", "Challenge: Write it"]
  
-    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "", mastery_weak_tier: str = "", calibration_state: str = "", calibration_detail: str = "", rung_cap: int = 5, redirect_to: str = "", redirect_from: str = "") -> str:
+    def _build_concept_prompt(self, query: str, context: str, user_goal: str = None, profile: Dict[str, Any] = {}, original_query: str = "", entities: List[str] = [], mastery_level: str = "novice", mastery_detail: str = "", mastery_weak_tier: str = "", calibration_state: str = "", calibration_detail: str = "", rung_cap: int = 5, redirect_to: str = "", redirect_from: str = "", orient_sentences: int = 2) -> str:
         
         # =========================================================
         # C_style: Few-Shot Personalization Vector
@@ -584,7 +586,7 @@ class SocraticTutorAgent(BaseAgent):
         # discarded on exactly the turns where a learner is most likely to be
         # reaching for an answer they have not attempted.
         if rung_cap < int(Rung.CODE):
-            format_rules += disclosure_directive(Rung(rung_cap))
+            format_rules += disclosure_directive(Rung(rung_cap), orient_sentences)
 
         # CAC horizon redirect (Phase 3). Appended after the disclosure limit so
         # both constraints survive: a redirected turn may ALSO be rung-capped, and
@@ -618,7 +620,7 @@ class SocraticTutorAgent(BaseAgent):
 
     def _build_diagnostic_prompt(self, query: str, context: str, user_goal: str = None,
                                  profile: Dict[str, Any] = {},
-                                 rung_cap: int = 5) -> str:
+                                 rung_cap: int = 5, orient_sentences: int = 2) -> str:
         """DEBUG / REVIEW mode. The learner has a concrete artifact and a concrete problem;
         the job is to diagnose and guide repair, not to teach the topic from scratch.
 
@@ -656,7 +658,7 @@ class SocraticTutorAgent(BaseAgent):
                    or section_allowed(x.lstrip()[3:].split("\n", 1)[0], _cap)]
         format_rules = "\n\n".join(fmt)
         if rung_cap < int(Rung.CODE):
-            format_rules += disclosure_directive(Rung(rung_cap))
+            format_rules += disclosure_directive(Rung(rung_cap), orient_sentences)
 
         return f"""
         You are an expert C debugging tutor reviewing a student's own code.
@@ -724,7 +726,7 @@ class SocraticTutorAgent(BaseAgent):
         """
 
     def _build_complex_plan_prompt(self, query: str, context: str, user_goal: str = None,
-                                   rung_cap: int = 5) -> str:
+                                   rung_cap: int = 5, orient_sentences: int = 2) -> str:
         goal_instruction = ""
         if user_goal:
             goal_instruction = f"""
@@ -734,7 +736,7 @@ class SocraticTutorAgent(BaseAgent):
         # CAC: this prompt is one literal rather than a section list, so the cap
         # is applied as an explicit limit appended last — it emits a "Starter
         # Skeleton" of real C, which a capped learner must not receive.
-        _cac_limit = (disclosure_directive(Rung(rung_cap))
+        _cac_limit = (disclosure_directive(Rung(rung_cap), orient_sentences)
                       if rung_cap < int(Rung.CODE) else "")
 
         return f"""

@@ -108,7 +108,7 @@ this learner — if this is capped, something is wrong.
 
 ---
 
-### ▢ Test 2 — a topic three steps ahead
+### ▢ Test 2 — a topic four steps ahead
 
 **Log in as** `cactest_baseline`
 
@@ -118,7 +118,7 @@ explain file I/O
 ```
 
 **PASS if all three:**
-- the answer is **two sentences at most**
+- the answer is **one sentence**
 - the rest of it is about why **Strings** is worth learning first
 - there is a suggestion button like `Explain Strings`
 
@@ -138,11 +138,12 @@ explain file I/O
 explain arrays
 ```
 
-**PASS if:** short answer again, but pointing at **Control Flow** this time — not
-Strings.
+**PASS if:** a short answer of **two sentences**, pointing at **Control Flow**
+this time — not Strings.
 
-> Compare with Test 2. One hop away gets a different pointer than three hops
-> away. The system names the *nearest* next step, not the safest retreat.
+> Compare with Test 2. Access slopes with distance: the next topic is full, two
+> steps ahead gets two sentences, three or more steps ahead gets one. And the
+> system names the *nearest* next step, not the safest retreat.
 
 ---
 
@@ -281,40 +282,28 @@ explain file I/O
 
 ## Group D — Does this student know what they don't know?
 
-`cactest_overconfident` has earned much more: Variables, Control Flow, Arrays
-**and Strings**. But Strings was certified two days ago and has faded — the three
-tiers now sit near `0.93 / 0.84 / 0.77`. Still certified (the bar is 0.75), no
-longer comfortable.
+`cactest_overconfident` has earned **Variables, Control Flow and Arrays**.
 
-They are also overconfident: **4 of their 5 wrong answers** were ones the system
-expected them to get right.
+- **Control Flow is shaky.** Its code score is **0.79**: still certified (the
+  bar to keep a topic is 0.75), but under the **0.80** an overconfident student
+  has to show.
+- **They are overconfident in Control Flow.** 4 of their 5 wrong answers there
+  were ones the system expected them to get right.
 
-### ▢ Test 10 — building on a stale prerequisite
+The rule being tested: overconfidence in a topic affects **every topic after it
+on its branch**, and the student must prove **that topic** before going on.
+Topics on other branches are untouched.
 
-**Log in as** `cactest_overconfident`
-
-**Type:**
 ```
-explain file I/O
-```
-
-**PASS if:** you are asked to revisit **Strings** first — a roadmap naming
-Strings, with an `Explain Strings` button.
-
-**In the log:**
-```
-📐 [CAC] edge threshold 0.90 REFUSED ['Strings']
+Variables → Control Flow → Arrays → Strings → File I/O      ← affected branch
+          → Pointers → Memory Allocation                     ← not affected
 ```
 
-> **Check the log line before recording a failure.** The visible roadmap comes
-> from the gatekeeper, whose prerequisite list is read from **Neo4j**, not from
-> CAC's own map. If your graph does not record that File I/O needs Strings, the
-> message will not appear even though the mechanism fired correctly. The log
-> line is the authoritative check.
+> **Re-seed if more than ~12 hours pass** between seeding and running Group D.
+> The 0.79 code score fades, and after about a day Control Flow stops being
+> certified at all — then there is nothing marginal left to test.
 
----
-
-### ▢ Test 11 — the bar moved, the credential did not
+### ▢ Test 10 — a topic after Control Flow
 
 **Log in as** `cactest_overconfident`
 
@@ -323,29 +312,55 @@ Strings, with an `Explain Strings` button.
 explain strings
 ```
 
-**PASS if:** you get a normal, full answer. They have earned Strings and still
-have it.
+**PASS if:** you are asked to revisit **Control Flow** first — a roadmap naming
+Control Flow, with an `Explain Control Flow` button.
 
-**FAIL if:** it refuses. Phase 4 raises the bar for *building on* Strings — it
-does not revoke Strings.
+**FAIL if:** you get a normal Strings answer, or the roadmap names **Arrays**.
+Arrays is solid; the doubt is Control Flow. Naming Arrays would mean the old
+behaviour is back.
 
-> Test 10 and Test 11 together are the phase: same learner, same topic, and the
-> difference is whether they are *using* it or *building on* it.
+**In the log:**
+```
+📐 [CAC] edge threshold 0.80 REFUSED ['Control Flow']
+```
+
+> Strings is two topics after Control Flow, so this also checks that the effect
+> travels down the branch, not just to the next topic.
 
 ---
 
-### ▢ Test 12 — a normal learner is untouched
+### ▢ Test 11 — the topic itself is still theirs
 
-**Log in as** `cactest_baseline`
+**Log in as** `cactest_overconfident`
 
 **Type:**
 ```
 explain control flow
 ```
 
-**PASS if:** full answer with code — exactly as in Test 1, unchanged.
+**PASS if:** a normal, full answer. They have earned Control Flow and keep it.
 
-> The last check is that none of this leaked onto a learner it was not aimed at.
+**FAIL if:** it refuses. The stricter bar applies to *building on* Control Flow,
+not to Control Flow itself.
+
+---
+
+### ▢ Test 12 — a different branch is untouched
+
+**Log in as** `cactest_overconfident`
+
+**Type:**
+```
+explain pointers
+```
+
+**PASS if:** a normal, full answer — no roadmap, no "revisit Control Flow".
+
+**FAIL if:** it asks them to revisit Control Flow. Pointers sits on a different
+branch, and overconfidence in Control Flow must not reach it.
+
+> Tests 10–12 together are the whole rule: after the topic → prove it; the topic
+> itself → yours; another branch → untouched.
 
 ---
 
@@ -354,17 +369,17 @@ explain control flow
 | # | Learner | Asked | Expected | Pass? |
 |---|---|---|---|---|
 | 1 | baseline | explain control flow | full answer, code allowed | |
-| 2 | baseline | explain file I/O | 2 sentences + "Strings first" | |
-| 3 | baseline | explain arrays | 2 sentences + "Control Flow first" | |
+| 2 | baseline | explain file I/O | **1 sentence** + "Strings first" | |
+| 3 | baseline | explain arrays | **2 sentences** + "Control Flow first" | |
 | 4 ★ | impulsive | explain control flow | **no code** — same Q as Test 1 | |
 | 5 | impulsive | write a program... | no guided plan | |
 | 6 | impulsive | why does my code crash | diagnosis, no fixed code | |
 | 7 | impulsive | design a system in C | no starter skeleton | |
 | 8 | loaded | explain file I/O | teaches **Arrays**, names the swap | |
 | 9 | loaded | (same turn) | sources are Arrays material | |
-| 10 | overconfident | explain file I/O | asked to revisit Strings | |
-| 11 | overconfident | explain strings | full answer — still certified | |
-| 12 | baseline | explain control flow | unchanged from Test 1 | |
+| 10 | overconfident | explain strings | asked to revisit **Control Flow** (not Arrays) | |
+| 11 | overconfident | explain control flow | full answer — still theirs | |
+| 12 | overconfident | explain pointers | full answer — other branch untouched | |
 
 ### If Test 4, 5, 6 or 7 shows code anyway
 
@@ -418,7 +433,7 @@ cp backend/database/ai_tutor.db.bak backend/database/ai_tutor.db
 | no `[CAC]` lines in the log at all | the question did not name a topic CAC knows — use the exact names listed in Part 2 |
 | Test 4 behaves like Test 1 | `--verify` shows `measured` instead of `impulsive` — re-run the seed |
 | Test 8 does not redirect | `--verify` shows load below 0.5 — re-run the seed |
-| Test 10 shows no roadmap | Neo4j has no `Strings → File I/O` edge; check the log line instead |
+| Test 10 shows no roadmap | more than ~12 hours since seeding (re-seed), or Neo4j does not know the topic "Strings"; check the log line |
 | answers are capped when they should not be | the region gate is ON by default — that is intended, see Test 2 |
 | `--verify` is right but the UI is not | see the note at the end of Part 3 |
 

@@ -973,8 +973,10 @@ class ChainOfThoughtRAGAgent:
             # consults cac_graph.enforcing() itself to decide which of the two
             # answers is the one the learner actually gets.
             state.theta_edge = float(_cac_dec.theta_edge)
+            state.theta_topics = list(_cac_dec.theta_topics)
             if cac_graph.enforcing() and not _cac_dec.is_permissive:
                 state.rung_cap = int(_cac_dec.rung_cap)
+                state.orient_sentences = int(_cac_dec.orient_sentences)
                 state.cac_reasons = list(_cac_dec.reasons)
                 self.logger.info(
                     f"\U0001f39a\ufe0f [CAC] disclosure capped at {_cac_dec.rung_cap.label} "
@@ -1001,7 +1003,7 @@ class ChainOfThoughtRAGAgent:
             # become a block. Matches cac_graph.evaluate()'s own contract.
             self.logger.warning(f"[CAC] cap evaluation failed: {e}")
 
-    def _check_gatekeeping(self, query, intent, entities, username, session_id, force_bypass=False, theta_edge: float = 0.75):
+    def _check_gatekeeping(self, query, intent, entities, username, session_id, force_bypass=False, theta_edge: float = 0.75, theta_topics=None):
         # 1. Prerequisite Check
         if force_bypass or "anyway" in query.lower() or "i know" in query.lower(): return None # User Override
         
@@ -1075,20 +1077,26 @@ class ChainOfThoughtRAGAgent:
         # cac_graph.enforcing() picks which, so the tightened gate is MEASURED
         # against real traffic before it is trusted to refuse anyone. A control
         # never observed refusing the right learners is not ready to refuse any.
-        _raised = theta_edge > 0.75
+        #
+        # The raised bar is checked on the topics the learner is overconfident
+        # IN (`theta_topics`), not on the asked topic's direct prerequisites. For
+        # someone overconfident in Control Flow asking about Strings, requiring
+        # Arrays at the raised bar would test the wrong thing.
         _marginal = []
+        if theta_edge > 0.75:
+            for src in (theta_topics or []):
+                # Certified under the curriculum, but not clearly: the case this
+                # exists for. A topic not certified at all is the curriculum's
+                # business, handled by the ordinary prerequisite check below.
+                if (knowledge_manager.has_mastered(username, src)
+                        and not knowledge_manager.has_mastered(
+                            username, src, theta=theta_edge)):
+                    _marginal.append(src)
         for p in all_prereqs:
             p_norm = p.lower()
             
             # A. Check Mastery
             if knowledge_manager.has_mastered(username, p):
-                # Certified under the curriculum — but for an overconfident
-                # learner, ask whether it was cleared comfortably or barely.
-                # They are the case Phase 4 exists for: they passed, and do not
-                # know how narrowly.
-                if _raised and not knowledge_manager.has_mastered(
-                        username, p, theta=theta_edge):
-                    _marginal.append(p)
                 continue
             
             # B. Check Self-Reference (plural handling)
@@ -2444,7 +2452,7 @@ class ChainOfThoughtRAGAgent:
         if state.mastery_level != "reviewing":
             gatekeeper_result = self._check_gatekeeping(
                 state.query, state.intent, state.entities, state.user_id, state.session_id, force_gatekeeper_bypass,
-                theta_edge=state.theta_edge
+                theta_edge=state.theta_edge, theta_topics=state.theta_topics
             )
             if gatekeeper_result:
                 try:

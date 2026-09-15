@@ -103,7 +103,7 @@ def test_uncapped_learner_still_gets_a_plan(cap):
 def test_partial_code_prompt_carries_the_disclosure_directive():
     """The stuck-student escalation emits C code, so it must read the cap."""
     src = _src(ScaffoldingAgent._continue_plan)
-    assert "disclosure_directive(Rung(state.rung_cap))" in src
+    assert "disclosure_directive(Rung(state.rung_cap)" in src
 
 
 def test_step_evaluation_receives_the_cap():

@@ -127,9 +127,30 @@ def _calibration(username):
             wrong += 1
             if (r["p_bkt_pred"] or 0.0) >= P_CONFIDENT:
                 conf_wrong += 1
+
+    # Per topic. Overconfidence is a fact about a TOPIC, not about a person: a
+    # learner can be sure and wrong about loops while well calibrated on
+    # pointers, and mixing the two dilutes exactly the case worth catching.
+    # Each topic keeps its own recent window, so a busy topic cannot crowd a
+    # quiet one out of the sample. Topic names are raw here; the policy layer
+    # maps them onto the curriculum.
+    by_topic: dict = {}
+    for r in _rows("SELECT concept, p_bkt_pred, is_correct FROM prediction_log "
+                   "WHERE username=? ORDER BY id DESC LIMIT 500", (username,)):
+        t = by_topic.setdefault(r["concept"] or "", {"n": 0, "n_wrong": 0,
+                                                     "n_confident_wrong": 0})
+        if t["n"] >= _N:
+            continue
+        t["n"] += 1
+        if r["is_correct"] == 0:
+            t["n_wrong"] += 1
+            if (r["p_bkt_pred"] or 0.0) >= P_CONFIDENT:
+                t["n_confident_wrong"] += 1
+    by_topic.pop("", None)
+
     return {"n": len(rows), "n_wrong": wrong, "n_confident_wrong": conf_wrong,
             "gap_ratio": round(conf_wrong / wrong, 3) if wrong else 0.0,
-            "source": "model"}
+            "by_topic": by_topic, "source": "model"}
 
 
 def _automatization(username):

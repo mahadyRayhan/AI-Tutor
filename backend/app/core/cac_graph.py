@@ -114,6 +114,16 @@ class Topology:
     def successors(self, node: str) -> set[str]:
         return set(self._succs.get(node, ()))
 
+    def descendants(self, node: str) -> set[str]:
+        """Every topic that comes after `node` on its own branch, at any depth."""
+        out, stack = set(), list(self._succs.get(node, ()))
+        while stack:
+            n = stack.pop()
+            if n not in out:
+                out.add(n)
+                stack.extend(self._succs.get(n, ()))
+        return out
+
     def frontier(self, certified: set[str]) -> set[str]:
         """Unlocked but not yet mastered — every prerequisite currently certified.
 
@@ -287,7 +297,7 @@ def section_allowed(header: str, cap: Rung) -> bool:
     return True if required is None else cap >= required
 
 
-def disclosure_directive(cap: Rung) -> str:
+def disclosure_directive(cap: Rung, sentences: int = 2) -> str:
     """The instruction a prompt must carry to honour `cap`. Empty at CODE.
 
     Note DIAGRAM sits BELOW HINT on the ladder, so a mermaid diagram is permitted
@@ -315,7 +325,7 @@ def disclosure_directive(cap: Rung) -> str:
             "- Explain with a diagram and a description of the memory/control model.")
     if cap == Rung.ORIENT:
         return common + (
-            "- Answer in AT MOST two sentences.\n"
+            f"- Answer in AT MOST {'one sentence' if sentences <= 1 else 'two sentences'}.\n"
             "- Spend the rest of the response on why the missing prerequisite is "
             "worth having first. No code, no diagram, no step-by-step.")
     return common + "- Do not answer this request."
@@ -329,14 +339,15 @@ def disclosure_directive(cap: Rung) -> str:
 # constraint the rung ladder and the horizon obey, expressed for a continuous
 # quantity instead of an enum.
 #
-# THETA_OVERCONFIDENT is where an overconfident learner's bar sits instead. The
-# gap it opens (0.75 -> 0.90) is deliberately short of THETA_CERTIFY (0.95):
-# the intent is "show me more before you build on this", not a re-certification.
+# THETA_OVERCONFIDENT is where an overconfident learner's bar sits instead, and
+# it is applied to the topic they are overconfident IN. The gap (0.75 -> 0.80)
+# is deliberately small and well short of THETA_CERTIFY (0.95): the intent is
+# "show me this topic is still solid before building on it", not re-certification.
 THETA_BASE = 0.75
-THETA_OVERCONFIDENT = 0.90
+THETA_OVERCONFIDENT = 0.80
 
-# A learner is treated as overconfident when more than half of what they got
-# wrong, they got wrong while the model expected them to be right.
+# A learner is overconfident ON A TOPIC when more than half of what they got
+# wrong on that topic, they got wrong while the model expected them to be right.
 GAP_TIGHTEN = 0.5
 
 # ...and only once there is enough to say so. Three misses is the same evidence
@@ -368,6 +379,7 @@ class LearnerView:
     cognitive_load: float | None = None       # 0..1, higher = more loaded
     gap_ratio: float | None = None            # 0..1, wrong-and-confident share
     gap_n_wrong: int = 0                      # denominator behind gap_ratio
+    overconfident_topics: frozenset[str] = frozenset()   # per topic; drives Phase 4
     help_seeking_quality: str | None = None   # "impulsive" | "measured"
     rushing: bool = False                     # fast answers on low mastery
     grit_index: float | None = None           # 0..1, higher = more persistent
@@ -419,12 +431,23 @@ class Decision:
     # reported.
     redirect_hops: int | None = None
 
+    # How long an ORIENT answer may be. Distance sets it: a topic two steps ahead
+    # gets two sentences, anything further gets one. Only meaningful when
+    # rung_cap is ORIENT; only ever lowered (see `_tighten`).
+    orient_sentences: int = 2
+
     # Phase 4 · the prerequisite bar this learner must clear on the edge they are
     # standing at. Starts at the curriculum's own THETA_DECERTIFY and may only be
     # raised: C tightens an edge, never loosens one below what the curriculum
     # already demands. Carried explicitly rather than recomputed downstream so
     # the number that gated a learner is in the audit row, not inferred from it.
     theta_edge: float = THETA_BASE
+
+    # The topics that must clear `theta_edge`: the ones the learner is
+    # overconfident in, which the asked topic comes after. Not the asked topic's
+    # direct prerequisite — for a learner overconfident in Control Flow who asks
+    # about Strings, the thing in doubt is Control Flow, not Arrays.
+    theta_topics: tuple[str, ...] = ()
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -448,7 +471,9 @@ class Decision:
             "beyond_region": self.beyond_region,
             "revealed_edge": list(self.revealed_edge) if self.revealed_edge else None,
             "policy_version": self.policy_version,
+            "orient_sentences": self.orient_sentences,
             "theta_edge": round(self.theta_edge, 3),
+            "theta_topics": list(self.theta_topics),
             "reasons": list(self.reasons),
         }
 
@@ -457,6 +482,8 @@ def _tighten(decision: Decision, *, rung: Rung | None = None,
              horizon: bool | None = None, edge: bool | None = None,
              theta: float | None = None,
              redirect: str | None = None, redirect_hops: int | None = None,
+             sentences: int | None = None,
+             theta_topics: Iterable[str] | None = None,
              reason: str) -> None:
     """The ONLY way a signal may alter a decision, and it only ever narrows.
 
@@ -467,6 +494,15 @@ def _tighten(decision: Decision, *, rung: Rung | None = None,
     add one without editing this function and noticing what it is doing.
     """
     changed = False
+    if theta_topics:
+        # Union: another topic to prove can only make the gate harder to pass.
+        merged = tuple(sorted(set(decision.theta_topics) | set(theta_topics)))
+        if merged != decision.theta_topics:
+            decision.theta_topics = merged
+            changed = True
+    if sentences is not None and sentences < decision.orient_sentences:
+        decision.orient_sentences = sentences
+        changed = True
     if theta is not None and theta > decision.theta_edge:
         # max(), and never below THETA_BASE: an edge may be made harder than the
         # curriculum demands, never easier. Clamping here rather than trusting
@@ -661,45 +697,45 @@ def _signal_calibration(view: LearnerView, topo: Topology,
     control on. A learner who is wrong and expected to be wrong is simply
     learning, and nothing here should touch them.
 
-    The response is to raise the bar on the edge they are standing at, from the
-    curriculum's THETA_BASE toward THETA_OVERCONFIDENT: show more before
-    building on this. It is never a refusal, and never a reduction — `_tighten`
+    Measured PER TOPIC, and it flows along the map: overconfidence on a topic
+    raises the bar on every topic after it on the same branch, from the
+    curriculum's THETA_BASE toward THETA_OVERCONFIDENT — show more before
+    building on this. Other branches are untouched. It is never a refusal, and never a reduction — `_tighten`
     takes the max and clamps at THETA_BASE, so this signal cannot open a gate
     the curriculum had closed.
 
-    SOURCE NOTE. `view.gap_ratio` is fed from `learner_model._calibration`
+    SOURCE NOTE. `view.overconfident_topics` is fed from `learner_model._calibration`
     (model-side, `prediction_log.p_bkt_pred`) rather than `_slip_vs_gap`
     (self-reported `jol_log.confidence_1_5`). Self-report is both structurally
     starved here and declared by the subject of the policy: a learner who
     notices that admitting confidence tightens their gate stops admitting it.
     Behaviour the learner never sees is the sounder basis.
     """
-    if view.gap_ratio is None:
-        return                                  # cold start is not suspicion
-    if view.gap_n_wrong < GAP_MIN_WRONG:
-        return                                  # one bad day is not a pattern
-    if view.gap_ratio <= GAP_TIGHTEN:
-        return
+    if not view.overconfident_topics:
+        return                                  # nothing to act on, or cold start
 
+    # Flow follows the map. Overconfidence on a topic reaches every topic AFTER
+    # it on its own branch — overconfident in Control Flow touches Arrays,
+    # Functions, Strings and on down, and never Pointers, which sits on a
+    # different branch. The topic itself is not tightened: the learner has it,
+    # and the risk is what they will build on top of it.
     certified = set(view.certified)
-    frontier = topo.frontier(certified)
-    if not frontier:
+    source_of: dict[str, str] = {}
+    for src in sorted(view.overconfident_topics):
+        for d in topo.descendants(src):
+            source_of.setdefault(d, src)
+
+    hit = sorted(c for c in concepts if c in source_of and c not in certified)
+    if not hit:
         return
 
-    # Only concepts standing directly on an edge out of the frontier are
-    # affected. Tightening everything would make this a blanket restriction
-    # rather than an edge threshold, and would be indistinguishable from the
-    # region gate already in place.
-    at_edge = sorted(c for c in concepts
-                     if c not in certified
-                     and topo.hops_from(frontier, c) in (0, 1))
-    if not at_edge:
-        return
-
+    sources = sorted({src for src in view.overconfident_topics
+                      if any(c in topo.descendants(src) for c in hit)})
     _tighten(
-        decision, edge=False, theta=THETA_OVERCONFIDENT,
-        reason=f"C/calibration {view.gap_ratio:.2f} over {view.gap_n_wrong} misses: "
-               f"'{at_edge[0]}' needs P\u0303 \u2265 {THETA_OVERCONFIDENT:.2f} "
+        decision, edge=False, theta=THETA_OVERCONFIDENT, theta_topics=sources,
+        reason=f"C/calibration: overconfident in {', '.join(repr(s) for s in sources)}; "
+               f"'{hit[0]}' comes after it, so {', '.join(repr(s) for s in sources)} "
+               f"must be at P\u0303 \u2265 {THETA_OVERCONFIDENT:.2f} "
                f"(curriculum floor {THETA_BASE:.2f})",
     )
 
@@ -761,12 +797,21 @@ def decide(view: LearnerView, query_concepts: Iterable[str],
         decision.beyond_region = True
         _hint_hops = (topo.hops_from(topo.frontier(certified), hint)
                       if hint else None)
+        # Distance slope. The frontier is "one step ahead" and is fully open.
+        # hops_from counts steps past it, so hops 1 = two steps ahead (two
+        # sentences) and hops >= 2 = three or more steps ahead (one sentence).
+        # The furthest topic asked decides; an unreachable one counts as far.
+        _front = topo.frontier(certified)
+        _far = max((topo.hops_from(_front, c) if topo.hops_from(_front, c)
+                    is not None else 99) for c in beyond)
+        _sentences = 2 if _far <= 1 else 1
         if region_gate:
             _tighten(
                 decision, redirect=hint, redirect_hops=_hint_hops, rung=Rung.ORIENT,
-                reason=f"K/region: '{target}' is beyond the frontier"
-                       + (f"; answer briefly and motivate '{hint}'" if hint
-                          else "; answer briefly"),
+                sentences=_sentences,
+                reason=f"K/region: '{target}' is {_far + 1} steps ahead"
+                       + f" ({_sentences}-sentence answer)"
+                       + (f"; motivate '{hint}'" if hint else ""),
             )
         else:
             decision.redirect_to = hint
@@ -813,6 +858,7 @@ def build_view(username: str) -> LearnerView:
 
     load = gap = grit = None
     gap_n = 0
+    over = frozenset()
     quality = None
     rushing = False
     try:
@@ -830,6 +876,20 @@ def build_view(username: str) -> LearnerView:
             _sr = cog.get("error_slip_vs_gap") or {}
             gap = _sr.get("gap_ratio")
             gap_n = int(_sr.get("n_wrong") or 0)
+
+        # Per-topic overconfidence, mapped onto the curriculum. Raw topic names
+        # vary ("variables", "Variable"), so counts are pooled per canonical
+        # topic before the threshold is applied; names that map to no node on
+        # the map cannot tighten anything and are dropped.
+        _pool: dict[str, list[int]] = {}
+        for raw, t in (_cal.get("by_topic") or {}).items():
+            node = canonical_concept(raw)
+            if node in CURRICULUM.nodes:
+                acc = _pool.setdefault(node, [0, 0])
+                acc[0] += int(t.get("n_wrong") or 0)
+                acc[1] += int(t.get("n_confident_wrong") or 0)
+        over = frozenset(n for n, (w, cw) in _pool.items()
+                         if w >= GAP_MIN_WRONG and cw / w > GAP_TIGHTEN)
         quality = (meta.get("help_seeking") or {}).get("quality")
         rushing = bool((meta.get("pacing") or {}).get("rushing"))
         grit = (meta.get("persistence") or {}).get("grit_index")
@@ -839,6 +899,7 @@ def build_view(username: str) -> LearnerView:
     return LearnerView(
         username=username, certified=frozenset(certified),
         cognitive_load=load, gap_ratio=gap, gap_n_wrong=gap_n,
+        overconfident_topics=over,
         help_seeking_quality=quality,
         rushing=rushing, grit_index=grit,
     )

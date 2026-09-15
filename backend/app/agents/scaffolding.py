@@ -257,7 +257,7 @@ class ScaffoldingAgent(BaseAgent):
                 Use `___` or `// TODO:` for the parts the student still needs to figure out.
                 Do not give the complete working answer. Add 1 sentence of encouragement.
                 Format the code in standard markdown ```c ... ```. {self._preference_directive(state.profile)}
-                {disclosure_directive(Rung(state.rung_cap))}
+                {disclosure_directive(Rung(state.rung_cap), state.orient_sentences)}
                 """
                 partial_code_response = await asyncio.to_thread(self.llm.generate_response, prompt)
                 
@@ -289,7 +289,8 @@ class ScaffoldingAgent(BaseAgent):
 
         evaluation = await asyncio.to_thread(
             self._evaluate_step_progress, state.query, current_step, context_text,
-            current_fails, active_plan.get("constraints"), state.rung_cap)
+            current_fails, active_plan.get("constraints"), state.rung_cap,
+            state.orient_sentences)
         answer_text = evaluation.get('feedback', "I couldn't verify that automatically.")
         
         sugg_list = ["I'm stuck", "Stop guided mode"]
@@ -701,7 +702,8 @@ class ScaffoldingAgent(BaseAgent):
     def _evaluate_step_progress(self, user_input: str, current_step: Dict, context: str,
                                 failed_attempts: int,
                                 constraints: Dict[str, Any] = None,
-                                rung_cap: int = 5) -> Dict[str, Any]:
+                                rung_cap: int = 5,
+                                orient_sentences: int = 2) -> Dict[str, Any]:
         """Evaluates student progress on the current step.
 
         `constraints` carries the handout's toolset and requirements when this plan
@@ -783,7 +785,7 @@ class ScaffoldingAgent(BaseAgent):
             "visual_aid": "graph TD...", 
             "pseudocode_hint": "..."
         }}
-        {disclosure_directive(Rung(rung_cap))}
+        {disclosure_directive(Rung(rung_cap), orient_sentences)}
         """
         response = self.llm.generate_response(prompt)
         try:

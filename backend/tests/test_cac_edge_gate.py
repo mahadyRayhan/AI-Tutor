@@ -3,9 +3,9 @@
 Run: /opt/anaconda3/envs/agent/bin/python -m pytest backend/tests/test_cac_edge_gate.py -q
 
 The plan's acceptance criterion, verbatim: "an overconfident learner on Loops
-fails the Loops->Arrays gate at P̃=0.85 while a calibrated learner passes at the
-same P̃". 0.85 is the interesting value because it clears the curriculum's floor
-(0.75) but not the raised bar (0.90) — so it separates the two learners on
+fails the gate at a marginal P̃ while a calibrated learner passes at the
+same P̃". 0.78 is the interesting value because it clears the curriculum's floor
+(0.75) but not the raised bar (0.80) — so it separates the two learners on
 nothing but their calibration.
 """
 import pytest
@@ -14,7 +14,7 @@ from app.core import bkt_model
 from app.core.cac_graph import THETA_BASE, THETA_OVERCONFIDENT
 
 
-P_TILDE = 0.85   # certified under the curriculum, marginal under a raised bar
+P_TILDE = 0.78   # certified under the curriculum, marginal under the raised bar
 
 
 class _Row(dict):
@@ -30,7 +30,7 @@ def _row(p):
 
 
 @pytest.fixture
-def at_085(monkeypatch):
+def at_marginal(monkeypatch):
     monkeypatch.setattr(bkt_model, "_read_row", lambda u, c: _row(P_TILDE))
     monkeypatch.setattr(bkt_model, "_apply_decay",
                         lambda p, kind, ts, lam=None: p)
@@ -38,18 +38,18 @@ def at_085(monkeypatch):
 
 # ── The acceptance criterion ────────────────────────────────────────────────
 
-def test_calibrated_learner_passes_at_085(at_085):
-    """The curriculum's own bar: 0.85 >= 0.75, so the edge is open."""
+def test_calibrated_learner_passes_at_marginal(at_marginal):
+    """The curriculum's own bar: 0.78 >= 0.75, so the edge is open."""
     assert bkt_model.meets_theta("calibrated", "Loops", THETA_BASE) is True
 
 
-def test_overconfident_learner_fails_at_085(at_085):
-    """CAC's raised bar: 0.85 < 0.90, so the same mastery no longer suffices."""
+def test_overconfident_learner_fails_at_marginal(at_marginal):
+    """CAC's raised bar: 0.78 < 0.80, so the same mastery no longer suffices."""
     assert bkt_model.meets_theta("overconfident", "Loops",
                                  THETA_OVERCONFIDENT) is False
 
 
-def test_the_two_learners_differ_on_calibration_alone(at_085):
+def test_the_two_learners_differ_on_calibration_alone(at_marginal):
     """Same P̃, same concept, same decay — only the bar moved."""
     same_mastery = P_TILDE
     assert bkt_model.meets_theta("a", "Loops", THETA_BASE) != \
@@ -70,7 +70,7 @@ def test_raised_bar_cannot_admit_what_the_curriculum_refuses(p, monkeypatch):
 
 def test_conjunctive_across_tiers(monkeypatch):
     """One weak tier fails the whole edge — mastery is conjunctive."""
-    r = _row(0.95); r["p_mastery_code"] = 0.80
+    r = _row(0.95); r["p_mastery_code"] = 0.77
     monkeypatch.setattr(bkt_model, "_read_row", lambda u, c: r)
     monkeypatch.setattr(bkt_model, "_apply_decay", lambda v, k, t, lam=None: v)
     assert bkt_model.meets_theta("u", "Loops", THETA_BASE) is True
@@ -154,3 +154,20 @@ def test_run_entrypoint_does_not_reference_theta_edge():
     from app.agents import cot_rag_agent as cra
     src = inspect.getsource(cra.ChainOfThoughtRAGAgent.run)
     assert "theta_edge" not in src
+
+
+def test_raised_bar_is_checked_on_the_overconfident_topic_not_the_prereq():
+    """Regression: the bar used to land on the asked topic's DIRECT prerequisite.
+
+    Overconfident in Control Flow, asking about Strings, the old gate required
+    Arrays at the raised bar — testing a topic nobody had doubts about. It now
+    checks the topics named in `theta_topics`, i.e. Control Flow itself, and the
+    ordinary prerequisite loop is back to the curriculum's own rule.
+    """
+    import inspect
+    from app.agents import cot_rag_agent as cra
+    src = inspect.getsource(cra.ChainOfThoughtRAGAgent._check_gatekeeping)
+    assert "for src in (theta_topics" in src
+    loop = src[src.index("for p in all_prereqs:"):]
+    loop = loop[:loop.index("B. Check Self-Reference")]
+    assert "theta=" not in loop, "prerequisite loop must not apply the raised bar"

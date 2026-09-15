@@ -44,15 +44,17 @@ def _user(name):
         print(f"  user {name} exists")
 
 
-def _certify(user, concept, p=0.99, days_ago=0):
-    """Certified at `p`, last practised `days_ago`. Decay applies from there."""
+def _certify(user, concept, p=0.99, days_ago=0, code=None):
+    """Certified at `p`, last practised `days_ago`. Decay applies from there.
+
+    `code` overrides the code tier alone, to make a topic certified but shaky."""
     db.execute("DELETE FROM user_knowledge WHERE username=? AND concept=?", (user, concept))
     db.execute(
         "INSERT INTO user_knowledge (username, concept, p_mastery_quiz, p_mastery_micro, "
         " p_mastery_code, n_evidence_quiz, n_evidence_micro, n_evidence_code, "
         " is_certified, ever_certified, last_quiz_at, last_micro_at, last_code_at) "
         "VALUES (?,?,?,?,?,?,?,?,1,1,?,?,?)",
-        (user, concept, p, p, p, 5, 5, 5,
+        (user, concept, p, p, p if code is None else code, 5, 5, 5,
          _ts(days_ago), _ts(days_ago), _ts(days_ago)))
 
 
@@ -79,18 +81,18 @@ def _evidence(user, n=20, correct=False):
             (user, "Control Flow", "declarative", 1 if correct else 0, _ts()))
 
 
-def _predictions(user, n_right=6, n_wrong=5, n_confident_wrong=4):
+def _predictions(user, n_right=6, n_wrong=5, n_confident_wrong=4, concept="Control Flow"):
     """prediction_log drives `calibration.gap_ratio` (model-side overconfidence)."""
     db.execute("DELETE FROM prediction_log WHERE username=?", (user,))
     for _ in range(n_right):
         db.execute("INSERT INTO prediction_log (username, concept, tier, p_bkt_pred, "
                    "p_eff_pred, is_correct, ts_utc) VALUES (?,?,?,?,?,1,?)",
-                   (user, "Strings", "declarative", 0.85, 0.85, _ts()))
+                   (user, concept, "declarative", 0.85, 0.85, _ts()))
     for i in range(n_wrong):
         p = 0.88 if i < n_confident_wrong else 0.30   # confident-wrong vs honest miss
         db.execute("INSERT INTO prediction_log (username, concept, tier, p_bkt_pred, "
                    "p_eff_pred, is_correct, ts_utc) VALUES (?,?,?,?,?,0,?)",
-                   (user, "Strings", "declarative", p, p, _ts()))
+                   (user, concept, "declarative", p, p, _ts()))
 
 
 def _quizzes(user, n_quiz=4, n_skip=6, n_giveup=3):
@@ -128,21 +130,19 @@ def seed():
     _turns(LOADED, c_code=8.0, latency_ms=20000); _evidence(LOADED, correct=False)
     print("     complexity 8 · latency 20s · every answer wrong -> load 1.0")
 
-    print("\nT4 " + OVERCONFIDENT + " — Phase 4 calibration -> edge")
+    print("\nT4 " + OVERCONFIDENT + " — Phase 4 overconfidence -> its branch")
     _user(OVERCONFIDENT)
     _certify(OVERCONFIDENT, "Variables")
-    _certify(OVERCONFIDENT, "Control Flow")
+    # Control Flow is certified but shaky: code tier 0.79, just under the 0.80
+    # bar an overconfident learner must clear. Practised NOW, so it stays in
+    # that window for ~12 hours; re-seed if the test session runs longer.
+    _certify(OVERCONFIDENT, "Control Flow", code=0.79)
     _certify(OVERCONFIDENT, "Arrays")
-    # 2 days, not more. The micro and code tiers decay steeply: at 2 days they
-    # sit at 0.837 / 0.774 — still certified (>= 0.75) but under the raised bar
-    # (< 0.90), which is exactly the marginal case Phase 4 acts on. By day 4 the
-    # certification is gone entirely and there is nothing left to tighten.
-    _certify(OVERCONFIDENT, "Strings", p=0.99, days_ago=2)
     _turns(OVERCONFIDENT, c_code=0.5, latency_ms=1500)
     _evidence(OVERCONFIDENT, correct=True)
-    _predictions(OVERCONFIDENT)
-    print("     Strings certified 2 days ago (decayed to ~0.77-0.93: passes 0.75, fails 0.90)")
-    print("     4 of 5 misses were confident misses -> gap_ratio 0.8")
+    _predictions(OVERCONFIDENT, concept="Control Flow")
+    print("     earned Variables, Control Flow (code tier 0.79), Arrays")
+    print("     overconfident in Control Flow: 4 of 5 misses were confident misses")
     print(f"\nseeded. password for all four: {PASSWORD}")
 
 
@@ -158,11 +158,12 @@ def verify():
         print(f"  certified      : {sorted(v.certified) or '(none)'}")
         print(f"  load           : {v.cognitive_load}   help-seeking: {v.help_seeking_quality}")
         print(f"  gap_ratio      : {v.gap_ratio}  over {v.gap_n_wrong} misses")
-        for topic in ("Control Flow", "Arrays", "Strings", "File I/O"):
+        print(f"  overconfident  : {sorted(v.overconfident_topics) or '(none)'}")
+        for topic in ("Control Flow", "Arrays", "Strings", "File I/O", "Pointers"):
             d = cac_graph.decide(v, [topic], region_gate=True)
-            bits = [f"rung={d.rung_cap.label}"]
+            bits = [f"rung={d.rung_cap.label}" + (f" ({d.orient_sentences} sentence{'s' if d.orient_sentences > 1 else ''})" if int(d.rung_cap) == 1 else "")]
             if not d.in_horizon:   bits.append("horizon CONTRACTED")
-            if not d.edge_ok:      bits.append(f"edge theta={d.theta_edge}")
+            if not d.edge_ok:      bits.append(f"must prove {list(d.theta_topics)} at {d.theta_edge}")
             if d.redirect_to:      bits.append(f"redirect->{d.redirect_to}")
             print(f"    ask '{topic}': {' · '.join(bits)}")
 

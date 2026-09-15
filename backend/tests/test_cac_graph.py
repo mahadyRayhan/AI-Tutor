@@ -21,7 +21,7 @@ from app.core.cac_graph import (  # noqa: E402
     CANONICAL_PREREQ_EDGES, CURRICULUM, SKILL_TOPICS,
     Decision, LearnerView, Rung, Topology, decide,
     SECTION_MIN_RUNG, disclosure_directive, section_allowed,
-    LOAD_HORIZON, _horizon_limit, redirect_preamble,
+    LOAD_HORIZON, _horizon_limit, redirect_preamble, _tighten,
 )
 
 SEEDS = range(200)
@@ -271,7 +271,8 @@ def test_audit_record_is_flat_and_complete():
     assert a["rung_label"] == "orienting answer"
     assert set(a) == {"rung_cap", "rung_label", "in_horizon", "edge_ok",
                       "redirect_to", "beyond_region", "revealed_edge",
-                      "policy_version", "theta_edge", "reasons"}
+                      "policy_version", "orient_sentences", "theta_edge",
+                      "theta_topics", "reasons"}
     assert a["reasons"], "an audit record with no reason explains nothing"
 
 
@@ -691,3 +692,29 @@ def test_probe_rate_counts_region_only(probe_user):
     stats = telemetry.cac_probe_stats(probe_user, "s5")
     assert stats["turns"] == 3
     assert stats["probes"] == 0, "load contractions leaked into the probe count"
+
+
+# ── Distance slope: 1 step full, 2 steps two sentences, 3+ steps one ────────
+
+def test_access_slopes_with_distance():
+    earned = frozenset({"Variables", "Control Flow"})
+    def at(t):
+        return decide(LearnerView("u", earned), [t], region_gate=True)
+    assert at("Arrays").rung_cap == Rung.CODE                 # 1 step ahead
+    two = at("Strings")                                       # 2 steps ahead
+    assert two.rung_cap == Rung.ORIENT and two.orient_sentences == 2
+    three = at("File I/O")                                    # 3 steps ahead
+    assert three.rung_cap == Rung.ORIENT and three.orient_sentences == 1
+
+
+def test_directive_carries_the_sentence_budget():
+    assert "AT MOST two sentences" in disclosure_directive(Rung.ORIENT, 2)
+    assert "AT MOST one sentence" in disclosure_directive(Rung.ORIENT, 1)
+    assert "AT MOST two sentences" in disclosure_directive(Rung.ORIENT)
+
+
+def test_sentences_only_ever_shrink():
+    d = Decision()
+    _tighten(d, sentences=1, reason="far")
+    _tighten(d, sentences=2, reason="near")
+    assert d.orient_sentences == 1
