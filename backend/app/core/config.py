@@ -50,8 +50,14 @@ RESOURCES_DIR = PROJECT_ROOT / "resources"
 RESOURCES_DIR = PROJECT_ROOT / "resources"
 CONCEPTS_PATH = RESOURCES_DIR / "concepts"
 CODE_PATH = RESOURCES_DIR / "code"
+# Instructor-only material: exam keys and solutions. Ingested like any other
+# resource, but every file here is named so `_determine_metadata` tags its chunks
+# access_level="teacher", and `cac_graph.permitted_chunks` drops them for anyone
+# who is not a teacher or admin. Kept in its own directory so what is restricted
+# is visible on the filesystem rather than implied by a filename convention.
+EXAMS_PATH = RESOURCES_DIR / "exams"
 
-RESOURCE_PATHS = [CONCEPTS_PATH, CODE_PATH]
+RESOURCE_PATHS = [CONCEPTS_PATH, CODE_PATH, EXAMS_PATH]
 
 # DB_DIR = PROJECT_ROOT / "database"
 DB_DIR = PROJECT_ROOT / "backend" / "database"
