@@ -836,12 +836,17 @@ class ScaffoldingAgent(BaseAgent):
         
         # 2. Vector Search
         query_embedding = self.llm.get_embedding(query)
-        raw_chunks = self.vector_store.query(query_embedding, top_k=5)
+        # Over-fetched: a prelab on arrays sits next to the arrays answer key in
+        # embedding space, so asking for exactly 5 would spend most of them on
+        # chunks this learner is about to be denied. Trimmed after filtering.
+        from app.core.cac_graph import OVERFETCH
+        TOP_K = 5
+        raw_chunks = self.vector_store.query(query_embedding, top_k=TOP_K * OVERFETCH)
         
         if related_terms:
             exp_query = " ".join(related_terms)
             exp_emb = self.llm.get_embedding(exp_query)
-            raw_chunks.extend(self.vector_store.query(exp_emb, top_k=2))
+            raw_chunks.extend(self.vector_store.query(exp_emb, top_k=2 * OVERFETCH))
 
         # 3. Gatekeeper (Dedupe, then the document ABAC every path must apply)
         seen_ids = set()
@@ -853,4 +858,4 @@ class ScaffoldingAgent(BaseAgent):
                 valid_chunks.append(chunk)
 
         from app.core.cac_graph import permitted_chunks
-        return permitted_chunks(valid_chunks, user_role)
+        return permitted_chunks(valid_chunks, user_role)[:TOP_K + 2]

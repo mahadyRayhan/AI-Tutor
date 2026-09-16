@@ -80,11 +80,12 @@ class CodeReviewerAgent(BaseAgent):
         yield {"type": "status", "message": "Reviewing code...", "percent": 30}
 
         query_embedding = self.llm.get_embedding(state.query)
-        chunks = self.vector_store.query(query_embedding, top_k=3)
         # Same document ABAC as every other retrieval path: a code review must not
-        # be the way a solution file reaches a student.
-        from app.core.cac_graph import permitted_chunks
-        chunks = permitted_chunks(chunks, getattr(state, "user_role", "student"))
+        # be the way a solution file reaches a student. Over-fetched, then trimmed
+        # after filtering, so review context is not starved by what is withheld.
+        from app.core.cac_graph import permitted_chunks, OVERFETCH
+        chunks = self.vector_store.query(query_embedding, top_k=3 * OVERFETCH)
+        chunks = permitted_chunks(chunks, getattr(state, "user_role", "student"))[:3]
         context_text = "\n".join([c['text'] for c in chunks])
 
         yield {"type": "status", "message": "Analyzing syntax...", "percent": 60}
@@ -229,9 +230,9 @@ class CodeReviewerAgent(BaseAgent):
         yield {"type": "status", "message": "Running rigorous edge case analysis...", "percent": 50}
 
         query_embedding = self.llm.get_embedding(state.query)
-        chunks = self.vector_store.query(query_embedding, top_k=3)
-        from app.core.cac_graph import permitted_chunks
-        chunks = permitted_chunks(chunks, getattr(state, "user_role", "student"))
+        from app.core.cac_graph import permitted_chunks, OVERFETCH
+        chunks = self.vector_store.query(query_embedding, top_k=3 * OVERFETCH)
+        chunks = permitted_chunks(chunks, getattr(state, "user_role", "student"))[:3]
         context_text = "\n".join([c['text'] for c in chunks])
         
         edge_report = await asyncio.to_thread(self._analyze_edge_cases, state.query, context_text)

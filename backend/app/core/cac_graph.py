@@ -866,6 +866,17 @@ NO_OP = Decision()
 # 6. I/O boundary — everything impure lives below this line
 # ══════════════════════════════════════════════════════════════════════════
 
+# Retrieval asks for this many times the chunks it needs, because the filter below
+# runs AFTER the search. Without the multiplier, restricted material competes for
+# the top-k slots and is then deleted, leaving a thin context — and the grounding
+# rule correctly refuses to answer beyond the material it was given, so a question
+# the student material fully covers gets a "not covered" reply. The fix is more
+# candidates, never a looser grounding rule: measured on the exam keys, "sum the
+# even-indexed elements" kept 2 of 8 usable chunks before and 8 of 8 after, all of
+# them student material.
+OVERFETCH = 3
+
+
 def permitted_chunks(chunks: list, user_role: str) -> list:
     """Drop retrieved chunks this learner may not see. ABAC on the DOCUMENT.
 

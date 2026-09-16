@@ -193,12 +193,17 @@ class SocraticTutorAgent(BaseAgent):
         
         # Vector Search (Primary)
         query_embedding = self.llm_interface.get_embedding(query)
-        raw_chunks = self.vector_store.query(query_embedding, top_k=8)
+        # Over-fetched because the ABAC filter runs after the search; trimmed back
+        # to TOP_K once the restricted chunks are gone, so a learner gets a full
+        # context of what they MAY see rather than whatever was left over.
+        from app.core.cac_graph import OVERFETCH
+        TOP_K = 8
+        raw_chunks = self.vector_store.query(query_embedding, top_k=TOP_K * OVERFETCH)
         
         # Vector Search (Expanded)
         if related_terms:
             exp_emb = self.llm_interface.get_embedding(" ".join(related_terms))
-            raw_chunks.extend(self.vector_store.query(exp_emb, top_k=3))
+            raw_chunks.extend(self.vector_store.query(exp_emb, top_k=3 * OVERFETCH))
         
         # Gatekeeper
         SCORE_THRESHOLD = 0.22
@@ -219,7 +224,7 @@ class SocraticTutorAgent(BaseAgent):
         # Teacher-only material and locked topics: one shared implementation, so
         # this path and the Scaffolding / Reviewer ones cannot drift apart again.
         from app.core.cac_graph import permitted_chunks
-        return permitted_chunks(valid_chunks, user_role)
+        return permitted_chunks(valid_chunks, user_role)[:TOP_K + 3]
 
     def _generate_suggestions(self, query: str, context: str) -> List[str]:
         """Generates 3 follow-up suggestions based on the context."""

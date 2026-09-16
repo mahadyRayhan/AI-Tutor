@@ -18,6 +18,42 @@ import math
 if config.INTENT_CLASSIFIER_MODE == "fast":
     from app.core.fast_classifier import fast_classifier
 
+
+# Shortest entity allowed to trip a topic lock. Below this a match says nothing:
+# in a C tutor almost every question mentions "C", and "a" or "if" sit inside half
+# the topic names.
+_LOCK_MIN_LEN = 4
+
+
+def _locks_topic(entity: str, topic: str) -> bool:
+    """Does `entity` name the locked `topic`? Whole words only.
+
+    This was a bare two-way substring test, which over-blocked badly because the
+    topic names contain ordinary C vocabulary as substrings: "int" matches
+    PoINTers, and "C" matches Control Flow, FunCtions, StruCtures and Memory
+    AlloCation. Disabling Pointers therefore blocked "how do I declare an int?" —
+    a legitimate question about an enabled topic, refused with a lock message the
+    student can do nothing about. Under-blocking here would be a security failure,
+    so real topic names must still match exactly.
+    """
+    e = (entity or "").strip().lower()
+    t = (topic or "").strip().lower()
+    if not e or not t or len(e) < _LOCK_MIN_LEN:
+        return False
+    if e == t:
+        return True
+    try:
+        from app.core.concept_canon import canonical_concept
+        if canonical_concept(entity) == canonical_concept(topic):
+            return True
+    except Exception:
+        pass
+    # Whole-word containment either way: "arrays" locks Arrays and "file i/o
+    # buffering" locks File I/O, but "int" no longer locks Pointers.
+    return bool(re.search(rf"(?<!\w){re.escape(e)}(?!\w)", t)
+                or re.search(rf"(?<!\w){re.escape(t)}(?!\w)", e))
+
+
 class SentinelAgent(BaseAgent):
     
     # Off-topic vocabulary, anchored to word boundaries so a keyword cannot match
@@ -639,7 +675,7 @@ Respond with ONLY a JSON object and nothing else:
             topic_settings = settings_manager.get_settings()
             for entity in state.entities:
                 for t, is_enabled in topic_settings.items():
-                    if (entity.lower() in t.lower() or t.lower() in entity.lower()) and not is_enabled:
+                    if _locks_topic(entity, t) and not is_enabled:
                         msg = f"🔒 **Topic Locked**\n\nThe topic **{t}** is currently disabled by your instructor."
                         yield self._block_response(state, "Teacher Lock", custom_msg=msg)
                         return
