@@ -129,7 +129,7 @@ td.rowh small{display:block;font-weight:400;color:var(--ink-3);font-size:.76rem;
 <section>
   <div class="eyebrow">2 · Mastery on the nodes (K)</div>
   <h2>Distance decides the starting access</h2>
-  <p class="lede">A topic is <em>mastered</em> when the student is certified on it: 0.95 or higher on all three kinds of evidence (quiz, micro-challenge, code), with at least 3 of each. They keep it while all three stay at 0.75 or higher. The <em>next topics</em> are the ones whose prerequisites are all mastered. Access is counted in steps from what the student has mastered:</p>
+  <p class="lede">A topic is <em>mastered</em> when the student is certified on it: 0.95 or higher on all three kinds of evidence (quiz, micro-challenge, code), with at least 3 correct answers of each &mdash; and those three must be three <em>different</em> items, so repeating one answer cannot certify a topic. They keep it while all three stay at 0.75 or higher. The <em>next topics</em> are the ones whose prerequisites are all mastered. Access is counted in steps from what the student has mastered:</p>
   <div class="slope">
     <div class="card"><span class="pill c-full" style="align-self:flex-start">full access</span><div class="big">Mastered, or 1 step ahead</div><p>Everything the tutor can give, including code for their problem.</p></div>
     <div class="card"><span class="pill c-two" style="align-self:flex-start">2 sentences</span><div class="big">2 steps ahead</div><p>A two-sentence answer, then why the missing prerequisite matters.</p></div>
@@ -142,7 +142,7 @@ td.rowh small{display:block;font-weight:400;color:var(--ink-3);font-size:.76rem;
 <section>
   <div class="eyebrow">3 · Metacognition on top (C)</div>
   <h2>Which traits travel through the DAG, and how</h2>
-  <p class="lede">Three traits are built. <em>Only overconfidence travels along the map.</em> The other two apply to the whole student: they change every topic at once, and branches play no part. All three figures show the same student, who has mastered Variables and Control Flow.</p>
+  <p class="lede">Four traits are built. <em>Only overconfidence travels along the map.</em> The others apply to the whole student: they change every topic at once, and branches play no part. All three figures show the same student, who has mastered Variables and Control Flow.</p>
 
   <div>
     <div class="trait">
@@ -163,15 +163,15 @@ td.rowh small{display:block;font-weight:400;color:var(--ink-3);font-size:.76rem;
     </div>
 
     <div class="trait">
-      <figure class="fig"><div class="svgbox"><svg id="svg-load" viewBox="0 0 780 372" role="img" aria-label="High cognitive load shrinks reach"></svg></div></figure>
+      <figure class="fig"><div class="svgbox"><svg id="svg-load" viewBox="0 0 780 372" role="img" aria-label="High cognitive load or frustration shrinks reach"></svg></div></figure>
       <div class="txt">
-        <div class="eyebrow" style="color:var(--redirect)">Cognitive load · Phase 3</div>
-        <h3>Shrinks how far ahead they can reach</h3>
-        <p>A student who is overloaded and reaches far ahead isn't curious. They're drowning. So their reach shrinks, and a topic beyond it is <em>redirected</em> to the nearest topic they can absorb. Here File I/O is replaced with Strings. The request is never simply refused.</p>
+        <div class="eyebrow" style="color:var(--redirect)">Cognitive load + Frustration · Phase 3</div>
+        <h3>Shrink how far ahead they can reach</h3>
+        <p>A student who is overloaded or frustrated and reaches far ahead isn't curious. They're drowning. So their reach shrinks, and a topic beyond it is <em>redirected</em> to the nearest topic they can absorb. Here File I/O is replaced with Strings. The request is never simply refused.</p>
         <dl class="facts">
           <dt>Travels on DAG</dt><dd class="flow-no">No: applies to the whole student</dd>
-          <dt>Measured</dt><dd>Cognitive-load index, 0 to 1</dd>
-          <dt>Fires when</dt><dd>Above 0.5: up to 3 steps ahead. Above 0.7: up to 2 steps ahead. These are default thresholds, recalibrated from the population and versioned.</dd>
+          <dt>Measured</dt><dd>Load index, 0 to 1 (code complexity, time, recent errors). Frustration, 0 to 1: the average of the last 3 message scores (normal 0.2, high 0.7, rage 1.0).</dd>
+          <dt>Fires when</dt><dd>Either one above 0.5: up to 3 steps ahead. Above 0.7: up to 2 steps ahead. The stricter of the two applies. Load thresholds are recalibrated from the population. Frustration thresholds are fixed, so a single angry message never fires.</dd>
           <dt>Moves</dt><dd>The horizon. A topic beyond it is swapped for a nearer one.</dd>
           <dt>Strength</dt><dd>Hard: the topic being taught is swapped</dd>
         </dl>
@@ -209,7 +209,7 @@ td.rowh small{display:block;font-weight:400;color:var(--ink-3);font-size:.76rem;
 <section>
   <div class="eyebrow">5 · Try it</div>
   <h2>Dynamic DAG explorer</h2>
-  <p class="lede">Set a student, then <em>click any topic</em> to ask about it. Every topic's badge shows what the student would get. The panel below the map walks through the four checks in order.</p>
+  <p class="lede">Set a student, then <em>click any topic</em> to ask about it. Every topic's badge shows what the student would get. The panel below the map walks through the checks in order.</p>
   <div class="explorer">
     <div class="controls">
       <div class="ctl"><span class="lab">Presets</span>
@@ -224,6 +224,9 @@ td.rowh small{display:block;font-weight:400;color:var(--ink-3);font-size:.76rem;
       <div class="ctl"><label for="load">Cognitive load <span class="val" id="loadval"></span></label>
         <input type="range" id="load" min="0" max="1" step="0.05">
         <span class="note" id="loadnote"></span></div>
+      <div class="ctl"><label for="frust">Frustration <span class="val" id="frustval"></span></label>
+        <input type="range" id="frust" min="0" max="1" step="0.05">
+        <span class="note">Average of the last 3 messages: normal 0.2, high 0.7, rage 1.0. Same limits as load; the stricter one wins.</span></div>
       <div class="ctl"><label for="over">Overconfident in</label>
         <select id="over"></select>
         <div id="scorewrap" class="ctl" style="gap:4px">
@@ -250,11 +253,12 @@ td.rowh small{display:block;font-weight:400;color:var(--ink-3);font-size:.76rem;
       <tr><td><em>Distance</em><br><span class="k">K/region</span></td><td>each topic, by steps from mastery</td><td>it <em>is</em> the DAG</td><td>soft (sentence limit in prompt)</td><td><em>yes</em>: 90.9% of turns are beyond the next topic</td></tr>
       <tr><td><em>Overconfidence</em><br><span class="k">C/calibration</span></td><td>the mastery bar of the source topic</td><td class="flow-yes">yes, down its branch</td><td>hard (gatekeeper)</td><td><em>yes</em>: 1 of 26 evidence-bearing learners</td></tr>
       <tr><td><em>Cognitive load</em><br><span class="k">C/load</span></td><td>the horizon</td><td class="flow-no">no, whole student</td><td>hard (topic swapped)</td><td>not yet: no real student's load is above the thresholds</td></tr>
+      <tr><td><em>Frustration</em><br><span class="k">C/frustration</span></td><td>the horizon (shared with load)</td><td class="flow-no">no, whole student</td><td>hard (topic swapped)</td><td>not yet: 0 of 479 users with a frustration history average above 0.5</td></tr>
       <tr><td><em>Help-seeking</em><br><span class="k">C/help-seeking</span></td><td>the disclosure level</td><td class="flow-no">no, whole student</td><td>soft (hints cap in prompt)</td><td>not yet: quiz data too sparse</td></tr>
     </tbody>
   </table></div>
   <p class="foot"><em>Shadow by default.</em> Every turn forms and logs a full decision (<span class="k">cac_access_event</span>, <span class="k">cac_edge_threshold</span>), but students are affected only when <span class="k">SAGE_CAC_ENFORCE_ENABLED</span> is on. Every answering path, both Socratic and Scaffolding, runs <span class="k">_apply_cac</span> first.</p>
-  <p class="foot"><em>Known limits.</em> (1) Only overconfidence follows branches. Load and help-seeking apply to the whole student. (2) Overconfidence raises a bar rather than lowering the disclosure level. (3) Sentence and hint caps are prompt instructions; nothing filters the output. (4) The gatekeeper's "anyway" / "I know" override skips the overconfidence bar along with the ordinary prerequisite check. (5) Students can't see this map in the tutor yet.</p>
+  <p class="foot"><em>Known limits.</em> (1) Only overconfidence follows branches. Load, frustration and help-seeking apply to the whole student. (2) Overconfidence raises a bar rather than lowering the disclosure level. (3) Sentence and hint caps are prompt instructions; nothing filters the output. (4) The gatekeeper's "anyway" / "I know" override skips the overconfidence bar along with the ordinary prerequisite check. (5) Students can't see this map in the tutor yet.</p>
 </section>
 
 </div>
@@ -285,6 +289,9 @@ function hopsFrom(F,t){
   return null;
 }
 function horizonLimit(load){for(const [th,d] of LOAD_HORIZON)if(load>th)return d;return null;}
+const FRUSTRATION_HORIZON=[[0.7,1],[0.5,2]];
+function frustLimit(f){for(const [th,d] of FRUSTRATION_HORIZON)if(f>th)return d;return null;}
+function reachLimit(s){const a=horizonLimit(s.load),b=frustLimit(s.frust||0);if(a===null)return b===null?null:{d:b,src:"frustration"};if(b===null||a<=b)return {d:a,src:"load"};return {d:b,src:"frustration"};}
 function nearestWithin(F,t,dmax,C){
   const seen=new Set([t]);let layer=[t];
   while(layer.length){const nxt=[];
@@ -325,8 +332,8 @@ function decide(s,t){
   if(s.impulsive)tighten({rung:RUNG.HINT});
   d.steps.help={on:s.impulsive,changed:d.rung<rungBefore};
   // 3. cognitive load
-  const dmax=horizonLimit(s.load);
-  d.steps.load={dmax};
+  const lim=reachLimit(s);const dmax=lim?lim.d:null;
+  d.steps.load={dmax,src:lim?lim.src:null};
   if(dmax!==null&&F.size){
     const wd=hopsFrom(F,t);
     if(wd!==null&&wd>dmax){
@@ -384,7 +391,7 @@ function render(svg,s,opts){
   const C=s.C,F=frontier(C);
   const over=dyn&&s.over?s.over:null;
   const flowNodes=over?descendants(over):new Set();
-  const dmax=dyn?horizonLimit(s.load):null;
+  const _lim=dyn?reachLimit(s):null;const dmax=_lim?_lim.d:null;
 
   // edges
   EDGES.forEach(([a,b])=>{
@@ -438,7 +445,7 @@ function render(svg,s,opts){
 
 // ── Static figures ───────────────────────────────────────────────────────
 const TWO=()=>new Set(["Variables","Control Flow"]);
-const base=()=>({C:TWO(),over:"",score:0.79,load:0.3,impulsive:false});
+const base=()=>({C:TWO(),over:"",score:0.79,load:0.3,frust:0.2,impulsive:false});
 render(document.getElementById("svg-static"),base(),{mode:"static"});
 render(document.getElementById("svg-over"),Object.assign(base(),{over:"Control Flow"}));
 render(document.getElementById("svg-load"),Object.assign(base(),{load:0.8}));
@@ -451,6 +458,7 @@ render(document.getElementById("svg-help"),Object.assign(base(),{impulsive:true}
     ["Normal","no traits",{}],
     ["Impulsive help-seeking","whole student",{impulsive:true}],
     ["Cognitive load 0.8","whole student",{load:0.8}],
+    ["Frustration 0.8","whole student",{frust:0.8}],
     ["Overconfident in Control Flow","its branch · score 0.79",{over:"Control Flow",score:0.79}],
     ["Overconfident in Control Flow","its branch · score 0.85",{over:"Control Flow",score:0.85}],
     ["All three at once","strictest wins",{impulsive:true,load:0.8,over:"Control Flow",score:0.79}],
@@ -472,14 +480,15 @@ render(document.getElementById("svg-help"),Object.assign(base(),{impulsive:true}
 
 // ── Explorer ─────────────────────────────────────────────────────────────
 const PRESETS={
-  "Normal":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.3,impulsive:false},
-  "Impulsive":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.3,impulsive:true},
-  "High load":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.8,impulsive:false},
-  "Overconfident":{C:["Variables","Control Flow","Arrays"],over:"Control Flow",score:0.79,load:0.3,impulsive:false},
-  "Beginner":{C:["Variables"],over:"",score:0.79,load:0.3,impulsive:false},
+  "Normal":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.3,frust:0.2,impulsive:false},
+  "Impulsive":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.3,frust:0.2,impulsive:true},
+  "High load":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.8,frust:0.2,impulsive:false},
+  "Overconfident":{C:["Variables","Control Flow","Arrays"],over:"Control Flow",score:0.79,load:0.3,frust:0.2,impulsive:false},
+  "Frustrated":{C:["Variables","Control Flow"],over:"",score:0.79,load:0.3,frust:0.8,impulsive:false},
+  "Beginner":{C:["Variables"],over:"",score:0.79,load:0.3,frust:0.2,impulsive:false},
 };
 let S=null,view="dynamic",selected="Strings";
-function applyPreset(name){const p=PRESETS[name];S={C:new Set(p.C),over:p.over,score:p.score,load:p.load,impulsive:p.impulsive};}
+function applyPreset(name){const p=PRESETS[name];S={C:new Set(p.C),over:p.over,score:p.score,load:p.load,frust:p.frust,impulsive:p.impulsive};}
 applyPreset("Overconfident");
 
 const $=id=>document.getElementById(id);
@@ -497,6 +506,7 @@ const overSel=$("over");
 [["","— none —"]].concat(NODES.map(n=>[n,n])).forEach(([v,l])=>{const o=document.createElement("option");o.value=v;o.textContent=l;overSel.appendChild(o);});
 overSel.addEventListener("change",()=>{S.over=overSel.value;sync();});
 $("load").addEventListener("input",e=>{S.load=parseFloat(e.target.value);sync();});
+$("frust").addEventListener("input",e=>{S.frust=parseFloat(e.target.value);sync();});
 $("score").addEventListener("input",e=>{S.score=parseFloat(e.target.value);sync();});
 document.querySelectorAll("#helpseg button").forEach(b=>b.addEventListener("click",()=>{S.impulsive=b.dataset.v==="1";sync();}));
 document.querySelectorAll("#viewseg button").forEach(b=>b.addEventListener("click",()=>{view=b.dataset.v;sync();}));
@@ -515,11 +525,12 @@ function traceHTML(t){
   else if(st.help.changed)li.push(`<b>Help-seeking:</b> impulsive, so capped at <em>hints, no code</em>.`);
   else li.push(`<b>Help-seeking:</b> impulsive (hints cap), but the short answer is already stricter, so no change.`);
   // 3 load
-  const L=S.load.toFixed(2);
-  if(st.load.dmax===null)li.push(`<b>Cognitive load ${L}:</b> 0.5 or below, so reach is unlimited.`);
+  const L=`load ${S.load.toFixed(2)} · frustration ${S.frust.toFixed(2)}`;
+  const who=st.load.src==="frustration"?"frustration":"load";
+  if(st.load.dmax===null)li.push(`<b>Load &amp; frustration</b> (${L}): both 0.5 or below, so reach is unlimited.`);
   else if(st.load.exceeded){
-    li.push(`<b>Cognitive load ${L}:</b> reach is limited to ${st.load.dmax+1} steps ahead. <em>${esc(t)}</em> is beyond that, so `+(d.redirect&&!d.inHorizon?`they are taught <em>${esc(d.redirect)}</em> instead.`:`there is no nearer topic to offer.`));
-  }else li.push(`<b>Cognitive load ${L}:</b> reach is limited to ${st.load.dmax+1} steps ahead. <em>${esc(t)}</em> is within reach, so no change.`);
+    li.push(`<b>Load &amp; frustration</b> (${L}): ${who} limits reach to ${st.load.dmax+1} steps ahead. <em>${esc(t)}</em> is beyond that, so `+(d.redirect&&!d.inHorizon?`they are taught <em>${esc(d.redirect)}</em> instead.`:`there is no nearer topic to offer.`));
+  }else li.push(`<b>Load &amp; frustration</b> (${L}): ${who} limits reach to ${st.load.dmax+1} steps ahead. <em>${esc(t)}</em> is within reach, so no change.`);
   // 4 overconfidence
   if(!S.over)li.push(`<b>Overconfidence:</b> none, so no change.`);
   else if(t===S.over)li.push(`<b>Overconfidence:</b> this is the topic they're overconfident in. It stays open, because the risk is what they build on top of it.`);
@@ -549,7 +560,7 @@ function sync(){
   masteryEl.querySelectorAll(".chip").forEach(b=>b.setAttribute("aria-pressed",S.C.has(b.dataset.n)?"true":"false"));
   document.querySelectorAll("#helpseg button").forEach(b=>b.setAttribute("aria-pressed",(b.dataset.v==="1")===S.impulsive?"true":"false"));
   document.querySelectorAll("#viewseg button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view?"true":"false"));
-  $("load").value=S.load;$("loadval").textContent=S.load.toFixed(2);
+  $("load").value=S.load;$("loadval").textContent=S.load.toFixed(2);$("frust").value=S.frust;$("frustval").textContent=S.frust.toFixed(2);
   const dm=horizonLimit(S.load);
   $("loadnote").textContent=dm===null?"0.5 or below: no reach limit":`above ${dm===1?"0.7":"0.5"}: reach limited to ${dm+1} steps ahead`;
   overSel.value=S.over;

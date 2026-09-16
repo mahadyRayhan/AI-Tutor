@@ -718,3 +718,51 @@ def test_sentences_only_ever_shrink():
     _tighten(d, sentences=1, reason="far")
     _tighten(d, sentences=2, reason="near")
     assert d.orient_sentences == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Frustration shares the horizon lever with cognitive load
+# ══════════════════════════════════════════════════════════════════════════
+
+def test_frustration_contracts_horizon_like_load():
+    """Sustained frustration redirects a far ask, exactly as high load does."""
+    v = LearnerView("u", READY, frustration=0.8)
+    d = decide(v, ["File I/O"], region_gate=True)
+    assert d.in_horizon is False
+    assert d.redirect_to == "Strings"
+    assert any(r.startswith("C/frustration") for r in d.reasons)
+
+
+def test_one_frustrated_message_does_not_fire():
+    """0.2 normal, 0.2 normal, 0.7 high → mean 0.37: no limit."""
+    v = LearnerView("u", READY, frustration=round((0.2 + 0.2 + 0.7) / 3, 3))
+    assert decide(v, ["File I/O"], region_gate=True).in_horizon is True
+
+
+def test_tighter_of_load_and_frustration_wins():
+    """Load allows 2 hops, frustration only 1: the 1-hop limit is the one applied."""
+    k = frozenset({"Variables"})
+    v = LearnerView("u", k, cognitive_load=0.6, frustration=0.9)
+    d = decide(v, ["Strings"], region_gate=True)     # 2 hops past the frontier
+    assert d.in_horizon is False
+    assert d.redirect_to == "Arrays"
+    assert any(r.startswith("C/frustration") for r in d.reasons)
+    assert not any(r.startswith("C/load") for r in d.reasons)
+
+
+def test_frustration_never_widens():
+    """Frustration can only narrow: a calm view and a frustrated one differ only by tightening."""
+    k = frozenset({"Variables"})
+    for asked in ["Control Flow", "Arrays", "Strings", "File I/O", "Pointers"]:
+        calm = decide(LearnerView("u", k), [asked], region_gate=True)
+        mad = decide(LearnerView("u", k, frustration=1.0), [asked], region_gate=True)
+        assert mad.rung_cap <= calm.rung_cap
+        assert mad.orient_sentences <= calm.orient_sentences
+        assert not (mad.in_horizon and not calm.in_horizon)
+
+
+def test_frustration_index_from_profile_history():
+    from app.core.learner_model import _affect
+    out = _affect("u", {"frustration_history": [0.2, 0.7, 1.0]})
+    assert out["frustration_index"] == round(1.9 / 3, 3)
+    assert _affect("u", {})["frustration_index"] is None, "cold start is not suspicion"

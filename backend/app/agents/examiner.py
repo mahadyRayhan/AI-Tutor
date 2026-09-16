@@ -180,8 +180,41 @@ class ExaminerAgent(BaseAgent):
             }}
 
 
+    # Curriculum topics whose question banks were generated under the LECTURE's
+    # name. Neither "Control Flow" nor "File I/O" matches any node with quiz_data,
+    # so both served zero questions and neither could ever earn quiz evidence —
+    # invisible while three correct answers could come from one question, obvious
+    # once certification began requiring three different ones.
+    _BANK_ALIASES = {
+        "control flow": ["Loops", "Conditionals", "Operators"],
+        "file i/o": ["File I/O", "File Handling", "Files"],
+        "variables": ["Variables and Types"],
+    }
+
     def _fetch_quiz_question(self, topic: str, asked_so_far: list) -> dict | None:
-        """Fetch one quiz question for topic, excluding already-asked questions."""
+        """Fetch one quiz question for topic, excluding already-asked questions.
+
+        Banks for the topic itself and for every alias are POOLED rather than
+        tried in turn: certification now needs three different questions, so a
+        topic assembled from several lectures should offer all of them.
+        """
+        names = [topic] + self._BANK_ALIASES.get((topic or "").strip().lower(), [])
+        pairs, seen_q = [], set()
+        for name in names:
+            for p in self._bank_pairs(name):
+                q = p.get("q")
+                if q and q not in seen_q:
+                    seen_q.add(q)
+                    pairs.append(p)
+        if not pairs:
+            return None
+        import random
+        asked = set(asked_so_far)
+        unseen = [p for p in pairs if p["q"] not in asked]
+        return random.choice(unseen or pairs)
+
+    def _bank_pairs(self, topic: str) -> list:
+        """Every Q&A pair in the bank matching `topic`, or [] if there is none."""
         cypher = """
             OPTIONAL MATCH (exact)
             WHERE toLower(exact.name) = toLower($topic) AND exact.quiz_data IS NOT NULL
@@ -197,18 +230,16 @@ class ExaminerAgent(BaseAgent):
             UNWIND all_candidates as node
             RETURN node.quiz_data as data LIMIT 1
         """
-        results = self.graph_db.execute_query(cypher, {"topic": topic})
-        if not (results and results[0]['data']):
-            return None
         try:
-            import random
-            pairs = json.loads(results[0]['data'])
-            asked = set(asked_so_far)
-            unseen = [p for p in pairs if p['q'] not in asked]
-            pool = unseen if unseen else pairs
-            return random.choice(pool)
+            results = self.graph_db.execute_query(cypher, {"topic": topic})
         except Exception:
-            return None
+            return []
+        if not (results and results[0]['data']):
+            return []
+        try:
+            return [p for p in json.loads(results[0]['data']) if p.get("q")]
+        except Exception:
+            return []
 
     def _resume_payload(self, goals_stack):
         """Build the auto-resume payload for a question parked by a pop quiz.
@@ -281,7 +312,11 @@ class ExaminerAgent(BaseAgent):
         is_verification_quiz = session_state.get("is_verification_quiz", False)
         verification_q_num   = session_state.get("verification_q_num", 1)
 
-        p_mastery = bkt.update(state.user_id, check_topic, result['is_correct'], evidence_type="quiz")
+        # The item is the QUESTION, so three correct answers to the same pop-quiz
+        # question count once toward certification's variety requirement.
+        p_mastery = bkt.update(
+            state.user_id, check_topic, result['is_correct'], evidence_type="quiz",
+            item_id=bkt.item_key(session_state.get("pending_quiz_question")))
 
         # --- Telemetry: JOL (confidence vs actual outcome) + item-level quiz record ---
         try:

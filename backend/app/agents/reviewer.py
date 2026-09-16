@@ -81,6 +81,10 @@ class CodeReviewerAgent(BaseAgent):
 
         query_embedding = self.llm.get_embedding(state.query)
         chunks = self.vector_store.query(query_embedding, top_k=3)
+        # Same document ABAC as every other retrieval path: a code review must not
+        # be the way a solution file reaches a student.
+        from app.core.cac_graph import permitted_chunks
+        chunks = permitted_chunks(chunks, getattr(state, "user_role", "student"))
         context_text = "\n".join([c['text'] for c in chunks])
 
         yield {"type": "status", "message": "Analyzing syntax...", "percent": 60}
@@ -223,9 +227,11 @@ class CodeReviewerAgent(BaseAgent):
         Triggered when the user clicks the 'Rigorous Analysis' button.
         """
         yield {"type": "status", "message": "Running rigorous edge case analysis...", "percent": 50}
-        
+
         query_embedding = self.llm.get_embedding(state.query)
         chunks = self.vector_store.query(query_embedding, top_k=3)
+        from app.core.cac_graph import permitted_chunks
+        chunks = permitted_chunks(chunks, getattr(state, "user_role", "student"))
         context_text = "\n".join([c['text'] for c in chunks])
         
         edge_report = await asyncio.to_thread(self._analyze_edge_cases, state.query, context_text)

@@ -377,6 +377,7 @@ class LearnerView:
 
     # C signals, each None when there is not yet enough evidence to compute it.
     cognitive_load: float | None = None       # 0..1, higher = more loaded
+    frustration: float | None = None          # 0..1, mean of last 3 message scores
     gap_ratio: float | None = None            # 0..1, wrong-and-confident share
     gap_n_wrong: int = 0                      # denominator behind gap_ratio
     overconfident_topics: frozenset[str] = frozenset()   # per topic; drives Phase 4
@@ -386,8 +387,8 @@ class LearnerView:
 
     def is_cold(self) -> bool:
         """True when almost nothing is known — used to justify the neutral path."""
-        return (self.cognitive_load is None and self.gap_ratio is None
-                and self.help_seeking_quality is None)
+        return (self.cognitive_load is None and self.frustration is None
+                and self.gap_ratio is None and self.help_seeking_quality is None)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -571,6 +572,15 @@ def _signal_help_seeking(view: LearnerView, decision: Decision) -> None:
 # replay data says it is the common case, so this must not fire on ordinary use.
 LOAD_HORIZON: tuple[tuple[float, int], ...] = ((0.7, 1), (0.5, 2))
 
+# Frustration shares the horizon lever with load: a frustrated learner reaching
+# far ahead is in the same position as a loaded one. Its thresholds are fixed
+# rather than taken from the calibrated load policy, because that policy is fit
+# to the load distribution and the frustration scale is a different one. On the
+# profiler's scale (0.2 normal · 0.7 high · 1.0 rage, averaged over 3 messages),
+# > 0.5 needs at least two frustrated messages of the last three and > 0.7 needs
+# sustained high frustration with a rage message — one bad message never fires.
+FRUSTRATION_HORIZON: tuple[tuple[float, int], ...] = ((0.7, 1), (0.5, 2))
+
 
 def _active_horizon() -> tuple[tuple[float, int], ...]:
     """The thresholds currently in force, falling back to the declared default.
@@ -604,6 +614,14 @@ def _horizon_limit(load: float) -> int | None:
     """Max hops past the frontier at this load. None = unbounded."""
     for threshold, d_max in _active_horizon():
         if load > threshold:
+            return d_max
+    return None
+
+
+def _frustration_limit(frustration: float) -> int | None:
+    """Max hops past the frontier at this frustration. None = unbounded."""
+    for threshold, d_max in FRUSTRATION_HORIZON:
+        if frustration > threshold:
             return d_max
     return None
 
@@ -650,11 +668,21 @@ def _signal_cognitive_load(view: LearnerView, topo: Topology,
     on the decision, so policy leakage is measurable later without going back and
     re-instrumenting this path.
     """
-    if view.cognitive_load is None:
-        return                                  # cold start is not suspicion
-    d_max = _horizon_limit(view.cognitive_load)
-    if d_max is None:
+    # Load and frustration both contract the horizon; the tighter limit wins and
+    # names itself in the reason. Either may be missing — cold start is not
+    # suspicion, so a signal with no evidence simply sets no limit.
+    limits = []
+    if view.cognitive_load is not None:
+        lim = _horizon_limit(view.cognitive_load)
+        if lim is not None:
+            limits.append((lim, f"C/load {view.cognitive_load:.2f}"))
+    if view.frustration is not None:
+        lim = _frustration_limit(view.frustration)
+        if lim is not None:
+            limits.append((lim, f"C/frustration {view.frustration:.2f}"))
+    if not limits:
         return
+    d_max, source = min(limits)
 
     certified = set(view.certified)
     frontier = topo.frontier(certified)
@@ -674,7 +702,7 @@ def _signal_cognitive_load(view: LearnerView, topo: Topology,
     _tighten(
         decision, horizon=False, redirect=nearer,
         redirect_hops=(topo.hops_from(frontier, nearer) if nearer else None),
-        reason=f"C/load {view.cognitive_load:.2f}: '{worst}' is {worst_d} hops "
+        reason=f"{source}: '{worst}' is {worst_d} hops "
                f"past the frontier, limit {d_max}"
                + (f"; nearest reachable is '{nearer}'" if nearer
                   else "; no nearer node to offer"),
@@ -838,6 +866,39 @@ NO_OP = Decision()
 # 6. I/O boundary — everything impure lives below this line
 # ══════════════════════════════════════════════════════════════════════════
 
+def permitted_chunks(chunks: list, user_role: str) -> list:
+    """Drop retrieved chunks this learner may not see. ABAC on the DOCUMENT.
+
+    Two rules, both attributes of the chunk rather than of the learner's
+    cognition, which is why they live beside the curriculum map rather than in
+    an agent: `access_level == "teacher"` marks exam and solution material, and
+    a topic the instructor has switched off is not answerable from any document.
+
+    This existed only inside SocraticTutorAgent, so the same question phrased as
+    "write a program that…" or asked during a code review reached a different
+    agent and skipped both checks — the rephrasing bypass the CAC mediation fix
+    closed for the disclosure cap, still open for the documents themselves.
+    Callers share this one copy so a fourth retrieval path cannot quietly omit it.
+    """
+    try:
+        from app.core.settings_manager import settings_manager
+        topic_settings = settings_manager.get_settings()
+    except Exception as e:                       # fail OPEN on the lock only
+        logger.warning(f"[cac] topic settings unavailable: {e}")
+        topic_settings = {}
+
+    out = []
+    for chunk in chunks or []:
+        meta = chunk.get("metadata", {}) or {}
+        if (user_role or "student") not in ("teacher", "admin") \
+                and meta.get("access_level") == "teacher":
+            continue
+        if not topic_settings.get(meta.get("topic", "General"), True):
+            continue
+        out.append(chunk)
+    return out
+
+
 def build_view(username: str) -> LearnerView:
     """Materialise one learner's K and C state. The only DB access in the module.
 
@@ -856,7 +917,7 @@ def build_view(username: str) -> LearnerView:
         except Exception as e:
             logger.debug(f"[cac] certification read failed for {topic}: {e}")
 
-    load = gap = grit = None
+    load = frust = gap = grit = None
     gap_n = 0
     over = frozenset()
     quality = None
@@ -866,6 +927,7 @@ def build_view(username: str) -> LearnerView:
         p = get_learner_profile(username)
         cog, meta = p.get("cognitive", {}), p.get("metacognitive", {})
         load = (cog.get("cognitive_load") or {}).get("index")
+        frust = (p.get("affective") or {}).get("frustration_index")
         # Model-side calibration first, self-report only as a fallback. See
         # `_signal_calibration` for why: jol_log is structurally starved AND
         # declared by the subject of the policy, while p_bkt_pred is neither.
@@ -898,7 +960,7 @@ def build_view(username: str) -> LearnerView:
 
     return LearnerView(
         username=username, certified=frozenset(certified),
-        cognitive_load=load, gap_ratio=gap, gap_n_wrong=gap_n,
+        cognitive_load=load, frustration=frust, gap_ratio=gap, gap_n_wrong=gap_n,
         overconfident_topics=over,
         help_seeking_quality=quality,
         rushing=rushing, grit_index=grit,

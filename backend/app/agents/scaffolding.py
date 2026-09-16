@@ -843,7 +843,7 @@ class ScaffoldingAgent(BaseAgent):
             exp_emb = self.llm.get_embedding(exp_query)
             raw_chunks.extend(self.vector_store.query(exp_emb, top_k=2))
 
-        # 3. Basic Gatekeeper (Dedupe)
+        # 3. Gatekeeper (Dedupe, then the document ABAC every path must apply)
         seen_ids = set()
         valid_chunks = []
         for chunk in raw_chunks:
@@ -851,5 +851,6 @@ class ScaffoldingAgent(BaseAgent):
             if cid not in seen_ids:
                 seen_ids.add(cid)
                 valid_chunks.append(chunk)
-                
-        return valid_chunks
+
+        from app.core.cac_graph import permitted_chunks
+        return permitted_chunks(valid_chunks, user_role)

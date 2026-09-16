@@ -201,33 +201,25 @@ class SocraticTutorAgent(BaseAgent):
             raw_chunks.extend(self.vector_store.query(exp_emb, top_k=3))
         
         # Gatekeeper
-        from app.core.settings_manager import settings_manager
-        topic_settings = settings_manager.get_settings()
-        SCORE_THRESHOLD = 0.22 
-        
+        SCORE_THRESHOLD = 0.22
+
         valid_chunks = []
         seen_ids = set()
-        
+
         for chunk in raw_chunks:
             cid = chunk.get('metadata', {}).get('chunk_id')
             if cid in seen_ids: continue
             seen_ids.add(cid)
-            
-            meta = chunk.get('metadata', {})
-            
+
             # Filter low relevance
             if chunk.get('score', 0) <= SCORE_THRESHOLD: continue
-            
-            # Filter Teacher-Only content
-            if user_role == 'student' and meta.get('access_level') == 'teacher': continue
-            
-            # Filter Locked Topics
-            topic = meta.get('topic', 'General')
-            if not topic_settings.get(topic, True): continue # Skip if topic is disabled
-            
+
             valid_chunks.append(chunk)
-            
-        return valid_chunks
+
+        # Teacher-only material and locked topics: one shared implementation, so
+        # this path and the Scaffolding / Reviewer ones cannot drift apart again.
+        from app.core.cac_graph import permitted_chunks
+        return permitted_chunks(valid_chunks, user_role)
 
     def _generate_suggestions(self, query: str, context: str) -> List[str]:
         """Generates 3 follow-up suggestions based on the context."""

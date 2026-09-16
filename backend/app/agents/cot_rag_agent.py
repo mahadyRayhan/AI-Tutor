@@ -33,6 +33,13 @@ from app.agents.profiler import ProfilerAgent
 _WEAK_TIER_MIN_SPREAD = 0.20
 _WEAK_TIER_MIN_EVIDENCE = 1
 
+# Certification counts DIFFERENT items, so a resubmitted answer is correct but adds
+# nothing. Said plainly at the moment it happens: the alternative is a learner who
+# keeps being told "correct" and never certifies, with no way to find out why.
+REPEAT_ITEM_NOTE = ("\n\n*(This is the same answer you gave before. It's still "
+                    "correct — but certification needs three **different** "
+                    "examples, so a new one counts for more next time.)*")
+
 # Lead-in phrases learners type before naming a topic. Stripped for display so the goal
 # reads as a topic ("Pointers") instead of a raw utterance ("I want to learn about
 # pointers in C"). Longest-first so multi-word prefixes match before their sub-phrases.
@@ -1483,6 +1490,7 @@ class ChainOfThoughtRAGAgent:
                     "sources": [], "intent": "GUIDANCE", "suggestions": [f"Explain {concept}"]}}
                 return
             exam = {"concept": concept, "stage": "quiz", "score": {},
+                    "quiz_q": qa["q"],   # item identity for the variety rule
                     "quiz_a": qa["a"], "quiz_vg": qa["a_vector"], "quiz_vl": qa.get("a_vector_local")}
             history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
             msg = (f"## 🎓 Mastery Exam — {concept}\n\n"
@@ -1509,7 +1517,8 @@ class ChainOfThoughtRAGAgent:
         # --- STAGE 1: QUIZ (real embedding grade) ---
         if stage == "quiz":
             res = await self.examiner._smart_grade_answer(q, exam.get("quiz_vg"), exam.get("quiz_vl"), exam.get("quiz_a"))
-            bkt.update(username, concept, bool(res["is_correct"]), evidence_type="quiz")
+            bkt.update(username, concept, bool(res["is_correct"]), evidence_type="quiz",
+                       item_id=bkt.item_key(exam.get("quiz_q") or exam.get("quiz_a")))
             exam["score"]["quiz"] = bool(res["is_correct"])
             exam["stage"] = "micro"
             history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
@@ -1525,12 +1534,18 @@ class ChainOfThoughtRAGAgent:
             ok = res["is_correct"]
             # ok is None when the judge was unreachable → record no evidence at all
             # rather than a failure, so an outage never penalises a real answer.
+            # The micro and code prompts are the same wording every time, so the
+            # item here is the SUBMISSION: pasting one line three times is one
+            # piece of evidence, not three. Checked BEFORE the update, or this
+            # answer would count as its own precedent.
+            _item = bkt.item_key(q)
+            _repeat = bool(ok) and bkt.is_repeat_item(username, concept, "micro", _item)
             if ok is not None:
-                bkt.update(username, concept, ok, evidence_type="micro")
+                bkt.update(username, concept, ok, evidence_type="micro", item_id=_item)
             exam["score"]["micro"] = bool(ok)
             exam["stage"] = "code"
             history_manager.update_session_state(username, session_id, {"mastery_exam": exam})
-            fb = res["feedback"]
+            fb = res["feedback"] + (REPEAT_ITEM_NOTE if _repeat else "")
             msg = (f"{fb}\n\n**Step 3 of 3 · Code**\n\n"
                    f"Write a short C snippet (2–4 lines) that demonstrates **{concept}** in action.\n\n👉 *Type your code.*")
             yield {"type": "complete", "data": {"answer": msg, "sources": [], "intent": "EXAM", "suggestions": []}}
@@ -1540,13 +1555,15 @@ class ChainOfThoughtRAGAgent:
         if stage == "code":
             res = await self.examiner._llm_grade_code(q, concept, tier="code")
             ok = res["is_correct"]
+            _item = bkt.item_key(q)
+            _repeat = bool(ok) and bkt.is_repeat_item(username, concept, "code", _item)
             if ok is not None:
-                bkt.update(username, concept, ok, evidence_type="code")
+                bkt.update(username, concept, ok, evidence_type="code", item_id=_item)
             exam["score"]["code"] = bool(ok)
             history_manager.update_session_state(username, session_id, {"mastery_exam": None})
             passed = sum(1 for v in exam["score"].values() if v)
             certified = bkt.is_mastered(username, concept)
-            head = (f"{res['feedback']}\n\n"
+            head = (f"{res['feedback']}{REPEAT_ITEM_NOTE if _repeat else ''}\n\n"
                     f"## 🎓 Mastery Exam Complete — {concept}\n\n"
                     f"You cleared **{passed}/3** steps this round.\n")
             if certified:

@@ -266,7 +266,14 @@ def _affect(username, profile):
     dist = {k: round(v / total, 3) for k, v in tally.items()}
     frustration = profile.get("frustration_level", "normal")
     delta_f = profile.get("delta_f", 0.0)
+    # Sustained frustration, 0..1: the mean of the profiler's last three
+    # per-message scores (0.0 delighted · 0.2 normal · 0.7 high · 1.0 rage).
+    # A mean rather than the latest score, so one angry message does not move
+    # access on its own. None until the profiler has scored a message.
+    hist = profile.get("frustration_history") or []
+    index = round(sum(hist) / len(hist), 3) if hist else None
     return {"frustration_level": frustration, "delta_f": delta_f,
+            "frustration_index": index,
             "emotion_distribution": dist,
             "confusion_rate": dist.get("confusion", 0.0),
             "boredom_rate": dist.get("boredom", 0.0)}

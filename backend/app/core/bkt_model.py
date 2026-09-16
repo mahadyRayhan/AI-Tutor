@@ -34,6 +34,7 @@
 #   P_T  — probability of learning per CORRECT attempt (learning rate)
 #   P_L0 — prior probability of knowing before any evidence (nonzero per Cromwell's rule)
 
+import hashlib
 import math
 import logging
 from datetime import datetime
@@ -86,6 +87,7 @@ MASTERY_THRESHOLD  = 0.95   # composite display ceiling (Σ θ_max = 0.95)
 THETA_CERTIFY      = 0.95   # enter mastered state
 THETA_DECERTIFY    = 0.75   # exit mastered state (hysteresis)
 N_MIN              = 3      # minimum correct-answer evidence per tier for certification
+D_MIN              = 3      # ...of which this many must be DISTINCT items (see below)
 
 # Default decay rates λ (day⁻¹): half-lives 14 / 7 / 5 days
 DECAY_RATES = {
@@ -281,12 +283,92 @@ def get_effective_mastery(username: str, concept: str) -> dict:
     return result
 
 
-def update(username: str, concept: str, is_correct: bool, evidence_type: str = "quiz") -> float:
+def item_key(text: str | None) -> str | None:
+    """A stable id for ONE assessment item, from the question or the submission.
+
+    Whitespace and case are normalised away first, so re-indenting or re-casing
+    the same line is recognised as the same item rather than as fresh evidence.
+    Hashed rather than stored verbatim: only the identity of an item is needed
+    here, never its text.
+    """
+    if not text:
+        return None
+    norm = " ".join(str(text).split()).lower()
+    if not norm:
+        return None
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:16]
+
+
+def n_distinct_evidence(username: str, concept: str, tier: str,
+                        n_counter: int) -> int:
+    """Correct answers on DISTINCT items for one tier — the `b` in the plan.
+
+    The counter in `user_knowledge` says how many correct answers a learner has
+    given; it cannot say whether they were three different questions or the same
+    line of code pasted three times. Only the second is a lucky-guess problem the
+    n_min gate was ever able to catch, so certification now counts items, not
+    attempts.
+
+    Two compatibility rules keep this from re-locking anyone unfairly:
+
+      • rows logged before item ids existed carry no id, and each counts as its
+        own item — they are as informative as they ever were, and no learner is
+        punished for evidence given under the old rule;
+      • if a tier has NO evidence rows at all (telemetry disabled, an older
+        install, a test double), the stored counter stands. A logging outage must
+        not become a silent certification freeze.
+    """
+    try:
+        row = db.fetch_one(
+            "SELECT COUNT(*) AS n_rows, "
+            "       COUNT(DISTINCT CASE WHEN question_id IS NOT NULL AND question_id != '' "
+            "                           THEN question_id END) AS n_ids, "
+            "       SUM(CASE WHEN question_id IS NULL OR question_id = '' THEN 1 ELSE 0 END) AS n_legacy "
+            "FROM evidence_log WHERE username=? AND concept=? AND tier=? AND is_correct=1",
+            (username, concept, tier))
+    except Exception as e:
+        logger.warning(f"[BKT] distinct-evidence read failed: {e}")
+        return n_counter
+    if not row or not (row["n_rows"] or 0):
+        return n_counter
+    return int(row["n_ids"] or 0) + int(row["n_legacy"] or 0)
+
+
+def is_repeat_item(username: str, concept: str, tier: str,
+                   item_id: str | None) -> bool:
+    """Has this learner already been marked correct on THIS item, in this tier?
+
+    Used to tell them so. A learner who submits the same line three times is not
+    cheating, they are economising, and the variety rule would otherwise stall
+    them silently — three ticks and no certification, with nothing on screen
+    explaining why.
+    """
+    if not item_id:
+        return False
+    try:
+        row = db.fetch_one(
+            "SELECT 1 AS hit FROM evidence_log WHERE username=? AND concept=? "
+            "AND tier=? AND is_correct=1 AND question_id=? LIMIT 1",
+            (username, canonical_concept(concept), tier, item_id))
+        return bool(row)
+    except Exception as e:
+        logger.warning(f"[BKT] repeat-item read failed: {e}")
+        return False
+
+
+def update(username: str, concept: str, is_correct: bool, evidence_type: str = "quiz",
+           item_id: str | None = None) -> float:
     """
     Updates one evidence tier and returns the new composite display score.
     Applies forgetting decay before the BKT step (Fix #6).
     On correct answers: increments n_evidence counter (Fix #3), adapts λ (Fix #6).
     Uses per-user adapted P_G from SRL calibration when available.
+
+    `item_id` identifies WHICH question or submission this was — a quiz item's
+    id, or `item_key(submitted_code)` for the micro and code tiers. Certification
+    counts distinct ids (see `n_distinct_evidence`), so repeating one item cannot
+    manufacture the three pieces of evidence it requires. Callers that cannot
+    name the item pass None, and those rows behave exactly as before.
     """
     if evidence_type not in EVIDENCE_CONFIG:
         logger.warning(f"[BKT] Unknown evidence_type '{evidence_type}', defaulting to quiz")
@@ -413,7 +495,8 @@ def update(username: str, concept: str, is_correct: bool, evidence_type: str = "
     try:
         from app.core import telemetry
         new_n = (row[n_col] or 0) + (1 if is_correct else 0)
-        telemetry.log_evidence(username, concept, evidence_type, is_correct)
+        telemetry.log_evidence(username, concept, evidence_type, is_correct,
+                               question_id=item_id)
         telemetry.log_prediction(username, concept, evidence_type,
                                  round(p_current, 6), round(_p_eff_pred, 6), is_correct)
         telemetry.log_bkt_snapshot(
@@ -468,6 +551,10 @@ def is_mastered(username: str, concept: str) -> bool:
     Certification requires:
         (a) ALL P̃^(k) ≥ θ^(k)_certify   (default THETA_CERTIFY = 0.95)
         (b) ALL n^(k)_evidence ≥ N_MIN = 3   (Fix #3: no lucky-guess certification)
+        (c) ALL b^(k)_distinct ≥ D_MIN = 3   — the three correct answers must be
+            three DIFFERENT items. Without this, answering one quiz question
+            right three times, or pasting one line of C three times, certifies a
+            topic on a single piece of knowledge; see `n_distinct_evidence`.
     Decertification: ANY decayed P̃^(k) < THETA_DECERTIFY (0.75)
 
     On first certification, ever_certified is set to 1 and never reset (Fix #5):
@@ -508,8 +595,14 @@ def is_mastered(username: str, concept: str) -> bool:
     θ_m = calibrator.get_threshold(concept, "micro")
     θ_c = calibrator.get_threshold(concept, "code")
 
+    # (c) variety: the correct answers must come from different items.
+    b_q = n_distinct_evidence(username, concept, "quiz",  n_q)
+    b_m = n_distinct_evidence(username, concept, "micro", n_m)
+    b_c = n_distinct_evidence(username, concept, "code",  n_c)
+
     newly_mastered = (q >= θ_q and m >= θ_m and c >= θ_c and
-                      n_q >= N_MIN and n_m >= N_MIN and n_c >= N_MIN)
+                      n_q >= N_MIN and n_m >= N_MIN and n_c >= N_MIN and
+                      b_q >= D_MIN and b_m >= D_MIN and b_c >= D_MIN)
 
     if newly_mastered:
         db.execute(
@@ -521,6 +614,7 @@ def is_mastered(username: str, concept: str) -> bool:
             telemetry.log_event(username, "certification", {
                 "concept": concept, "q": q, "m": m, "c": c,
                 "n_quiz": n_q, "n_micro": n_m, "n_code": n_c,
+                "b_quiz": b_q, "b_micro": b_m, "b_code": b_c,
             })
         except Exception:
             pass

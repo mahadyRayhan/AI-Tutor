@@ -949,9 +949,17 @@ async def get_topics():
     """Get list of topics and their visibility status"""
     return settings_manager.get_settings()
 
-@app.post("/api/v1/config/topics")
+@app.post("/api/v1/config/topics", dependencies=[Depends(verify_teacher)])
 async def update_topic(update: TopicUpdate):
-    """Enable or Disable a topic"""
+    """Enable or Disable a topic.
+
+    AUTHZ: teacher-only. This had NO guard, so the curriculum lock a student is
+    held by was writable BY that student — one unauthenticated POST re-enabled
+    any topic the instructor had disabled, and the Sentinel's topic-lock layer
+    then let the question through because the lock it reads had been flipped.
+    The teacher dashboard is unaffected: it posts from the same origin, so the
+    signed session cookie rides along and satisfies this check.
+    """
     settings_manager.update_topic(update.topic, update.enabled)
     return {"status": "success", "topic": update.topic, "enabled": update.enabled}
 
@@ -4202,7 +4210,9 @@ async def answer_video_checkpoint(req: VideoMCQAnswerRequest, _caller: dict = De
     # Feed BKT quiz tier (video learning contributes to mastery)
     if concept and concept != "General":
         try:
-            bkt.update(req.username, concept, is_correct, evidence_type="quiz")
+            bkt.update(req.username, concept, is_correct, evidence_type="quiz",
+                       item_id=bkt.item_key(
+                           f"video:{req.video_filename}@{req.checkpoint_time}"))
         except Exception as e:
             logger.warning(f"[video-mcq] BKT update failed: {e}")
 
