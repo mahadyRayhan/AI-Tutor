@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SAGE Evaluation Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+<style>
+:root{
+  --ground:#F4F6F8; --panel:#FFFFFF; --sunk:#EAEEF3; --ink:#11161C; --ink-2:#47525F; --ink-3:#71808F;
+  --rule:#D9E0E8; --rule-2:#BCC7D3; --accent:#23497F; --accent-soft:#E4EBF6;
+  --p1:#9E3418; --p2:#8A6410; --p3:#5D6B7B;
+  --p1-bg:#F8E9E4; --p2-bg:#F8F0DC; --p3-bg:#EDF0F3;
+  --ok:#1F6B45; --shadow:0 1px 2px rgba(17,22,28,.05), 0 10px 26px -18px rgba(17,22,28,.35);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0B0F14; --panel:#131A21; --sunk:#0F161C; --ink:#E4EAF0; --ink-2:#AFBCC9; --ink-3:#7E8D9C;
+  --rule:#222D38; --rule-2:#33404E; --accent:#7EA6E8; --accent-soft:#16233A;
+  --p1:#E8836A; --p2:#DCAE55; --p3:#8D9BAA;
+  --p1-bg:#2C1712; --p2-bg:#2A2110; --p3-bg:#1A222B;
+  --ok:#5BBE8C; --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 26px -18px rgba(0,0,0,.9);
+}}
+:root[data-theme="dark"]{
+  --ground:#0B0F14; --panel:#131A21; --sunk:#0F161C; --ink:#E4EAF0; --ink-2:#AFBCC9; --ink-3:#7E8D9C;
+  --rule:#222D38; --rule-2:#33404E; --accent:#7EA6E8; --accent-soft:#16233A;
+  --p1:#E8836A; --p2:#DCAE55; --p3:#8D9BAA;
+  --p1-bg:#2C1712; --p2-bg:#2A2110; --p3-bg:#1A222B;
+  --ok:#5BBE8C; --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 26px -18px rgba(0,0,0,.9);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);
+  font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;font-size:16px;line-height:1.62;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding-block:56px 100px;padding-inline:20px;
+  display:flex;flex-direction:column;gap:0}
+h1,h2,h3{font-family:Newsreader,Georgia,serif;text-wrap:balance;margin:0;font-weight:600;letter-spacing:-.01em}
+h1{font-size:clamp(2rem,4.4vw,2.9rem);line-height:1.08}
+h2{font-size:1.5rem;line-height:1.2}
+h3{font-size:1.08rem;line-height:1.3}
+p{margin:0}
+a{color:var(--accent)}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:.69rem;font-weight:500;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent)}
+header{display:flex;flex-direction:column;gap:14px;padding-bottom:28px;border-bottom:2px solid var(--ink)}
+.dek{color:var(--ink-2);font-size:1.06rem;max-width:64ch}
+.meta{display:flex;flex-wrap:wrap;gap:6px 26px;font-size:.8rem;color:var(--ink-3);
+  font-family:"IBM Plex Mono",monospace}
+section{padding-top:46px;display:flex;flex-direction:column;gap:16px}
+.lede{color:var(--ink-2);max-width:68ch;font-size:.97rem}
+.lede strong,li strong,td strong{font-weight:600;color:var(--ink)}
+.sec-head{display:flex;flex-direction:column;gap:5px}
+
+/* claims */
+.claims{display:grid;gap:14px}
+.claim{display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:start;
+  background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:16px 18px;box-shadow:var(--shadow)}
+.claim .id{font-family:"IBM Plex Mono",monospace;font-size:.82rem;font-weight:600;color:var(--accent);
+  padding-top:2px}
+.claim p{font-size:.93rem;color:var(--ink-2)}
+.claim .how{font-size:.85rem;color:var(--ink-3);margin-top:6px}
+
+/* run rows */
+.runs{display:flex;flex-direction:column;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);overflow:hidden}
+.run{display:grid;grid-template-columns:70px minmax(0,1.1fr) minmax(0,1.5fr) auto;gap:16px;
+  padding:14px 18px;border-bottom:1px solid var(--rule);align-items:baseline}
+.run:last-child{border-bottom:none}
+.run .rid{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:.85rem;color:var(--accent)}
+.run .what{font-weight:600;font-size:.94rem}
+.run .why{font-size:.88rem;color:var(--ink-2)}
+.run.mine{background:var(--accent-soft)}
+@media (max-width:760px){.run{grid-template-columns:60px minmax(0,1fr);gap:4px 14px}
+  .run .why,.run .prio{grid-column:2}}
+.prio{font-family:"IBM Plex Mono",monospace;font-size:.7rem;font-weight:600;letter-spacing:.06em;
+  padding:2px 8px;border-radius:2px;white-space:nowrap;justify-self:end}
+.prio.p1{color:var(--p1);background:var(--p1-bg)}
+.prio.p2{color:var(--p2);background:var(--p2-bg)}
+.prio.p3{color:var(--p3);background:var(--p3-bg)}
+
+/* tables */
+.tbl{border:1px solid var(--rule);border-radius:4px;background:var(--panel);overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.875rem;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--rule);vertical-align:top}
+thead th{font-family:"IBM Plex Mono",monospace;font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:500;background:var(--sunk);white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+td.metric{font-weight:600;white-space:nowrap}
+td.metric small{display:block;font-weight:400;color:var(--ink-3);font-size:.76rem;white-space:normal}
+.yes{color:var(--ok);font-weight:600}
+.no{color:var(--ink-3)}
+.gap{color:var(--p1);font-weight:600}
+
+/* figure */
+.figwrap{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:26px;align-items:center}
+@media (max-width:760px){.figwrap{grid-template-columns:1fr}}
+figure{margin:0;background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:14px;
+  box-shadow:var(--shadow)}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.78rem;color:var(--ink-3);padding-top:8px}
+
+/* order list */
+ol.steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px;counter-reset:s}
+ol.steps li{counter-increment:s;display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;
+  padding:12px 0;border-bottom:1px solid var(--rule)}
+ol.steps li:last-child{border-bottom:none}
+ol.steps li::before{content:counter(s);font-family:"IBM Plex Mono",monospace;font-size:.8rem;
+  font-weight:600;color:var(--ink-3);padding-top:2px}
+ol.steps b{display:block}
+ol.steps span{font-size:.88rem;color:var(--ink-2)}
+
+/* sources */
+.src{display:grid;grid-template-columns:64px minmax(0,1fr);gap:4px 18px;padding:14px 0;
+  border-bottom:1px solid var(--rule);align-items:start}
+.src:last-of-type{border-bottom:none}
+.src .yr{font-family:"IBM Plex Mono",monospace;font-size:.88rem;color:var(--accent);font-weight:600}
+.src .cite{font-size:.9rem;color:var(--ink-2)}
+.src .cite b{color:var(--ink);font-weight:600}
+.src .use{font-size:.82rem;color:var(--ink-3);margin-top:3px}
+.badge{font-family:"IBM Plex Mono",monospace;font-size:.66rem;letter-spacing:.05em;padding:1px 6px;
+  border-radius:2px;border:1px solid var(--rule-2);color:var(--ink-3);white-space:nowrap}
+.badge.ck{color:var(--ok);border-color:currentColor}
+.note{font-size:.84rem;color:var(--ink-3);max-width:68ch}
+ul.tight{margin:0;padding-left:1.15em;display:flex;flex-direction:column;gap:7px}
+ul.tight li{font-size:.92rem;color:var(--ink-2)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">SAGE · Instructor-regulated access control</div>
+  <h1>Baseline evaluation plan</h1>
+  <p class="dek">What to run, against which published systems, in what order, and what breaks if a
+  piece is skipped. The comparison is made by holding the tutor fixed and swapping only the policy.</p>
+  <div class="meta">
+    <span>Drafted 16 Sep 2026</span>
+    <span>Scope: full gatekeeper — RBAC + ABAC + CAC</span>
+    <span>Status: none of these runs executed yet</span>
+  </div>
+</header>
+
+<!-- ─────────────── claims ─────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Step 1</div>
+    <h2>What is being claimed</h2>
+  </div>
+  <p class="lede">Three claims, each with one experiment that can falsify it. Everything else in this
+  plan exists to serve one of them. A result that supports none of these does not belong in the paper.</p>
+  <div class="claims">
+    <div class="claim">
+      <div class="id">C1</div>
+      <div>
+        <h3>Personalized control beats static control at equal helpfulness</h3>
+        <p>The full gatekeeper withholds more of what should be withheld without withholding more of
+        what should be given. Not "it refuses more" — anything can refuse more.</p>
+        <p class="how">Falsified if a static policy reaches the same leakage rate at the same
+        legitimate-help rate. Tested by the frontier below.</p>
+      </div>
+    </div>
+    <div class="claim">
+      <div class="id">C2</div>
+      <div>
+        <h3>Metacognition adds something mastery alone does not</h3>
+        <p>Mastery-gated curriculum locks are decades old. The contribution is the layer above:
+        distance, help-seeking, load, frustration, overconfidence.</p>
+        <p class="how">Falsified if P3 (mastery gate) equals P4 (full CAC) on every axis. This is the
+        single most attackable claim in the paper.</p>
+      </div>
+    </div>
+    <div class="claim">
+      <div class="id">C3</div>
+      <div>
+        <h3>Existing policy languages cannot express the predicate</h3>
+        <p>A production, formally verified authorization language cannot state "withhold unless
+        mastery on the overconfident ancestor topic is ≥ 0.80" without calling out to the learner model.</p>
+        <p class="how">Falsified by writing it in Cedar. Cheapest result here, and the one that
+        justifies a new model rather than a new ruleset.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── the runs ─────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Step 2 · Serves C1 and C2</div>
+    <h2>The policy ladder</h2>
+  </div>
+  <p class="lede">One tutor, one corpus, one model, one question set. Only the policy layer changes,
+  so any difference is attributable to policy rather than to retrieval or generation. <strong>P2 is a
+  reimplementation of a published system's decision rule</strong>, not a strawman of our own invention.</p>
+  <div class="runs">
+    <div class="run">
+      <div class="rid">P0</div>
+      <div class="what">No control</div>
+      <div class="why">Vanilla RAG tutor. Upper bound on helpfulness, lower bound on containment. Both
+      other bounds are meaningless without it.</div>
+      <div class="prio p1">P1 · must</div>
+    </div>
+    <div class="run">
+      <div class="rid">P1</div>
+      <div class="what">RBAC only</div>
+      <div class="why">Role decides everything; no document or learner attributes. What a deployed
+      tutor typically ships with. <span class="mono">[9]</span></div>
+      <div class="prio p2">P2 · strong</div>
+    </div>
+    <div class="run">
+      <div class="rid">P2</div>
+      <div class="what">Static document levels</div>
+      <div class="why">Retrieve, then filter against a permissions table before generation — the
+      decision rule of Chen et al. <span class="mono">[4]</span>. Already implemented here as
+      <span class="mono">permitted_chunks</span>.</div>
+      <div class="prio p1">P1 · must</div>
+    </div>
+    <div class="run">
+      <div class="rid">P3</div>
+      <div class="what">+ mastery gate (ABAC on K)</div>
+      <div class="why">Prerequisite certification decides access. The real prior art from intelligent
+      tutoring, and the baseline C2 stands or falls against.</div>
+      <div class="prio p1">P1 · must</div>
+    </div>
+    <div class="run mine">
+      <div class="rid">P4</div>
+      <div class="what">Full gatekeeper: RBAC + ABAC + CAC</div>
+      <div class="why">Adds distance-graded disclosure, help-seeking, load, frustration and
+      overconfidence. The system under test.</div>
+      <div class="prio p1">P1 · must</div>
+    </div>
+    <div class="run">
+      <div class="rid">P4−</div>
+      <div class="what">CAC signal ablations</div>
+      <div class="why">P4 with one signal disabled at a time via <span class="mono">SAGE_ABLATE</span>.
+      Attributes the effect to a specific signal instead of to the bundle.</div>
+      <div class="prio p2">P2 · strong</div>
+    </div>
+    <div class="run">
+      <div class="rid">P5</div>
+      <div class="what">Prompt-only pedagogy</div>
+      <div class="why">"Never give the answer" as a system-prompt rule, no gate. What shipped AI
+      tutors actually do, and the cheap alternative a reviewer will raise. Needs live LLM runs.</div>
+      <div class="prio p2">P2 · strong</div>
+    </div>
+    <div class="run">
+      <div class="rid">P6</div>
+      <div class="what">Graph retrieval, no policy</div>
+      <div class="why">GraphRAG-style retrieval <span class="mono">[10]</span>. One row, to settle
+      "isn't your DAG just GraphRAG?" — a graph that improves retrieval controls nothing.</div>
+      <div class="prio p3">P3 · optional</div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── metrics ─────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Step 3</div>
+    <h2>What gets measured on every run</h2>
+  </div>
+  <p class="lede">Utility uses <strong>RAGAs</strong> <span class="mono">[8]</span> so the numbers are
+  comparable in kind with the published access-control RAG work, which reports the same metrics.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Metric</th><th>Definition</th><th>Serves</th><th>Instrument</th><th>Priority</th></tr></thead>
+      <tbody>
+        <tr><td class="metric">Leakage rate<small>containment</small></td>
+          <td>Share of attack turns where withheld content appears in the reply: solution text, code above the permitted level, teacher-only material.</td>
+          <td>C1</td><td class="mono">security_audit.py · benchmark_solution_exposure_full.py</td>
+          <td><span class="prio p1">P1</span></td></tr>
+        <tr><td class="metric">Over-blocking rate<small>the missing number</small></td>
+          <td>Share of <em>legitimate</em> in-region questions wrongly restricted, redirected or refused. The cost side of every containment gain.</td>
+          <td>C1, C2</td><td>Held-out legitimate question set, human or judge labelled</td>
+          <td><span class="prio p1">P1</span></td></tr>
+        <tr><td class="metric">RAGAs suite<small>utility</small></td>
+          <td>Answer relevancy, context relevancy, context recall, faithfulness — per policy configuration.</td>
+          <td>C1</td><td>RAGAs <span class="mono">[8]</span></td>
+          <td><span class="prio p1">P1</span></td></tr>
+        <tr><td class="metric">Disclosure compliance<small>does the model obey?</small></td>
+          <td>When capped at hints or at two sentences, does the reply actually stay there? Measures the gap between the decision and the output.</td>
+          <td>C1</td><td>New: judge + deterministic checks (sentence count, code-block presence)</td>
+          <td><span class="prio p1">P1</span></td></tr>
+        <tr><td class="metric">Signal attribution<small>which part matters</small></td>
+          <td>Change in leakage and over-blocking when each CAC signal is switched off individually.</td>
+          <td>C2</td><td class="mono">SAGE_ABLATE · cac_replay.py</td>
+          <td><span class="prio p2">P2</span></td></tr>
+        <tr><td class="metric">Decision latency<small>is control affordable?</small></td>
+          <td>Added milliseconds per turn. Comparable to SecureRAG's reported ~0.05&nbsp;s crypto overhead <span class="mono">[3]</span>.</td>
+          <td>C1</td><td>Timing around the PDP</td>
+          <td><span class="prio p2">P2</span></td></tr>
+        <tr><td class="metric">Policy leakage<small>what a redirect reveals</small></td>
+          <td>Prerequisite edges disclosed to the learner by redirects — the policy telling the student about itself.</td>
+          <td>C1</td><td class="mono">revealed_edge</td>
+          <td><span class="prio p3">P3</span></td></tr>
+        <tr><td class="metric">Learning outcome<small>the real question</small></td>
+          <td>Post-test or certification rate under each policy. The only measure that shows control is pedagogically <em>good</em>, not merely tight.</td>
+          <td>C2</td><td>Classroom study</td>
+          <td><span class="prio p3">P3</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><strong>Why over-blocking is P1 and learning outcome is P3.</strong> Over-blocking is
+  cheap, needs no students, and its absence is the most likely reason a reviewer rejects a containment
+  result. A classroom outcome study is the strongest evidence available and cannot be produced on a
+  paper deadline; plan it as future work rather than as a blocking dependency.</p>
+</section>
+
+<!-- ─────────────── figure ─────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Step 4</div>
+    <h2>The headline figure</h2>
+  </div>
+  <div class="figwrap">
+    <figure>
+      <svg viewBox="0 0 420 300" role="img" aria-label="Schematic of the containment-utility frontier: leakage against legitimate help">
+        <!-- axes -->
+        <line x1="54" y1="252" x2="396" y2="252" stroke="var(--rule-2)" stroke-width="1.4"/>
+        <line x1="54" y1="26" x2="54" y2="252" stroke="var(--rule-2)" stroke-width="1.4"/>
+        <text x="54" y="278" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-3)">0%</text>
+        <text x="380" y="278" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-3)">100%</text>
+        <text x="225" y="294" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)">legitimate questions answered in full →</text>
+        <text x="40" y="252" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-3)">0%</text>
+        <text x="40" y="34" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-3)">100%</text>
+        <text x="16" y="140" text-anchor="middle" font-family="IBM Plex Sans,sans-serif" font-size="11" fill="var(--ink-2)" transform="rotate(-90 16 140)">← leakage under attack</text>
+        <!-- trade-off line between the two trivial policies -->
+        <line x1="86" y1="240" x2="360" y2="52" stroke="var(--rule-2)" stroke-width="1.3" stroke-dasharray="5 4"/>
+        <text x="300" y="120" font-family="IBM Plex Sans,sans-serif" font-size="10" fill="var(--ink-3)">naive trade-off</text>
+        <!-- points -->
+        <circle cx="360" cy="52" r="6" fill="var(--panel)" stroke="var(--ink-3)" stroke-width="2"/>
+        <text x="350" y="44" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-2)">P0 no control</text>
+        <circle cx="86" cy="240" r="6" fill="var(--panel)" stroke="var(--ink-3)" stroke-width="2"/>
+        <text x="98" y="244" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-2)">refuse everything</text>
+        <circle cx="256" cy="150" r="6" fill="var(--panel)" stroke="var(--ink-3)" stroke-width="2"/>
+        <text x="250" y="142" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-2)">P2 static</text>
+        <circle cx="286" cy="120" r="6" fill="var(--panel)" stroke="var(--ink-3)" stroke-width="2"/>
+        <text x="296" y="116" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-2)">P3 mastery</text>
+        <!-- claimed position -->
+        <circle cx="312" cy="196" r="7.5" fill="var(--accent)"/>
+        <text x="322" y="200" font-family="IBM Plex Mono,monospace" font-size="10.5" font-weight="600" fill="var(--accent)">P4</text>
+        <path d="M312 188 C 300 160, 276 150, 258 152" fill="none" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="3 3"/>
+      </svg>
+      <figcaption><strong>Schematic, not data.</strong> Positions are the hypothesis: P4 sits below the
+      line joining the trivial policies — less leakage at the same helpfulness. Axes and labels are
+      final; the points get filled in by the runs.</figcaption>
+    </figure>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <p class="lede">A bar chart of leakage rates invites the obvious objection: any policy wins that
+      axis by refusing everything. Plotting both axes at once removes the objection, because both
+      degenerate policies are on the chart and neither is attractive.</p>
+      <p class="lede">Sweeping your own thresholds (θ, the load and frustration cut-offs, the horizon)
+      turns P4 from a point into a curve, which is a stronger claim than a single configuration:
+      <strong>the frontier itself moves</strong>.</p>
+      <p class="lede">Second headline output: the <strong>capability matrix</strong> — one row per
+      published system, columns for subject attributes, object attributes, state-dependence, graded
+      disclosure, enforcement mechanism and adversary. The empty columns are the contribution.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── subjects ─────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Step 5</div>
+    <h2>Subjects and question sets</h2>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Source</th><th>What it gives</th><th>Standing</th></tr></thead>
+      <tbody>
+        <tr><td class="metric">Replay of logged turns<small class="mono">cac_replay.py</small></td>
+          <td>Real student questions with real learner state; every policy scored offline on identical input.</td>
+          <td><span class="yes">Strongest.</span> No students at risk, exact counterfactuals.</td></tr>
+        <tr><td class="metric">Synthetic personas<small class="mono">cac_seed_manual_test.py</small></td>
+          <td>Learner states that real logs do not contain: high load, sustained frustration, overconfidence on a branch.</td>
+          <td><span class="yes">Defensible.</span> Chen et al. evaluated on 40 LLM-generated profiles <span class="mono">[4]</span>. Pair with replay; do not rely on alone.</td></tr>
+        <tr><td class="metric">Attack suite</td>
+          <td>Rephrasing across agents, the "anyway" override, role claims, multi-turn escalation, injection.</td>
+          <td><span class="yes">Have it.</span> Extend with published attack tasks <span class="mono">[5]</span>.</td></tr>
+        <tr><td class="metric">Legitimate question set</td>
+          <td>In-region questions that <em>should</em> get a full answer — the denominator for over-blocking.</td>
+          <td><span class="gap">Missing.</span> Build this first; nothing else measures the cost side.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─────────────── order ─────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Step 6</div>
+    <h2>Order of execution</h2>
+  </div>
+  <p class="lede">Ordered by result-per-hour, not by logical tidiness. The first three need no LLM calls
+  and no students.</p>
+  <ol class="steps">
+    <li><b>Cedar expressiveness test → C3</b><span>Write the static policy in Cedar, then try to write the CAC predicate. Self-contained, a day, and it converts "we named a thing" into "a verified language cannot say this".</span></li>
+    <li><b>Build the legitimate question set</b><span>Blocks every over-blocking number. Draw from logged in-region turns so it is not authored to flatter the policy.</span></li>
+    <li><b>Replay P0–P4 offline → C1, C2</b><span>The core table and the frontier plot. Uses shadow-mode decisions already being logged, so no student is affected.</span></li>
+    <li><b>Signal ablations P4− → C2</b><span>Same harness, one switch at a time. Turns one bundled result into five attributable ones.</span></li>
+    <li><b>Disclosure compliance</b><span>Live generation runs. Answers "is the cap real or advisory?", which a reviewer will ask the moment they read that it is a prompt instruction.</span></li>
+    <li><b>Prompt-only baseline P5</b><span>Most expensive, because every configuration needs fresh generations. Do it once the cheap results are banked.</span></li>
+    <li><b>Classroom outcome study</b><span>Future work. Name it as future work in the paper rather than letting a reviewer name it for you.</span></li>
+  </ol>
+</section>
+
+<!-- ─────────────── threats ─────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Step 7</div>
+    <h2>Threats to validity, stated before a reviewer states them</h2>
+  </div>
+  <ul class="tight">
+    <li><strong>Different corpora.</strong> Published comparators run on healthcare and enterprise data. Only their <em>policy models</em> transfer to this tutor, never their numbers. Say this explicitly; comparing absolute figures across corpora would be wrong.</li>
+    <li><strong>A weak published bar.</strong> Chen et al. is a three-page proof of concept with two access levels and 40 synthetic profiles, and says so itself. Beating it is not the claim; being equivalent to it at the static layer, and adding a layer above, is.</li>
+    <li><strong>Different adversary.</strong> SecureRAG defends against an untrusted server; this work assumes a trusted server and defends against an authorized-but-unready user. The two compose rather than compete, and claiming to beat it on security would be a category error.</li>
+    <li><strong>Judge reliability.</strong> Leakage and over-blocking labels from an LLM judge need a human-agreement check on a sample, or the headline numbers rest on an unvalidated instrument.</li>
+    <li><strong>Enforcement is off by default.</strong> Everything shipped runs in shadow mode. Replay results describe what the policy <em>would</em> do; say so, and keep it distinct from deployed effect.</li>
+    <li><strong>Synthetic learner states.</strong> Load and frustration currently fire for no real student in the corpus. That is a property of the data, and simulation is how the mechanism is shown to work — but it must be labelled as simulation.</li>
+  </ul>
+</section>
+
+<!-- ─────────────── sources ─────────────── -->
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Step 8 · newest first</div>
+    <h2>Sources to cite</h2>
+  </div>
+  <p class="note"><span class="badge ck">checked</span> verified online during drafting ·
+  <span class="badge">verify</span> from memory, confirm venue, year and authors before submission.
+  Recent arXiv identifiers are recorded as found; confirm the published venue for anything still a preprint.</p>
+
+  <div>
+    <div class="src"><div class="yr">2026</div><div>
+      <div class="cite">[1] <b>Securing Retrieval-Augmented Generation: A Taxonomy of Attacks, Defenses, and Future Directions.</b> arXiv:2604.08304. <span class="badge ck">checked</span></div>
+      <div class="use">Survey framing for the threat model section; positions context-aware fine-grained access control as an open direction — which is what this work does.</div>
+    </div></div>
+    <div class="src"><div class="yr">2026</div><div>
+      <div class="cite">[2] <b>Towards Secure Retrieval-Augmented Generation: A Comprehensive Review of Threats, Defenses and Benchmarks.</b> arXiv:2603.21654. <span class="badge ck">checked</span></div>
+      <div class="use">Current map of RAG security benchmarks. Use to justify why none of them measures authorization by user state.</div>
+    </div></div>
+    <div class="src"><div class="yr">2025</div><div>
+      <div class="cite">[3] <b>SecureRAG: End-to-End Secure Retrieval-Augmented Generation.</b> NeurIPS 2025. <span class="badge ck">checked</span></div>
+      <div class="use">FHE search + attribute-based encryption, ~0.05 s overhead. Related work and latency reference. Complementary: cryptographic <em>whether</em>, not pedagogical <em>how much</em>.</div>
+    </div></div>
+    <div class="src"><div class="yr">2025</div><div>
+      <div class="cite">[4] <b>Chen, B., Tackman, J., Setälä, M., Poranen, T., Zhang, Z. Integrating Access Control with Retrieval-Augmented Generation: A Proof of Concept for Managing Sensitive Patient Profiles.</b> ACM SAC '25, pp. 915–917. DOI 10.1145/3672608.3707848. <span class="badge ck">checked</span></div>
+      <div class="use">The closest published system: post-retrieval permission filtering, two static levels, 40 GPT-4-generated profiles, RAGAs. Becomes baseline P2, and the precedent for synthetic evaluation subjects.</div>
+    </div></div>
+    <div class="src"><div class="yr">2025</div><div>
+      <div class="cite">[5] <b>SafeRAG: Benchmarking Security in Retrieval-Augmented Generation of Large Language Model.</b> ACL 2025. arXiv:2501.18636. Code: github.com/IAAR-Shanghai/SafeRAG. <span class="badge ck">checked</span></div>
+      <div class="use">Attack tasks (noise, conflict, soft ad, DoS) for the robustness axis. Note it targets corpus integrity, not authorization — a useful contrast.</div>
+    </div></div>
+    <div class="src"><div class="yr">2025</div><div>
+      <div class="cite">[6] <b>Permission-Aware RAG: IAM-Based Access Filtering in Multi-Resource Environments.</b> <span class="badge">verify</span></div>
+      <div class="use">Enterprise identity-based filtering. Related work: authorization by identity and group, still not by user state.</div>
+    </div></div>
+    <div class="src"><div class="yr">2025</div><div>
+      <div class="cite">[7] <b>Metadata-aware RAG for Enforcing Access Control and Metadata-based Filtering.</b> ACM RACS. DOI 10.1145/3769002.3769952. <span class="badge">verify</span></div>
+      <div class="use">Closest neighbour to the chunk-tag layer; cite alongside [4] so the static layer is clearly positioned as existing practice.</div>
+    </div></div>
+    <div class="src"><div class="yr">2024</div><div>
+      <div class="cite">[8] <b>Cedar: A New Language for Expressive, Fast, Safe, and Analyzable Authorization.</b> PACMPL 8, OOPSLA1, Art. 118. DOI 10.1145/3649835. arXiv:2403.04651. <span class="badge ck">checked</span></div>
+      <div class="use">The C3 instrument: deployed at AWS, modelled in Lean, open source. An expressiveness limit in Cedar is a limit worth reporting.</div>
+    </div></div>
+    <div class="src"><div class="yr">2024</div><div>
+      <div class="cite">[9] <b>Es, S., James, J., Espinosa-Anke, L., Schockaert, S. RAGAs: Automated Evaluation of Retrieval Augmented Generation.</b> arXiv:2309.15217 (EACL 2024 demo). <span class="badge">verify</span></div>
+      <div class="use">The utility metric suite, chosen because [4] reports it — comparable in kind. (Reference taken from [4]'s bibliography.)</div>
+    </div></div>
+    <div class="src"><div class="yr">2024</div><div>
+      <div class="cite">[10] <b>Edge, D. et al. From Local to Global: A Graph RAG Approach to Query-Focused Summarization.</b> arXiv:2404.16130. <span class="badge">verify</span></div>
+      <div class="use">Only for baseline P6 and one sentence of related work: graph-structured retrieval is not access control.</div>
+    </div></div>
+    <div class="src"><div class="yr">2019</div><div>
+      <div class="cite">[11] <b>Pang, R. et al. Zanzibar: Google's Consistent, Global Authorization System.</b> USENIX ATC '19. <span class="badge ck">checked</span></div>
+      <div class="use">Graph-shaped authorization at scale; open implementations exist (SpiceDB, OpenFGA). Shows the graph in this work is a curriculum, not an ownership relation.</div>
+    </div></div>
+    <div class="src"><div class="yr">2014</div><div>
+      <div class="cite">[12] <b>Hu, V. C. et al. Guide to Attribute Based Access Control (ABAC) Definition and Considerations.</b> NIST SP 800-162. <span class="badge">verify</span></div>
+      <div class="use">The standard this work's K layer implements. Cite when defining ABAC rather than paraphrasing it.</div>
+    </div></div>
+    <div class="src"><div class="yr">2004</div><div>
+      <div class="cite">[13] <b>Park, J., Sandhu, R. The UCON<sub>ABC</sub> Usage Control Model.</b> ACM TISSEC 7(1). <span class="badge">verify</span></div>
+      <div class="use">The closest theoretical ancestor: mutable attributes and continuous re-evaluation. Position CAC as UCON whose mutable attributes are cognitive.</div>
+    </div></div>
+    <div class="src"><div class="yr">1996</div><div>
+      <div class="cite">[14] <b>Sandhu, R., Coyne, E., Feinstein, H., Youman, C. Role-Based Access Control Models.</b> IEEE Computer 29(2). <span class="badge">verify</span></div>
+      <div class="use">Baseline P1 and the canonical RBAC citation.</div>
+    </div></div>
+    <div class="src"><div class="yr">1994</div><div>
+      <div class="cite">[15] <b>Corbett, A. T., Anderson, J. R. Knowledge Tracing: Modeling the Acquisition of Procedural Knowledge.</b> UMUAI 4(4). <span class="badge">verify</span></div>
+      <div class="use">The mastery model underneath K. Needed wherever certification thresholds are justified.</div>
+    </div></div>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
