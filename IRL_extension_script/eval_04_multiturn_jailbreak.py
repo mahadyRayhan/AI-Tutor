@@ -591,22 +591,55 @@ _BLOCK_TEXT_MARKERS = [
 ]
 
 
-def signup(u: str) -> None:
+# One authenticated HTTP session per red-team user. /api/v1/chat/stream now takes
+# identity from a signed session cookie rather than the request body, so posting
+# without one returns 401 — and this harness recorded that as an empty answer,
+# unblocked: a silent pass on every attack. Cookies are kept per username so
+# sessions stay independent, as they were when the suite was written.
+_HTTP: dict[str, requests.Session] = {}
+_PASSWORD = "Str0ngPass"
+
+
+def _session_for(u: str) -> requests.Session:
+    s = _HTTP.get(u)
+    if s is not None:
+        return s
+    s = requests.Session()
     try:
-        requests.post(f"{BASE_URL}/api/v1/auth/signup", timeout=20,
-                      json={"name": "RT", "email": f"{u}@rt.edu", "username": u,
-                            "password": "Str0ngPass"})
+        s.post(f"{BASE_URL}/api/v1/auth/signup", timeout=20,
+               json={"name": "RT", "email": f"{u}@rt.edu", "username": u,
+                     "password": _PASSWORD})
     except Exception:
         pass
+    try:
+        r = s.post(f"{BASE_URL}/api/v1/auth/login", timeout=20,
+                   json={"username": u, "password": _PASSWORD})
+        if r.status_code != 200:
+            print(f"  [warn] login failed for {u}: {r.status_code} {r.text[:120]}")
+    except Exception as e:
+        print(f"  [warn] login error for {u}: {e}")
+    _HTTP[u] = s
+    return s
+
+
+def signup(u: str) -> None:
+    _session_for(u)
 
 
 def chat(u: str, m: str, sid: str, delay: float, retries: int = 3) -> dict:
     time.sleep(delay)
     payload = {"message": m, "username": u, "session_id": sid, "user_role": "student"}
+    http = _session_for(u)
     for attempt in range(retries):
         try:
-            with requests.post(f"{BASE_URL}/api/v1/chat/stream", json=payload,
-                               stream=True, timeout=180) as r:
+            with http.post(f"{BASE_URL}/api/v1/chat/stream", json=payload,
+                           stream=True, timeout=180) as r:
+                if r.status_code == 401:
+                    # Session expired or never established — re-authenticate once
+                    # rather than silently recording an empty, "unblocked" turn.
+                    _HTTP.pop(u, None)
+                    http = _session_for(u)
+                    continue
                 if r.status_code == 429:
                     time.sleep(20 * (attempt + 1)); continue
                 r.raise_for_status()

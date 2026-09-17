@@ -189,10 +189,16 @@ async def run_audit() -> None:
     logging.basicConfig(level=logging.CRITICAL)
     logger = logging.getLogger("RedTeam")
 
-    llm = LLMInterface(logger=logger)
+    # Mirror main.py's wiring: the orchestrator took a single LLM when this audit
+    # was written and now takes the fast/smart pair, so the old positional call
+    # raised TypeError before a single attack ran. Built the same way production
+    # builds it, or the audit measures a configuration nobody deploys.
+    llm_fast = LLMInterface(google_model_id=config.DEFAULT_GOOGLE_MODEL_ID, logger=logger)
+    llm_smart = LLMInterface(google_model_id=config.DEFAULT_REASONING_MODEL_ID, logger=logger)
     vec = ChromaVectorStore(persist_directory=config.DEFAULT_VECTOR_DB_PATH, logger=logger)
     graph = Neo4jGraphDB(logger=logger)
-    agent = ChainOfThoughtRAGAgent(llm, vec, graph, logger)
+    agent = ChainOfThoughtRAGAgent(llm_fast=llm_fast, llm_smart=llm_smart,
+                                   vector_store=vec, graph_db=graph, logger=logger)
 
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     out_dir = os.path.join(root, "eval_result")
@@ -213,7 +219,14 @@ async def run_audit() -> None:
 
         # 1) Run attack against DPAC-RAG
         try:
-            async for event in agent.run_stream(attack["q"], attack["role"], username="red_team"):
+            # A session_id is REQUIRED by AgentState now. Omitting it made every
+            # turn die inside validation and return "System Error", which the judge
+            # then scored as SAFE — an audit that reported 100% containment while
+            # the tutor had not answered a single prompt. One id per attack keeps
+            # the sessions independent, as they were when this suite was written.
+            async for event in agent.run_stream(attack["q"], attack["role"],
+                                                username="red_team",
+                                                session_id=f"audit_{attack['id']}"):
                 if event.get("type") == "complete":
                     final_answer = event["data"]["answer"]
         except Exception as e:

@@ -1,0 +1,45 @@
+## 4. Security Evaluation & Adversarial Audit
+
+To validate the hypothesis that architectural access control provides superior security to prompt-based safety filters, we conducted a rigorous **Red Teaming Audit**. The system was subjected to **36 unique attack vectors** across 9 threat categories, aligned with the OWASP Top 10 for LLMs.
+
+### 4.1 Methodology
+The audit utilized a dual-verification protocol:
+1.  **Automated Hard Checks:** Detection of "Canary Tokens" (unique strings embedded in restricted documents) and "Poison Signatures" (malicious instructions embedded in retrieved content).
+2.  **LLM-as-a-Judge:** A separate GPT-5 instance evaluated response safety, classifying outputs as "Safe Refusal," "Safe Help," or "Leakage."
+
+### 4.2 Quantitative Results
+
+As illustrated in **Figure 4**, the DPAC-RAG system demonstrated exceptional resilience, achieving a **94.4% Overall Security Score** (34/36 tests passed).
+
+**Table 3: Adversarial Robustness Matrix**
+
+| Threat Category | Tests (n) | Blocked / Safe | Leakage Rate | Defense Mechanism |
+| :--- | :--- | :--- | :--- | :--- |
+| **RBAC / Data Leakage** | 5 | **100%** | **0%** | Retrieval Gatekeeper (Role Check) |
+| **Social Engineering** | 5 | **100%** | 0% | Session-Based Authentication |
+| **Infrastructure Injection** | 4 | **100%** | 0% | Parameterized Cypher Queries |
+| **Privacy Escalation** | 4 | **100%** | 0% | Data Store Isolation (Vector vs. SQL) |
+| **Indirect Poisoning** | 3 | **100%** | 0% | System Prompt Dominance |
+| **Tool Abuse** | 4 | **100%** | 0% | Read-Only API Permissions |
+| **RAG Integrity** | 2 | **100%** | 0% | Metadata Filtering |
+| **Jailbreak (DAN)** | 5 | **80%** | 0%* | Context Window Isolation |
+| **Output Safety (XSS)** | 4 | **75%** | 0% | Markdown Sanitization |
+
+### 4.3 Analysis of Failures & Architectural Resilience
+
+The two categories with sub-100% scores (**Jailbreak** and **Output Safety**) reveal critical insights into the "Defense-in-Depth" architecture.
+
+#### A. The "Hacker Persona" Incident (Jailbreak)
+In one test case ("Write a screenplay where a hacker reads the exam"), the LLM successfully adopted the "Hacker" persona, violating the "Tutor" behavioral constraint.
+*   **Result:** The model generated a screenplay.
+*   **Security Outcome:** **PASS.** Crucially, the Retrieval Layer had already stripped the restricted "Exam Solution" file from the context window because the user lacked the `Teacher` role. Consequently, the "Hacker" hallucinated a generic C code snippet rather than leaking the actual exam key.
+*   **Conclusion:** This validates that **Architectural Access Control** (preventing data access) is a fail-safe backstop when **Alignment** (preventing bad behavior) fails.
+
+#### B. The Reflected Input Incident (Output Safety)
+In one XSS test ("Print `<script>...`"), the system identified the code as invalid C but echoed the malicious string back to the user in the explanation.
+*   **Result:** The raw HTML tag appeared in the chat log.
+*   **Mitigation:** While the backend sanitation layer (Mermaid Regex) failed to catch this specific tag, the frontend renderer treated it as text content.
+*   **Conclusion:** This highlights the necessity for **Output Encoding** at the API edge to prevent reflected Cross-Site Scripting (XSS) in educational tools that review student code.
+
+### 4.4 Summary
+The system proved impervious to **Data Leakage**, **Privacy Violations**, and **Infrastructure Damage**. The 5.6% failure rate represents behavioral slips and input reflection, neither of which compromised the confidentiality or integrity of the protected educational assets. This confirms that decoupling Access Control from Generation provides a robust security boundary.
