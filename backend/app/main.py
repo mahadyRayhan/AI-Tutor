@@ -4102,6 +4102,67 @@ class VideoReflectionRequest(BaseModel):
     response: str
 
 
+# A rewatch should not replay the parts the student has already done. Both halves
+# of "where was I" — the position and the questions already answered — come from
+# telemetry that was ALREADY being written; the client simply never read it back,
+# so it reset to zero on every load. One endpoint, because they are one question
+# and the player needs both before the first frame plays.
+RESUME_MIN_SEC = 30.0      # below this, resuming is noise — just start over
+RESUME_END_FRAC = 0.97     # at/after this, they finished; offer the start, not the end
+
+# Whether a WRONG answer counts as "already answered".
+#   True  — one attempt is enough; the checkpoint has done its job of interrupting
+#           passive watching, and a student who cannot get it should not be walled
+#           out of the rest of the lecture on every rewatch.
+#   False — re-ask until correct.
+# Flip this one constant to change the policy; nothing else depends on it.
+CHECKPOINT_ANY_ATTEMPT = True
+
+
+@app.get("/api/v1/video/progress/{video_filename}")
+async def get_video_progress(video_filename: str, username: str,
+                             caller: dict = Depends(auth.get_current_user)):
+    """Where this student left off in this video, and what they have already answered.
+
+    Read-only, and scoped to one learner — so it is guarded by the same
+    self-or-teacher rule as every other per-student resource. Without that, the
+    watch position and answer history of any classmate would be a URL away.
+    """
+    auth.require_self_or_teacher(username, caller)
+
+    answered_sql = (
+        "SELECT DISTINCT checkpoint_time FROM video_mcq_response "
+        "WHERE username = ? AND video_filename = ?")
+    if not CHECKPOINT_ANY_ATTEMPT:
+        answered_sql += " AND is_correct = 1"
+    answered = [r["checkpoint_time"] for r in
+                db.fetch_all(answered_sql, (username, video_filename))]
+
+    # The most recent position this learner was at. 'ended' is excluded: it always
+    # reports the very end, so honouring it would resume every finished video at
+    # its final second.
+    row = db.fetch_one(
+        "SELECT position_sec FROM video_engagement "
+        "WHERE username = ? AND video_filename = ? AND position_sec IS NOT NULL "
+        "AND event != 'ended' ORDER BY ts_utc DESC, id DESC LIMIT 1",
+        (username, video_filename))
+    pos = float(row["position_sec"]) if row and row["position_sec"] is not None else 0.0
+
+    cov = db.fetch_one(
+        "SELECT duration_sec, completed FROM video_coverage "
+        "WHERE username = ? AND video_filename = ?", (username, video_filename))
+    duration = float(cov["duration_sec"]) if cov and cov["duration_sec"] else 0.0
+    completed = bool(cov["completed"]) if cov else False
+
+    # Finished, or barely started: start at the beginning rather than restoring a
+    # position that helps nobody.
+    if completed or pos < RESUME_MIN_SEC or (duration and pos >= duration * RESUME_END_FRAC):
+        pos = 0.0
+
+    return {"position_sec": round(pos, 2), "answered": answered,
+            "completed": completed, "duration_sec": duration}
+
+
 @app.get("/api/v1/video/checkpoints/{video_filename}")
 async def get_video_checkpoints(video_filename: str):
     """Return checkpoint MCQs for a video (WITHOUT the correct answer).

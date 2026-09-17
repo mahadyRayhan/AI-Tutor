@@ -1681,6 +1681,8 @@ let crCoverageTimer = null;
 let crCpSelected = null;
 let crCpConfidence = 3;
 let crPrelabChosen = null;
+let crResumeFrom = 0;
+let crResumeApplied = false;
 
 function crUser() { return currentUser ? currentUser.username : 'anonymous'; }
 
@@ -1714,6 +1716,86 @@ async function crLoadCheckpoints(filename) {
         const d2 = await r2.json();
         crPrelabProblems = d2.problems || [];
     } catch (e) { crPrelabProblems = []; }
+
+    await crLoadProgress(filename);
+}
+
+// Where this student left off, and which checkpoints they have already answered.
+// Both were being written to the server all along and thrown away on the client —
+// crAnswered was rebuilt empty on every load, so a rewatch re-asked everything.
+//
+// The two are loaded together and applied together on purpose: crEnforceCheckpoints
+// forces EVERY unanswered checkpoint before the current position, so restoring a
+// position without restoring the answers would open the lecture with a wall of
+// modals the student already completed.
+async function crLoadProgress(filename) {
+    crResumeFrom = 0;
+    if (!currentUser) return;
+    try {
+        const r = await fetch(`/api/v1/video/progress/${encodeURIComponent(filename)}`
+                              + `?username=${encodeURIComponent(currentUser.username)}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        (d.answered || []).forEach(t => crAnswered.add(t));
+        crResumeFrom = d.position_sec || 0;
+        console.log(`[classroom] resume at ${crResumeFrom}s · ${crAnswered.size} checkpoint(s) already answered`);
+        // This fetch races the video's own loading. If metadata already arrived,
+        // onloadeddata has been and gone and will not call us — so apply it here.
+        // crApplyResume is idempotent (crResumeApplied), so one of the two wins and
+        // the other is a no-op, whichever order they finish in.
+        const videoEl = document.getElementById('classroomVideo');
+        if (videoEl && videoEl.readyState >= 1) crApplyResume();
+    } catch (e) {
+        // Never block playback on this — a student who cannot reach the endpoint
+        // should watch from the start, not stare at a dead player.
+        console.error('progress load failed', e);
+    }
+}
+
+function crFmtTime(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// Seeking is only legal once metadata is loaded, so this runs from onloadeddata.
+function crApplyResume() {
+    const videoEl = document.getElementById('classroomVideo');
+    if (!videoEl || !crResumeFrom || crResumeApplied) return;
+    crResumeApplied = true;
+    if (crResumeFrom >= (videoEl.duration || 0)) return;
+    videoEl.currentTime = crResumeFrom;
+    crLastTimeUpdate = crResumeFrom;
+    crShowResumeNotice(crResumeFrom);
+}
+
+// Say it out loud. A player that silently starts twelve minutes in reads as a bug,
+// and the student needs a way back to the beginning.
+function crShowResumeNotice(sec) {
+    const bar = document.querySelector('.classroom-status-bar');
+    if (!bar) return;
+    document.getElementById('crResumeNotice')?.remove();
+    const el = document.createElement('span');
+    el.id = 'crResumeNotice';
+    el.style.cssText = 'font-size:0.78rem; color:var(--text-secondary); margin-left:auto;'
+                     + ' display:inline-flex; gap:8px; align-items:center;';
+    el.innerHTML = `<span>Resumed from ${crFmtTime(sec)}</span>`;
+    const btn = document.createElement('button');
+    btn.textContent = 'Start over';
+    btn.style.cssText = 'background:none; border:none; padding:0; cursor:pointer;'
+                      + ' color:var(--accent-color); font:inherit; text-decoration:underline;';
+    btn.onclick = crStartOver;
+    el.appendChild(btn);
+    bar.appendChild(el);
+    setTimeout(() => el.remove(), 12000);
+}
+
+function crStartOver() {
+    const videoEl = document.getElementById('classroomVideo');
+    if (videoEl) { videoEl.currentTime = 0; crLastTimeUpdate = 0; }
+    document.getElementById('crResumeNotice')?.remove();
+    // crAnswered is deliberately NOT cleared: starting the video over is a request
+    // to watch again, not to re-take questions already answered.
 }
 
 function crPendingCheckpointAt(time) {
@@ -1894,6 +1976,9 @@ function onClassroomVideoSelect(filename, title) {
     crPrelabProblems = [];
     crEndSequenceShown = false;
     crDuration = 0;
+    crResumeFrom = 0;
+    crResumeApplied = false;
+    document.getElementById('crResumeNotice')?.remove();
 
     // Show player, hide picker
     document.getElementById('classroomPicker').style.display = 'none';
@@ -1916,7 +2001,7 @@ function onClassroomVideoSelect(filename, title) {
     videoEl.onseeking = onClassroomSeeking;
     videoEl.onended = onClassroomEnded;
     videoEl.onvolumechange = onClassroomVolumeChange;
-    videoEl.onloadeddata = () => { crDuration = videoEl.duration || 0; };
+    videoEl.onloadeddata = () => { crDuration = videoEl.duration || 0; crApplyResume(); };
 
     // Attention + coverage flush
     if (!crCoverageTimer) crCoverageTimer = setInterval(crPostCoverage, 30000);
