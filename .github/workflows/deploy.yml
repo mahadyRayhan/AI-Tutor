@@ -72,7 +72,8 @@ jobs:
               sudo docker compose down || true
               cd /home/admin
               # Copy the folder to keep a safe backup of both tracked and untracked files
-              cp -r AI-Tutor AI-Tutor_backup_$(date +%F_%H-%M)
+              # cp -r AI-Tutor AI-Tutor_backup_$(date +%F_%H-%M)
+              rsync -a --exclude='backend/database/video' AI-Tutor/ AI-Tutor_backup_$(date +%F_%H-%M)
             else
               # If it's the very first deployment, create the folder
               mkdir -p /home/admin/AI-Tutor
